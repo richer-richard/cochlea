@@ -207,12 +207,13 @@ fn wav_round_trips_through_hound() {
 
 /// Golden PCM hash of the committed example score.
 ///
-/// The constant was blessed on aarch64-macos; every DSP path in the
-/// workspace is libm + pure arithmetic, so x86_64-linux (the Tier 1 pinned
-/// target) is expected to produce the same bytes. If the first Tier 1 CI
-/// run disagrees, re-bless with the value CI prints — the Tier 1 contract
-/// is defined by the pinned target, not by this dev machine
-/// (docs/determinism.md).
+/// The constant was blessed on aarch64-macos, and the first Tier 1 CI run
+/// (x86_64-linux, 2026-07-03, run 28659358254) produced the same bytes —
+/// empirical confirmation that the libm + pure-arithmetic construction is
+/// byte-identical across these architectures. If a future change moves it
+/// on one platform only, split the constant per-platform and re-bless from
+/// the pinned target: the Tier 1 contract is defined by x86_64-linux, not
+/// by a dev machine (docs/determinism.md).
 #[test]
 #[cfg(any(
     all(target_arch = "x86_64", target_os = "linux"),

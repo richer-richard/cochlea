@@ -9,9 +9,13 @@ audits behind them. The contract itself (three tiers) is summarized in
 - **Tier 1 — byte-identical PCM** for identical inputs on the pinned target:
   `x86_64-unknown-linux-gnu`, toolchain `1.95.0` (`rust-toolchain.toml`).
   Two renders of the same score are byte-equal on *any* machine (tested on
-  every CI platform); committed golden hashes are only asserted on the
-  pinned target, because codegen (instruction selection, libm vs system
-  differences) varies across targets.
+  every CI platform); committed golden hashes are asserted on the pinned
+  target (and on aarch64-macos, the bless machine). Empirical note: the
+  first Tier 1 CI run (2026-07-03) matched the aarch64-macos-blessed hash
+  exactly — with every DSP path on libm + pure arithmetic, the render is
+  in practice byte-identical across these architectures, stronger than the
+  tier promises. The *contract* remains per-pinned-target so a future
+  divergence is a re-bless, not a breach.
 - **Tier 2 — feature tolerances across platforms**: integrated LUFS within
   0.1 LU, onsets within 2 ms, pitch within 5 cents. These absorb the
   cross-target float differences Tier 1 does not promise away.
