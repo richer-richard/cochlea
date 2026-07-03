@@ -11,7 +11,9 @@ categories.workspace = true
 
 [dependencies]
 cochlea-score.workspace = true
+cochlea-render.workspace = true
 cochlea-features.workspace = true
+libm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -254,7 +254,9 @@ name = "cochlea-verify"
 version = "0.1.0"
 dependencies = [
  "cochlea-features",
+ "cochlea-render",
  "cochlea-score",
+ "libm",
  "serde",
  "serde_json",
  "thiserror",
