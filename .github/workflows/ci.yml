@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly: surfaces new RUSTSEC advisories even with no pushes.
+    - cron: "23 6 * * 1"
+
+# CI only reads the repo; never hand write scopes to third-party actions.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  # Warnings are errors everywhere, including tests. Never suppress; fix.
+  RUSTFLAGS: "-D warnings"
+
+# Actions are pinned to full commit SHAs (tags are mutable and can be
+# repointed); the trailing comment records the human-readable version.
+# The Rust toolchain comes from rust-toolchain.toml (rustup auto-installs
+# the pinned version), so codegen is identical run to run — that pin is
+# load-bearing for the Tier 1 byte-determinism job.
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  deny:
+    # The dependency direction law, structurally: no GUI/GPU/audio-device
+    # crates anywhere in the resolved graph (deny.toml [bans]).
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-all-crates: "true"
+      - run: cargo install cargo-deny --locked
+      - run: cargo deny check
+      # features/spectro must never depend on score/synth: `cochlea probe`
+      # on an arbitrary WAV is the adoption wedge (CLAUDE.md).
+      - name: dependency direction (features/spectro independent of score/synth)
+        run: |
+          ! cargo tree -p cochlea-features -e normal | grep -E "cochlea-(score|synth)"
+          ! cargo tree -p cochlea-spectro -e normal | grep -E "cochlea-(score|synth)"
+
+  test-tier1:
+    # The pinned byte-determinism target: golden PCM hashes are asserted
+    # only here (x86_64-unknown-linux-gnu + the pinned toolchain).
+    name: test (Tier 1, x86_64-linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - run: cargo test --workspace
+
+  test-tier2:
+    # Cross-platform tolerance tiers: same-machine byte-identity tests and
+    # feature-tolerance tests run everywhere; golden hashes are cfg-gated
+    # to the Tier 1 target and skip themselves here.
+    name: test (Tier 2, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - run: cargo test --workspace

@@ -1,0 +1,28 @@
+[package]
+name = "cochlea"
+description = "Headless audio engine for agents: render, probe, lint, spectro"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "cochlea"
+path = "src/main.rs"
+
+[dependencies]
+cochlea-score.workspace = true
+cochlea-synth.workspace = true
+cochlea-render.workspace = true
+cochlea-features.workspace = true
+cochlea-spectro.workspace = true
+cochlea-verify.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

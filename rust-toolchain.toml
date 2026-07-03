@@ -1,0 +1,6 @@
+# Pinned for Tier 1 byte-determinism: the same toolchain produces the same
+# codegen, so golden PCM hashes stay stable. Bumps are deliberate events that
+# re-bless goldens if needed (see docs/determinism.md).
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

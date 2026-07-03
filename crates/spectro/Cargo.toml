@@ -1,0 +1,23 @@
+# NOTE: this crate must never depend on cochlea-score or cochlea-synth —
+# spectrograms of arbitrary WAVs need no score context (CLAUDE.md). Bar
+# markers arrive as plain (sample, label) grids from the caller.
+[package]
+name = "cochlea-spectro"
+description = "Mel spectrogram to PNG with viridis LUT, time ruler, and tiled contact sheets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+rustfft.workspace = true
+hound.workspace = true
+image.workspace = true
+libm.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

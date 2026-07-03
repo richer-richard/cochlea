@@ -1,0 +1,22 @@
+[package]
+name = "cochlea-score"
+description = "Score IR for cochlea: ticks, tempo map, bar/beat math, tracks, notes, automation, RON data form"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+fenestra-anim.workspace = true
+ron.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

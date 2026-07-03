@@ -1,0 +1,51 @@
+# Determinism contract enforcement (docs/determinism.md): DSP code must use
+# the `libm` crate for transcendentals, never std float methods, because std
+# results vary across platforms/libc versions while libm is bit-stable.
+# Non-DSP call sites (CLI display math, image axis layout) may opt out with
+# #[expect(clippy::disallowed_methods, reason = "not a DSP path")].
+#
+# f32/f64 `sqrt` is NOT listed: IEEE 754 fully specifies it, so std sqrt is
+# bit-identical everywhere. `mul_add` is disallowed so FMA is never an
+# accident; where fused behavior is the documented choice, opt out with
+# #[expect] and a reason.
+disallowed-methods = [
+    "f32::sin", "f64::sin",
+    "f32::cos", "f64::cos",
+    "f32::tan", "f64::tan",
+    "f32::asin", "f64::asin",
+    "f32::acos", "f64::acos",
+    "f32::atan", "f64::atan",
+    "f32::atan2", "f64::atan2",
+    "f32::exp", "f64::exp",
+    "f32::exp2", "f64::exp2",
+    "f32::exp_m1", "f64::exp_m1",
+    "f32::ln", "f64::ln",
+    "f32::ln_1p", "f64::ln_1p",
+    "f32::log2", "f64::log2",
+    "f32::log10", "f64::log10",
+    "f32::powf", "f64::powf",
+    "f32::sinh", "f64::sinh",
+    "f32::cosh", "f64::cosh",
+    "f32::tanh", "f64::tanh",
+    "f32::cbrt", "f64::cbrt",
+    "f32::hypot", "f64::hypot",
+    "f32::mul_add", "f64::mul_add",
+
+    # fundsp block processing uses `wide` SIMD transcendentals that provably
+    # diverge from the libm scalar path (e.g. Sine::process vs Sine::tick) —
+    # voices tick sample-by-sample, always (docs/determinism.md).
+    "fundsp::audionode::AudioNode::process",
+    "fundsp::audiounit::AudioUnit::process",
+    # These combinators call prevent_denormals() internally, silently setting
+    # thread-global MXCSR FTZ/DAZ on x86 — incompatible with the honor-
+    # denormals policy (docs/determinism.md).
+    "fundsp::prelude::feedback", "fundsp::prelude32::feedback", "fundsp::prelude64::feedback",
+    "fundsp::prelude::feedback2", "fundsp::prelude32::feedback2", "fundsp::prelude64::feedback2",
+    "fundsp::prelude::fdn", "fundsp::prelude32::fdn", "fundsp::prelude64::fdn",
+    "fundsp::prelude::fdn2", "fundsp::prelude32::fdn2", "fundsp::prelude64::fdn2",
+    "fundsp::denormal::prevent_denormals",
+    # Runtime CPU-feature dispatch: the same binary picks AVX/SSE/NEON/scalar
+    # per machine. Analysis code uses FftPlannerScalar explicitly instead
+    # (docs/determinism.md).
+    "rustfft::FftPlanner::new",
+]
