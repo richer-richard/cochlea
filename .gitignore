@@ -2,3 +2,4 @@
 *.wav
 !tests/fixtures/**/*.wav
 !demos/**/expected/*.wav
+/.claude/

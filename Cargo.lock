@@ -210,7 +210,9 @@ version = "0.1.0"
 dependencies = [
  "cochlea-score",
  "cochlea-synth",
+ "fundsp",
  "hound",
+ "libm",
  "rayon",
  "thiserror",
 ]
@@ -220,6 +222,7 @@ name = "cochlea-score"
 version = "0.1.0"
 dependencies = [
  "fenestra-anim",
+ "libm",
  "proptest",
  "ron",
  "serde",
