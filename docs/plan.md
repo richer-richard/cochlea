@@ -65,6 +65,14 @@ marker). Determinism decisions and the dependency audits live in
   node interface); ebur128 true/sample peaks return linear amplitude — we
   convert to dBTP/dBFS via libm, and `-inf` loudness readings mean
   "silence/no data", not errors.
+- **The reverb insert is in-repo** (P2 finding): every fundsp stereo reverb
+  constructor (`reverb_stereo`, `reverb4_stereo_delays`) builds on `fdn()`
+  internally, which flips thread-global x86 FTZ — and clippy bans can't see
+  call sites *inside* fundsp. The `reverb` insert is a Freeverb-style
+  Schroeder (`cochlea-synth`), pure arithmetic per tick, tail ~2.5 s.
+  Envelopes are likewise our own piecewise-linear ADSR evaluated through
+  `fundsp::envelope` closures (pure arithmetic; the offline schedule knows
+  note length, so no live gate state exists at all).
 
 ## Dependency graph (acyclic, law-checked in CI)
 

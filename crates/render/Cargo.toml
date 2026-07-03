@@ -12,7 +12,9 @@ categories.workspace = true
 [dependencies]
 cochlea-score.workspace = true
 cochlea-synth.workspace = true
+fundsp.workspace = true
 hound.workspace = true
+libm.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
 

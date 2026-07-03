@@ -154,8 +154,14 @@ here):
   — and sets MXCSR FTZ|DAZ *thread-globally* with no restore, a no-op on
   aarch64. Under the honor-denormals policy those combinators are **banned**
   (`feedback`, `feedback2`, `fdn`, `fdn2`, `prevent_denormals` in the clippy
-  ban list). The stock `Reverb` (`reverb.rs`) is hand-rolled
-  allpass/delay structure, does not touch `prevent_denormals`, and is fine.
+  ban list). **Verified consequence: every fundsp stereo reverb constructor
+  is off-limits** — `reverb_stereo` builds `fdn::<U32>` directly
+  (`prelude.rs:1755`) and `reverb4_stereo_delays` builds two `fdn`s
+  (`prelude.rs:1938-1939`); the clippy ban cannot see those *internal* call
+  sites, so the rule is: no fundsp reverb constructors at all. The reverb
+  insert is instead an in-repo Freeverb-style Schroeder (8 damped combs +
+  4 allpasses per channel, `cochlea-synth/src/nodes.rs`), pure arithmetic
+  per tick.
 - **ADSR reset is a trap**: `adsr_live`'s closure captures `attacked` +
   two `Shared` cells that `reset()` cannot see (`adsr.rs:29-33`). Voices are
   therefore always freshly constructed per note, never pooled-and-reset —
@@ -179,11 +185,12 @@ here):
 Per-preset Tier 1 verdicts (all under the tick-only rule): `sine` safe
 (libm sin); `saw_lead`/`square_bass`/`chord_pad` safe (WaveSynth's
 interpolation is pure arithmetic, filters libm-at-construction, ADSR fresh
-per voice); `noise_hat` safe (counter-RNG noise + filter); `pluck` safe
-(hand-rolled KS, counter-RNG excitation); `reverb` insert safe (fixed
-constructor parameters, construction-time libm only, no
-`generate_reverb()` — that is a dev-time genetic-search tool with its own
-RNG surface, never called).
+per voice — implemented as our own piecewise-linear closure over note time
+rather than fundsp's `adsr_live`, sidestepping its closure-state reset trap
+entirely); `noise_hat` safe (counter-RNG noise + filter); `pluck` safe
+(hand-rolled KS, counter-RNG excitation); `reverb` insert safe (in-repo
+Schroeder — fundsp's reverb constructors are all FDN-based and banned, see
+above).
 
 ## ebur128 0.1.10 audit
 
