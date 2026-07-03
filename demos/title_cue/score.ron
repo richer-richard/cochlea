@@ -1,0 +1,77 @@
+// Demo 3: a ten-second cinematic sting at 96 BPM (4 bars of 4/4 = 10 s).
+// A minor pad swell with a rising filter sweep (monotone-verified) and a
+// volume envelope down to silence, a dry saw lead line, and reverberant
+// pluck accents. The verify block asserts the LUFS target, the monotone
+// cutoff, click-freedom on the lead, and silence after the fade.
+Score(
+    version: 1,
+    sample_rate: 48000,
+    ppq: 960,
+    time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 96.0)],
+    tracks: [
+        Track(
+            name: "pad",
+            instrument: Preset("chord_pad"),
+            notes: [
+                Note(at: (1, 1), dur: "1/1", pitch: "A2", vel: 84),
+                Note(at: (1, 1), dur: "1/1", pitch: "A3", vel: 84),
+                Note(at: (1, 1), dur: "1/1", pitch: "C4", vel: 80),
+                Note(at: (1, 1), dur: "1/1", pitch: "E4", vel: 80),
+                Note(at: (2, 1), dur: "1/1", pitch: "A2", vel: 84),
+                Note(at: (2, 1), dur: "1/1", pitch: "A3", vel: 84),
+                Note(at: (2, 1), dur: "1/1", pitch: "C4", vel: 80),
+                Note(at: (2, 1), dur: "1/1", pitch: "E4", vel: 80),
+                Note(at: (3, 1), dur: "1/1", pitch: "A2", vel: 82),
+                Note(at: (3, 1), dur: "1/1", pitch: "A3", vel: 82),
+                Note(at: (3, 1), dur: "1/1", pitch: "C4", vel: 78),
+                Note(at: (3, 1), dur: "1/1", pitch: "E4", vel: 78),
+            ],
+            automation: [
+                // The filter sweep: rising, monotone by assertion.
+                Auto(param: "cutoff_hz", keys: [
+                    Key(at: (1, 1), value: 250.0, ease: EaseInOut),
+                    Key(at: (3, 1), value: 5000.0),
+                ]),
+                // The volume envelope: fade to nothing across bar 3.
+                Auto(param: "gain", keys: [
+                    Key(at: (1, 1), value: 1.0, ease: Hold),
+                    Key(at: (3, 1), value: 1.0, ease: EaseInOut),
+                    Key(at: (4, 1), value: 0.0),
+                ]),
+            ],
+        ),
+        Track(
+            name: "lead",
+            instrument: Preset("saw_lead"),
+            notes: [
+                Note(at: (2, 1), dur: "1/2", pitch: "A4", vel: 88),
+                Note(at: (2, 3), dur: "1/4", pitch: "C5", vel: 84),
+                Note(at: (2, 4), dur: "1/4", pitch: "B4", vel: 82),
+                Note(at: (3, 1), dur: "1/2", pitch: "E5", vel: 92),
+                Note(at: (3, 3), dur: "1/4", pitch: "C5", vel: 84),
+            ],
+        ),
+        Track(
+            name: "accents",
+            instrument: Preset("pluck"),
+            inserts: [Preset("reverb")],
+            notes: [
+                Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96),
+                Note(at: (1, 4), dur: "1/4", pitch: "E5", vel: 88),
+                Note(at: (2, 3), dur: "1/4", pitch: "A5", vel: 92),
+            ],
+        ),
+    ],
+    verify: [
+        // Target measured on the blessed render; tolerance is deliberately
+        // wider than the 0.1 LU Tier 2 tolerance because this asserts the
+        // *mix's* creative target, not the meter's reproducibility.
+        IntegratedLufs(target: -28.9, tol: 1.0),
+        TruePeakBelow(dbtp: -1.0),
+        Monotone(track: "pad", param: "cutoff_hz", from: (1, 1), to: (3, 1), direction: Rising),
+        NoDiscontinuity(track: "lead", db: 30.0),
+        // Last audible content measures 7.15 s; bar 4 beat 1 is 7.5 s.
+        SilentAfter(at: (4, 1)),
+    ],
+)
