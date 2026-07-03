@@ -1,0 +1,45 @@
+// cochlea score, data form version 1 (docs/plan.md). Load with
+// `cochlea render examples/scores/first_light.ron --out mix.wav` once the
+// CLI ships (P4), or Score::from_ron in code.
+Score(
+    version: 1,
+    sample_rate: 48000,
+    ppq: 960,
+    time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 112.0)],
+    tracks: [
+        Track(
+            name: "lead",
+            instrument: Preset("saw_lead"),
+            inserts: [Preset("reverb")],
+            notes: [
+                Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96),
+                Note(at: (1, 2), dur: "1/8", pitch: "C#5", vel: 88),
+                Note(at: (1, 2), off: "1/8", dur: "1/8", pitch: "E5", vel: 84),
+                Note(at: (1, 3), dur: "1/2", pitch: "A5", vel: 100),
+                Note(at: (2, 1), dur: "3/8", pitch: "F#5", vel: 92),
+                Note(at: (2, 3), dur: "1/2", pitch: "E5", vel: 86),
+            ],
+            automation: [
+                Auto(param: "cutoff_hz", keys: [
+                    Key(at: (1, 1), value: 400.0, ease: EaseInOut),
+                    Key(at: (3, 1), value: 4000.0),
+                ]),
+            ],
+        ),
+        Track(
+            name: "bass",
+            instrument: Preset("square_bass"),
+            notes: [
+                Note(at: (1, 1), dur: "1/2", pitch: "A2", vel: 110),
+                Note(at: (1, 3), dur: "1/2", pitch: "E2", vel: 104),
+                Note(at: (2, 1), dur: "1/2", pitch: "F#2", vel: 108),
+                Note(at: (2, 3), dur: "1/2", pitch: "E2", vel: 102),
+            ],
+        ),
+    ],
+    verify: [
+        TruePeakBelow(dbtp: -1.0),
+        SilentAfter(at: (5, 1)),
+    ],
+)
