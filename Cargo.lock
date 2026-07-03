@@ -188,6 +188,7 @@ dependencies = [
  "cochlea-spectro",
  "cochlea-synth",
  "cochlea-verify",
+ "image",
  "serde_json",
 ]
 
