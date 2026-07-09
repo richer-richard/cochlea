@@ -43,13 +43,16 @@ Or entirely from the command line, score as RON:
 ```
 cochlea render score.ron --out mix.wav --stems stems/ --verify
 cochlea probe input.wav --json report.json --spectro spec.png
+cochlea probe input.wav --digest --window-ms 500
+cochlea diff a.wav b.wav --tier2
 cochlea lint score.ron
 cochlea spectro input.wav --out spec.png --sheet --bars-per-tile 8
 ```
 
-`cochlea probe` works on **any** WAV — no score required. That's the
-front door: point it at audio you didn't render and get the same JSON
-report and spectrogram an agent uses to review its own work.
+`cochlea probe` works on **any** WAV — and FLAC, decoded bit-exact, still
+ffmpeg-free — no score required. That's the front door: point it at audio
+you didn't render and get the same JSON report and spectrogram an agent
+uses to review its own work.
 
 ## How an agent listens
 
@@ -70,34 +73,23 @@ compose → render → probe (JSON) → spectrogram (one vision call) → verify
 The economics are the point, not an afterthought. The `first_light` render
 above is 7 seconds of 48 kHz/32-bit-float PCM and weighs 2.7 MB; a
 3-minute piece at the same settings is ~66 MB — not something to hand an
-agent as text, let alone read sample-by-sample. Its probe report is 2 KB
-of JSON (trimmed here to the interesting fields):
+agent as text, let alone read sample-by-sample. Its probe report is
+~2.5 KB of JSON (schema v2, trimmed here to the interesting fields —
+`tempo`/`stereo`/`structure` are new; this piece is short and close to
+mono, so they read near their floor here, see the digest below for a
+piece where they light up):
 
 ```json
 {
-  "schema_version": 1,
-  "source": {
-    "sample_rate": 48000,
-    "channels": 2,
-    "duration_ms": 7035.708333333333
-  },
-  "loudness": {
-    "integrated_lufs": -22.70045487928478,
-    "true_peak_dbtp": -15.910817022082783
-  },
-  "onsets": {
-    "count": 6,
-    "times_ms": [1077.33, 2149.33, 2346.67, 3221.33, 4538.67, 5034.67]
-  },
-  "pitch": {
-    "voiced_ratio": 0.9847560975609756,
-    "median_f0_hz": 110.00194603797897
-  },
-  "key": {
-    "tonic": "E",
-    "mode": "major",
-    "confidence": 0.8093960265638273
-  },
+  "schema_version": 2,
+  "source": { "sample_rate": 48000, "channels": 2, "duration_ms": 7035.708333333333 },
+  "loudness": { "integrated_lufs": -22.70045487928478, "true_peak_dbtp": -15.910817022082783, "lra": 10.607660373688798 },
+  "onsets": { "count": 6, "times_ms": [1077.33, 2149.33, 2346.67, 3221.33, 4538.67, 5034.67] },
+  "pitch": { "voiced_ratio": 0.9847560975609756, "median_f0_hz": 110.00194603797897 },
+  "key": { "tonic": "E", "mode": "major", "confidence": 0.8093960265638273 },
+  "tempo": { "bpm": 55.97014925373134, "confidence": 0.003937017247067399, "clear_rhythm": false },
+  "stereo": { "width": 0.02967719705208343, "correlation": 0.9981362354107913, "balance": -0.0016380539212361243 },
+  "structure": { "section_count": 1, "confidence": 0.0 },
   "silence": { "trailing_ms": 2485.708333333333 },
   "clipping": { "clipped_samples": 0, "true_peak_over_0dbtp": false }
 }
@@ -118,6 +110,82 @@ spectrogram into a contact sheet instead of one long strip (two bars per
 tile here, `--bars-per-tile 2`):
 
 ![Contact-sheet spectrogram of first_light.ron tiled two bars per row](docs/assets/first_light_sheet.png)
+
+## Reading audio without a context window
+
+`probe --digest` skips JSON entirely and prints a deterministic text
+summary — one line per feature dimension, then a windowed timeline capped
+at ~40 rows. Real output for the `drum_groove` demo (20.8 s, four tracks,
+the wave-2 rhythm/stereo/structure dimensions in one screenful):
+
+```
+cochlea digest: 20.755s  2ch  48000Hz
+loudness: integrated=-19.91  momentary_max=-17.54  true_peak=-4.78  lra=1.73
+key: G major (conf 0.28)  pitch: voiced=26%  median=55.0Hz (A1 +0.5c)
+tempo: 110.3bpm (conf 0.01) clear_rhythm=false
+stereo: width=0.01 corr=1.00 bal=-0.00
+structure: 1 section
+onsets: count=32  rate=1.54/s
+silence: leading=0ms  trailing=2545ms
+clipping: clipped=0  over_0dbtp=false
+timeline: window=1000ms  bucket=1x  rows=21
+   idx        t(s)     rms   peak  ons     f0  flags
+     0   0.000-1.000   -25.71  -7.38    2    55.0  -
+     1   1.000-2.000   -25.60  -7.87    2    55.0  -
+     ...
+    17  17.000-18.000  -34.66  -16.80    1       -  -
+    18  18.000-19.000  -58.77  -41.61    0       -  -
+    19  19.000-20.000  -118.98 -103.16    0    54.7  S
+    20  20.000-20.755  -161.14 -144.94    0    54.8  S
+```
+
+The tempo reads 110.3 BPM — matching the score's authored 110 BPM almost
+exactly — but `clear_rhythm` is `false`: a groove layering three
+simultaneous periodicities (sixteenth-note hats, quarter-note kick/snare,
+bar-level pad) dilutes autocorrelation confidence to 0.01, well under the
+0.05 threshold calibrated on single-instrument click tracks (which measure
+0.11–0.15). That's an honest reading, not a bug — `demos/drum_groove`
+asserts `HasClearRhythm(expected: false)` outright rather than tuning the
+detector to this one fixture.
+
+`cochlea diff` compares two files in feature space instead of byte-for-byte
+— "did my change do what I meant," not "is the file bitwise equal." Real
+output diffing `first_light.wav` against `title_cue.wav`:
+
+```
+verdict: different (duration, loudness, onsets, key)
+duration     a->b +1264.3 ms
+loudness     integrated -6.22 LU  true_peak +6.02 dB  lra -8.91 LU
+onsets       matched=0  mean_offset=-  max_offset=-  unmatched_a=6  unmatched_b=4
+pitch        delta +1.0 cents
+key          a=E major (conf 0.81)  b=A minor (conf 0.86)  changed=true
+segments     max_abs_rms_delta 121.71 dB at idx=7
+tempo        bpm +38.57 bpm  clear_rhythm_changed=false
+stereo       width +0.00  correlation -0.00   balance +0.00
+structure    section_count +0
+```
+
+Diff a render against itself, or a re-render of the same score, and the
+verdict reads `byte-identical` instead — the determinism contract above,
+checked from the outside. `--tier2` turns that verdict into a gate: exit
+0 for byte-identical or Tier-2-equivalent, exit 1 otherwise, so a CI job
+or an agent can catch a regression without ever reading a raw sample.
+
+## Agents as MCP clients
+
+`cochlea-mcp` is a stdio MCP server over the same libraries the CLI uses —
+six tools (`render_score`, `probe_audio`, `spectrogram`, `lint_score`,
+`probe_digest`, `audio_diff`), each a thin wrapper over the matching
+library call, so any MCP client gets the same render → probe → spectrogram
+→ verify loop as tool calls instead of shelled-out subprocesses:
+
+```
+cargo install --path crates/mcp
+claude mcp add cochlea -- cochlea-mcp
+```
+
+Full tool schemas, arguments, and the JSON-RPC framing are in
+[`docs/mcp.md`](docs/mcp.md).
 
 ## Install
 
@@ -156,9 +224,13 @@ cargo install --path crates/cli
   fixed track order; the mix is byte-equal to the sum of the stems, by
   definition and by test.
 - **Features** (`cochlea-features`): one schema-versioned JSON report —
-  integrated LUFS / momentary max / true peak (via [ebur128]), spectral-
-  flux onsets, YIN pitch with cents deviation, chroma +
-  Krumhansl-Schmuckler key, silence/tail, clipping.
+  integrated LUFS / momentary max / true peak / LRA (via [ebur128]),
+  spectral-flux onsets, YIN pitch with cents deviation, chroma +
+  Krumhansl-Schmuckler key, tempo/beat tracking with a calibrated
+  `clear_rhythm` flag, stereo width/correlation/balance, Foote novelty
+  structure boundaries, silence/tail, clipping — plus a windowed segment
+  timeline, an LLM-sized text digest, and a feature-space diff between
+  two files.
 - **Spectro** (`cochlea-spectro`): mel spectrogram PNGs (HTK filterbank,
   viridis, time ruler, bar markers) and tiled contact sheets so an agent
   reviews a whole piece in one vision call.
@@ -199,15 +271,21 @@ fundsp node family, ebur128 internals, rustfft dispatch — lives in
 | Loudness | −18 dBFS-peak 997 Hz sine | −21.0 LUFS (≈ −3 LU sine crest factor — physics, not error) |
 | Silence/tail | 1 s tone + 1 s silence | trailing 960 ms, last-audible within one RMS window |
 | Clipping | driven square, clamped | counted; true-peak-over-0 flagged |
+| Tempo | 120/90 BPM click track | ±1 BPM, `clear_rhythm=true`, confidence 0.11–0.15 (threshold is 0.05) |
+| Tempo | `drum_groove` demo (110 BPM groove) | 110.29 BPM (Δ 0.01), `clear_rhythm=false` — three layered periodicities dilute confidence to 0.01 even with the BPM itself spot-on |
+| Structure | two 8 s segments, distinct timbre | boundary within 1.5 s of the true 8.0 s cut |
+| Structure | three 8 s segments (A/B/A) | boundaries within 1.5 s of the true 8.0 s and 16.0 s cuts |
 
 ## ffmpeg-free by design
 
-cochlea reads and writes plain WAV (`hound`) and renders PNGs on the CPU
-(`rustfft` + hand-rolled mel filterbank + viridis LUT + `image`). No
-subprocess calls, no system codecs, no GPU, no audio device — the entire
-pipeline is a pure Rust dependency graph, and CI bans GUI/GPU/device
-crates from ever entering `Cargo.lock` (`deny.toml`). Compressed-format
-probing (via symphonia) is planned as phase 2, still ffmpeg-free.
+cochlea reads WAV and FLAC (`hound` and `symphonia`, both pure Rust — FLAC
+is lossless, so decoded PCM is bit-exact by spec, checked against WAV
+twins in-tree), writes plain WAV, and renders PNGs on the CPU (`rustfft` +
+hand-rolled mel filterbank + viridis LUT + `image`). No subprocess calls,
+no system codecs, no GPU, no audio device — the entire pipeline is a pure
+Rust dependency graph, and CI bans GUI/GPU/device crates from ever
+entering `Cargo.lock` (`deny.toml`). Lossy formats (mp3/ogg) are the next
+compressed-format target; still ffmpeg-free.
 
 ## Assertion cookbook
 
@@ -248,10 +326,15 @@ verify: [
 `cochlea render score.ron --verify` runs them; failures come back as JSON
 (`{"passed": false, "checks": [...]}`) and a nonzero exit.
 
-Three worked demos live in [`demos/`](demos/): `metronome` (sample-exact
+Four worked demos live in [`demos/`](demos/): `metronome` (sample-exact
 scheduling, onset tolerances), `chord_pad` (harmony reads as written),
 `title_cue` (a four-bar cinematic sting asserting a LUFS target, a
-monotone filter sweep, click-freedom, and silence after the fade).
+monotone filter sweep, click-freedom, and silence after the fade), and
+`drum_groove` (a 110 BPM, eight-bar drum groove asserting detected tempo,
+stereo width, loudness range, and section count — and an honest
+`HasClearRhythm(false)`, since a layered real-instrument groove dilutes
+the tempo detector's confidence below its click-track-calibrated
+threshold even though the BPM itself lands almost exactly on target).
 
 ## Workspace
 
@@ -260,7 +343,8 @@ crates/
   score      # IR: ticks, tempo map, bar/beat math, notes, automation, RON form
   synth      # Patch trait over fundsp, six presets, param registry, counter RNG
   render     # block engine, voices, stems, f64 master sum, WAV out
-  features   # LUFS/true peak, onsets, pitch, chroma/key, silence, clipping
+  features   # LUFS/true peak, onsets, pitch, chroma/key, tempo, stereo, structure, LRA
+  decode     # WAV + FLAC -> Audio (hound + symphonia, both pure Rust)
   spectro    # mel spectrogram -> PNG, contact sheets, image diff
   verify     # assertion DSL + RON-embeddable specs + JSON reports
   cli        # the `cochlea` binary
@@ -268,7 +352,8 @@ crates/
 ```
 
 `features` and `spectro` depend on neither `score` nor `synth` — enforced
-in CI — which is why `probe` works on arbitrary WAVs.
+in CI — which is why `probe` works on arbitrary WAVs (and, via `decode`,
+FLAC).
 
 ## License
 
