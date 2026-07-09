@@ -3,7 +3,7 @@
 Written in Phase 0, before implementation. Where implementation reality
 diverges, this file is updated in the same PR (deviations get a **Deviation**
 marker). Determinism decisions and the dependency audits live in
-`docs/determinism.md`; the contract summary lives in `CLAUDE.md`.
+`docs/determinism.md`; the contract summary lives in the README.
 
 ## Phase 0 decisions (deltas and pins)
 

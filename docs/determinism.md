@@ -2,7 +2,7 @@
 
 This file records the Phase 0 determinism decisions and the dependency
 audits behind them. The contract itself (three tiers) is summarized in
-`CLAUDE.md`; this is the evidence and the fine print.
+the README; this is the evidence and the fine print.
 
 ## The three tiers, restated precisely
 

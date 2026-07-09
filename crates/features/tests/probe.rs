@@ -164,7 +164,7 @@ fn click_track_eight_onsets_within_tolerance() {
     for (detected_ms, &expected_s) in report.onsets.times_ms.iter().zip(onset_times_s.iter()) {
         let expected_ms = expected_s * 1000.0;
         let diff_ms = (detected_ms - expected_ms).abs();
-        // hop=256 @ 48 kHz gives ~5.33 ms frame resolution. CLAUDE.md's
+        // hop=256 @ 48 kHz gives ~5.33 ms frame resolution. The contract's
         // Tier-2 "onsets within 2 ms" tolerance is for cross-platform
         // comparisons of the *same* detector's output, not absolute
         // alignment to a synthetic click's true start sample — so this

@@ -9,7 +9,7 @@
 /// it, so it isn't known until then) even if set higher via [`Self::fmax`].
 ///
 /// Chainable setters, mirroring the workspace's builder vocabulary
-/// (`docs/plan.md`/`CLAUDE.md`): `SpectroOpts::new().fft(4096).mels(64)`.
+/// (`docs/plan.md`): `SpectroOpts::new().fft(4096).mels(64)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectroOpts {
     pub(crate) fft: usize,

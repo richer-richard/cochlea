@@ -67,7 +67,7 @@ pub fn render_png(spec: &MelSpec, markers: &[Marker]) -> RgbImage {
 /// piece reads in a single vision call.
 ///
 /// `per_tile` is dual-purpose, matching the CLI's `--bars-per-tile`
-/// (`CLAUDE.md`/`docs/plan.md`):
+/// (`docs/plan.md`):
 /// - If `markers` is non-empty: tile boundaries fall at every `per_tile`-th
 ///   marker (sorted by sample), i.e. `per_tile` **markers per tile**. The
 ///   final tile runs to the end of the spectrogram.

@@ -1,5 +1,5 @@
 //! Bar/beat markers as plain data — this crate never sees score types
-//! (`CLAUDE.md`: "Anything needing score context ... receives plain data
+//! (`docs/plan.md`: "Anything needing score context ... receives plain data
 //! (sample/label grids) from the caller, never score types").
 
 /// A single marker: a sample offset and a label. Typically a bar start

@@ -1,6 +1,6 @@
 # cargo-deny config. The [bans] list is the *dependency direction law* made
 # structural: nothing in this workspace may depend on GUI, GPU, or realtime
-# audio-device crates, ever (CLAUDE.md). CI fails if one appears anywhere in
+# audio-device crates, ever (docs/plan.md). CI fails if one appears anywhere in
 # the resolved graph.
 
 [graph]

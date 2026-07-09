@@ -1,6 +1,6 @@
 //! The workspace's only randomness: a counter-based RNG keyed by
 //! `(seed, index)`. A pure integer hash — random access, no state, no
-//! entropy, identical on every platform (invariant 3 in `CLAUDE.md`).
+//! entropy, identical on every platform (the stochastic-sources law, `docs/plan.md`).
 
 /// SplitMix64-style finalizer over the pair. Distinct seeds give unrelated
 /// streams; within a stream, `index` is the sample position.

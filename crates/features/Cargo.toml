@@ -1,5 +1,5 @@
 # NOTE: this crate must never depend on cochlea-score or cochlea-synth —
-# `cochlea probe` works on arbitrary WAVs with no score in sight (CLAUDE.md).
+# `cochlea probe` works on arbitrary WAVs with no score in sight (docs/plan.md).
 [package]
 name = "cochlea-features"
 description = "Audio feature extraction: LUFS/true peak, onsets, pitch, chroma/key, silence, clipping"

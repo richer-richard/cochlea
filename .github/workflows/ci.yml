@@ -59,7 +59,7 @@ jobs:
       - run: cargo install cargo-deny --locked
       - run: cargo deny check
       # features/spectro must never depend on score/synth: `cochlea probe`
-      # on an arbitrary WAV is the adoption wedge (CLAUDE.md).
+      # on an arbitrary WAV is the adoption wedge (docs/plan.md).
       - name: dependency direction (features/spectro independent of score/synth)
         run: |
           ! cargo tree -p cochlea-features -e normal | grep -E "cochlea-(score|synth)"

@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// Interleaved PCM in `[-1.0, 1.0]`-normalized `f32`, plus the metadata
 /// needed to interpret it. The only audio representation this crate knows
-/// about — no score, no synth, arbitrary WAVs in (CLAUDE.md).
+/// about — no score, no synth, arbitrary WAVs in (docs/plan.md).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Audio {
     /// Interleaved samples: `frame * channels + channel`.

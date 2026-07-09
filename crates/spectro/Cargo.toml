@@ -1,5 +1,5 @@
 # NOTE: this crate must never depend on cochlea-score or cochlea-synth —
-# spectrograms of arbitrary WAVs need no score context (CLAUDE.md). Bar
+# spectrograms of arbitrary WAVs need no score context (docs/plan.md). Bar
 # markers arrive as plain (sample, label) grids from the caller.
 [package]
 name = "cochlea-spectro"
