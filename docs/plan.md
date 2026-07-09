@@ -457,11 +457,11 @@ pub struct VerifyReport { pub passed: bool, pub failures: Vec<Failure>, ... } //
 
 ```
 cochlea render score.ron --out mix.wav [--stems dir/] [--verify] [--report report.json]
-cochlea probe input.wav [--json report.json] [--spectro spec.png]
-                        [--digest] [--segments timeline.json] [--window-ms 1000]
-cochlea diff a.wav b.wav [--json compare.json] [--tier2] [--window-ms 1000]
+cochlea probe input.{wav,flac} [--json report.json] [--spectro spec.png]
+                               [--digest] [--segments timeline.json] [--window-ms 1000]
+cochlea diff a.{wav,flac} b.{wav,flac} [--json compare.json] [--tier2] [--window-ms 1000]
 cochlea lint score.ron
-cochlea spectro input.wav --out spec.png [--sheet --bars-per-tile 8]
+cochlea spectro input.{wav,flac} --out spec.png [--sheet --bars-per-tile 8]
 ```
 
 clap derive; `probe` ships in P3, the rest complete in P4; `probe

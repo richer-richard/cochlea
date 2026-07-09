@@ -101,7 +101,7 @@ fn tools_list_shape() {
         names,
         vec![
             "render_score",
-            "probe_wav",
+            "probe_audio",
             "spectrogram",
             "lint_score",
             "probe_digest",
@@ -156,7 +156,7 @@ fn tools_call_missing_required_argument_is_invalid_params() {
             "jsonrpc": "2.0",
             "id": 5,
             "method": "tools/call",
-            "params": {"name": "probe_wav", "arguments": {}},
+            "params": {"name": "probe_audio", "arguments": {}},
         }),
     );
     assert_eq!(response["error"]["code"], -32602);
@@ -164,7 +164,7 @@ fn tools_call_missing_required_argument_is_invalid_params() {
 }
 
 #[test]
-fn audio_diff_missing_wav_path_b_is_invalid_params() {
+fn audio_diff_missing_audio_path_b_is_invalid_params() {
     let server = Server::new();
     let response = call(
         &server,
@@ -172,7 +172,7 @@ fn audio_diff_missing_wav_path_b_is_invalid_params() {
             "jsonrpc": "2.0",
             "id": 5,
             "method": "tools/call",
-            "params": {"name": "audio_diff", "arguments": {"wav_path_a": "a.wav"}},
+            "params": {"name": "audio_diff", "arguments": {"audio_path_a": "a.wav"}},
         }),
     );
     assert_eq!(response["error"]["code"], -32602);

@@ -160,3 +160,22 @@ fn diff_different_renders_reports_different_and_tier2_exits_one() {
         "diff --tier2 of two different renders should exit 1"
     );
 }
+
+/// FLAC input goes through the same `probe` path as WAV
+/// (`cochlea_decode::load` dispatches on extension) — uses the decode
+/// crate's committed fixture, no render needed.
+#[test]
+fn probe_digest_reads_flac() {
+    let flac = format!(
+        "{}/../decode/tests/fixtures/tone_mono_16.flac",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let output = cochlea()
+        .args(["probe", &flac, "--digest"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.starts_with("cochlea digest:"), "{stdout}");
+    assert!(stdout.contains("8000Hz"), "{stdout}");
+}

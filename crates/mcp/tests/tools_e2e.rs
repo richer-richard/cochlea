@@ -67,8 +67,8 @@ fn render_probe_spectrogram_round_trip() {
     assert!(std::path::Path::new(&wav).exists());
     assert!(std::path::Path::new(&stems).join("lead.wav").exists());
 
-    // 2. probe_wav on the file render_score just wrote.
-    let response = call_tool(&server, 2, "probe_wav", json!({"wav_path": wav}));
+    // 2. probe_audio on the file render_score just wrote.
+    let response = call_tool(&server, 2, "probe_audio", json!({"audio_path": wav}));
     assert_eq!(response["result"]["isError"], false, "{response}");
     let report: Value = serde_json::from_str(tool_text(&response)).unwrap();
     assert_eq!(report["schema_version"], 1);
@@ -81,7 +81,7 @@ fn render_probe_spectrogram_round_trip() {
         &server,
         3,
         "spectrogram",
-        json!({"wav_path": wav, "out_path": png}),
+        json!({"audio_path": wav, "out_path": png}),
     );
     assert_eq!(response["result"]["isError"], false, "{response}");
     assert!(std::path::Path::new(&png).exists());
@@ -92,14 +92,14 @@ fn render_probe_spectrogram_round_trip() {
         &server,
         4,
         "spectrogram",
-        json!({"wav_path": wav, "out_path": sheet, "sheet": true, "bars_per_tile": 2}),
+        json!({"audio_path": wav, "out_path": sheet, "sheet": true, "bars_per_tile": 2}),
     );
     assert_eq!(response["result"]["isError"], false, "{response}");
     assert!(std::path::Path::new(&sheet).exists());
 
     // 4. probe_digest on the same file — the token-cheap alternative to
-    // probe_wav's full JSON.
-    let response = call_tool(&server, 5, "probe_digest", json!({"wav_path": wav}));
+    // probe_audio's full JSON.
+    let response = call_tool(&server, 5, "probe_digest", json!({"audio_path": wav}));
     assert_eq!(response["result"]["isError"], false, "{response}");
     let digest = tool_text(&response);
     assert!(digest.starts_with("cochlea digest:"), "{digest}");
@@ -110,13 +110,38 @@ fn render_probe_spectrogram_round_trip() {
         &server,
         6,
         "audio_diff",
-        json!({"wav_path_a": wav, "wav_path_b": wav}),
+        json!({"audio_path_a": wav, "audio_path_b": wav}),
     );
     assert_eq!(response["result"]["isError"], false, "{response}");
     assert!(
         tool_text(&response).contains("byte-identical"),
         "{}",
         tool_text(&response)
+    );
+}
+
+/// FLAC goes through the same tools as WAV (`cochlea_decode::load`
+/// dispatches on extension) — read the decode crate's committed fixture,
+/// no render needed.
+#[test]
+fn probe_audio_and_digest_read_flac() {
+    let server = Server::new();
+    let flac = format!(
+        "{}/../decode/tests/fixtures/tone_mono_16.flac",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    let response = call_tool(&server, 1, "probe_audio", json!({"audio_path": flac}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let report: Value = serde_json::from_str(tool_text(&response)).unwrap();
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["source"]["channels"], 1);
+
+    let response = call_tool(&server, 2, "probe_digest", json!({"audio_path": flac}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert!(
+        tool_text(&response).starts_with("cochlea digest:"),
+        "{response}"
     );
 }
 

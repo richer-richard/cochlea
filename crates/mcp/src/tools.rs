@@ -60,28 +60,28 @@ pub fn schemas() -> Vec<Value> {
             }
         }),
         json!({
-            "name": "probe_wav",
-            "description": "Extract the full feature report (integrated LUFS/true peak, onsets, YIN pitch track, chroma/key, silence, clipping) from any WAV file — no score needed. Use this to 'listen' to audio through numbers: check loudness targets, confirm onset timing, or read back pitch/key.",
+            "name": "probe_audio",
+            "description": "Extract the full feature report (integrated LUFS/true peak, onsets, YIN pitch track, chroma/key, silence, clipping) from any WAV or FLAC file — no score needed. Use this to 'listen' to audio through numbers: check loudness targets, confirm onset timing, or read back pitch/key.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "wav_path": {
+                    "audio_path": {
                         "type": "string",
-                        "description": "Path to a WAV file (8/16/24/32-bit PCM or 32-bit float)."
+                        "description": "Path to a WAV (8/16/24/32-bit PCM or 32-bit float) or FLAC file."
                     }
                 },
-                "required": ["wav_path"]
+                "required": ["audio_path"]
             }
         }),
         json!({
             "name": "spectrogram",
-            "description": "Render a mel spectrogram PNG (or a tiled contact sheet covering the whole file) from a WAV, for visual inspection of harmonic content, sweeps, or silence. Use this when a numeric probe report isn't enough and you want to look at the audio.",
+            "description": "Render a mel spectrogram PNG (or a tiled contact sheet covering the whole file) from a WAV or FLAC file, for visual inspection of harmonic content, sweeps, or silence. Use this when a numeric probe report isn't enough and you want to look at the audio.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "wav_path": {
+                    "audio_path": {
                         "type": "string",
-                        "description": "Path to the input WAV."
+                        "description": "Path to the input WAV or FLAC."
                     },
                     "out_path": {
                         "type": "string",
@@ -98,7 +98,7 @@ pub fn schemas() -> Vec<Value> {
                         "default": 8
                     }
                 },
-                "required": ["wav_path", "out_path"]
+                "required": ["audio_path", "out_path"]
             }
         }),
         json!({
@@ -117,13 +117,13 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "probe_digest",
-            "description": "The token-cheap way to listen to a WAV: a ~40-line deterministic text digest (duration, loudness, onsets, pitch, key, and a windowed timeline table) instead of a full JSON report or raw PCM. Reach for this first when you just need a sense of what's in a file, and only fall back to probe_wav when you need exact numbers to assert against.",
+            "description": "The token-cheap way to listen to a WAV or FLAC file: a ~40-line deterministic text digest (duration, loudness, onsets, pitch, key, and a windowed timeline table) instead of a full JSON report or raw PCM. Reach for this first when you just need a sense of what's in a file, and only fall back to probe_audio when you need exact numbers to assert against.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "wav_path": {
+                    "audio_path": {
                         "type": "string",
-                        "description": "Path to a WAV file."
+                        "description": "Path to a WAV or FLAC file."
                     },
                     "window_ms": {
                         "type": "number",
@@ -131,22 +131,22 @@ pub fn schemas() -> Vec<Value> {
                         "default": 1000
                     }
                 },
-                "required": ["wav_path"]
+                "required": ["audio_path"]
             }
         }),
         json!({
             "name": "audio_diff",
-            "description": "Compare two WAV files in feature space (loudness, onsets, pitch, key, per-segment RMS) rather than byte-for-byte, and report a verdict: byte-identical, tier-2 equivalent (within this workspace's cross-platform tolerances), or different (naming which dimensions diverge). Use this to check whether a re-render, edit, or platform change actually altered the audio in a way that matters — a `different` verdict is a normal, successful answer, not a tool failure.",
+            "description": "Compare two audio files (WAV or FLAC) in feature space (loudness, onsets, pitch, key, per-segment RMS) rather than byte-for-byte, and report a verdict: byte-identical, tier-2 equivalent (within this workspace's cross-platform tolerances), or different (naming which dimensions diverge). Use this to check whether a re-render, edit, or platform change actually altered the audio in a way that matters — a `different` verdict is a normal, successful answer, not a tool failure.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "wav_path_a": {
+                    "audio_path_a": {
                         "type": "string",
-                        "description": "Path to the first WAV."
+                        "description": "Path to the first audio file (WAV or FLAC)."
                     },
-                    "wav_path_b": {
+                    "audio_path_b": {
                         "type": "string",
-                        "description": "Path to the second WAV."
+                        "description": "Path to the second audio file (WAV or FLAC)."
                     },
                     "window_ms": {
                         "type": "number",
@@ -159,7 +159,7 @@ pub fn schemas() -> Vec<Value> {
                         "default": false
                     }
                 },
-                "required": ["wav_path_a", "wav_path_b"]
+                "required": ["audio_path_a", "audio_path_b"]
             }
         }),
     ]
@@ -294,17 +294,17 @@ fn peak_dbfs(samples: &[f32]) -> Option<f64> {
     }
 }
 
-/// `probe_wav`: mirrors `cochlea probe` (`crates/cli/src/main.rs`
+/// `probe_audio`: mirrors `cochlea probe` (`crates/cli/src/main.rs`
 /// `Cmd::Probe`) without the `--spectro` side effect — call `spectrogram`
 /// separately for that, so each tool does exactly one thing.
-pub fn probe_wav(args: &Value) -> ToolOutcome {
-    let wav_path = match require_str(args, "wav_path") {
+pub fn probe_audio(args: &Value) -> ToolOutcome {
+    let audio_path = match require_str(args, "audio_path") {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    let audio = match cochlea_features::Audio::from_wav(Path::new(wav_path)) {
+    let audio = match cochlea_decode::load(Path::new(audio_path)) {
         Ok(audio) => audio,
-        Err(err) => return ToolOutcome::Failed(format!("reading {wav_path}: {err}")),
+        Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
     let report = cochlea_features::probe(&audio, &cochlea_features::ProbeOpts::default());
     match serde_json::to_string_pretty(&report) {
@@ -318,7 +318,7 @@ pub fn probe_wav(args: &Value) -> ToolOutcome {
 /// no markers (those need score context via `render_score`, per the CLI's
 /// own `--bars-per-tile` doc comment).
 pub fn spectrogram(args: &Value) -> ToolOutcome {
-    let wav_path = match require_str(args, "wav_path") {
+    let audio_path = match require_str(args, "audio_path") {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
@@ -329,9 +329,9 @@ pub fn spectrogram(args: &Value) -> ToolOutcome {
     let sheet = bool_or(args, "sheet", false);
     let bars_per_tile = usize_or(args, "bars_per_tile", 8);
 
-    let audio = match cochlea_features::Audio::from_wav(Path::new(wav_path)) {
+    let audio = match cochlea_decode::load(Path::new(audio_path)) {
         Ok(audio) => audio,
-        Err(err) => return ToolOutcome::Failed(format!("reading {wav_path}: {err}")),
+        Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
     let spec = cochlea_spectro::mel_spectrogram(
         &audio.samples,
@@ -388,11 +388,11 @@ pub fn lint_score(args: &Value) -> ToolOutcome {
     }
 }
 
-/// `probe_digest`: the token-cheap sibling of `probe_wav` — a full probe
+/// `probe_digest`: the token-cheap sibling of `probe_audio` — a full probe
 /// plus segment timeline, rendered through `cochlea_features::digest_text`
 /// instead of returned as JSON.
 pub fn probe_digest(args: &Value) -> ToolOutcome {
-    let wav_path = match require_str(args, "wav_path") {
+    let audio_path = match require_str(args, "audio_path") {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
@@ -401,9 +401,9 @@ pub fn probe_digest(args: &Value) -> ToolOutcome {
         Err(outcome) => return outcome,
     };
 
-    let audio = match cochlea_features::Audio::from_wav(Path::new(wav_path)) {
+    let audio = match cochlea_decode::load(Path::new(audio_path)) {
         Ok(audio) => audio,
-        Err(err) => return ToolOutcome::Failed(format!("reading {wav_path}: {err}")),
+        Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
     let report = cochlea_features::probe(&audio, &cochlea_features::ProbeOpts::default());
     let timeline = cochlea_features::segment_timeline(
@@ -417,11 +417,11 @@ pub fn probe_digest(args: &Value) -> ToolOutcome {
 /// verdict is a valid, successful answer — only a real read failure on
 /// either side makes this a tool-level [`ToolOutcome::Failed`].
 pub fn audio_diff(args: &Value) -> ToolOutcome {
-    let path_a = match require_str(args, "wav_path_a") {
+    let path_a = match require_str(args, "audio_path_a") {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    let path_b = match require_str(args, "wav_path_b") {
+    let path_b = match require_str(args, "audio_path_b") {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
@@ -431,11 +431,11 @@ pub fn audio_diff(args: &Value) -> ToolOutcome {
     };
     let want_json = bool_or(args, "json", false);
 
-    let audio_a = match cochlea_features::Audio::from_wav(Path::new(path_a)) {
+    let audio_a = match cochlea_decode::load(Path::new(path_a)) {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {path_a}: {err}")),
     };
-    let audio_b = match cochlea_features::Audio::from_wav(Path::new(path_b)) {
+    let audio_b = match cochlea_decode::load(Path::new(path_b)) {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {path_b}: {err}")),
     };

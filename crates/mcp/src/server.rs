@@ -105,7 +105,7 @@ impl Server {
 
         let outcome = match name {
             "render_score" => tools::render_score(args),
-            "probe_wav" => tools::probe_wav(args),
+            "probe_audio" => tools::probe_audio(args),
             "spectrogram" => tools::spectrogram(args),
             "lint_score" => tools::lint_score(args),
             "probe_digest" => tools::probe_digest(args),

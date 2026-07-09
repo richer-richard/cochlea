@@ -41,10 +41,10 @@ enum Cmd {
         #[arg(long)]
         report: Option<PathBuf>,
     },
-    /// Extract the feature report (and optionally a spectrogram) from a WAV
-    /// — works on arbitrary WAVs, no score needed.
+    /// Extract the feature report (and optionally a spectrogram) from an
+    /// audio file (WAV or FLAC) — works on arbitrary files, no score needed.
     Probe {
-        /// Input WAV (f32 or 16/24/32-bit PCM).
+        /// Input audio: WAV (f32 or 16/24/32-bit PCM) or FLAC.
         input: PathBuf,
         /// Write the JSON report here instead of stdout.
         #[arg(long)]
@@ -65,13 +65,13 @@ enum Cmd {
         #[arg(long, default_value_t = 1000.0, value_parser = parse_window_ms)]
         window_ms: f64,
     },
-    /// Feature-space diff of two WAVs — "did my change do what I meant":
+    /// Feature-space diff of two audio files (WAV or FLAC) — "did my change do what I meant":
     /// loudness/onset/pitch/key deltas plus an equivalence verdict, printed
     /// as a compact text digest sized for LLM context windows.
     Diff {
-        /// First input WAV.
+        /// First input audio file (WAV or FLAC).
         a: PathBuf,
-        /// Second input WAV.
+        /// Second input audio file (WAV or FLAC).
         b: PathBuf,
         /// Write the comparison JSON here.
         #[arg(long)]
@@ -89,9 +89,9 @@ enum Cmd {
         /// The score (RON data form, version 1).
         score: PathBuf,
     },
-    /// Render a mel spectrogram (or tiled contact sheet) from a WAV.
+    /// Render a mel spectrogram (or tiled contact sheet) from an audio file.
     Spectro {
-        /// Input WAV.
+        /// Input audio (WAV or FLAC).
         input: PathBuf,
         /// Output PNG path.
         #[arg(long)]
@@ -208,7 +208,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                 }
             }
 
-            let audio = cochlea_features::Audio::from_wav(&input)
+            let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             let report = cochlea_features::probe(&audio, &cochlea_features::ProbeOpts::default());
 
@@ -256,10 +256,10 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             tier2,
             window_ms,
         } => {
-            let audio_a = cochlea_features::Audio::from_wav(&a)
-                .with_context(|| format!("reading {}", a.display()))?;
-            let audio_b = cochlea_features::Audio::from_wav(&b)
-                .with_context(|| format!("reading {}", b.display()))?;
+            let audio_a =
+                cochlea_decode::load(&a).with_context(|| format!("reading {}", a.display()))?;
+            let audio_b =
+                cochlea_decode::load(&b).with_context(|| format!("reading {}", b.display()))?;
 
             let opts = cochlea_features::SegmentOpts::default().with_window_ms(window_ms);
             let report_a =
@@ -324,7 +324,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             sheet,
             bars_per_tile,
         } => {
-            let audio = cochlea_features::Audio::from_wav(&input)
+            let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             write_spectro(&audio, &out, sheet, bars_per_tile)?;
             Ok(std::process::ExitCode::SUCCESS)

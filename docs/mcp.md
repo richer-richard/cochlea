@@ -21,11 +21,11 @@ second front end onto the same offline pipeline, not a reimplementation.
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `render_score` | `score_path` (string, required), `out_path` (string, required), `stems_dir` (string, optional), `verify` (bool, default `false`) | Text summary: frame count, duration, sample rate, peak dBFS, stems written; if `verify` is set, the full verify-report JSON is appended and the call reports `isError: true` on a failed verification. |
-| `probe_wav` | `wav_path` (string, required) | The full feature report (loudness/LUFS, true peak, onsets, YIN pitch, chroma/key, silence, clipping) as pretty JSON. Works on any WAV — no score required. |
-| `spectrogram` | `wav_path` (string, required), `out_path` (string, required), `sheet` (bool, default `false`), `bars_per_tile` (integer, default `8`) | Text: the written PNG path and its pixel dimensions. Plain spectrogram or, with `sheet: true`, a tiled contact sheet — no score-aware bar markers yet (those need score context via `render_score`). |
+| `probe_audio` | `audio_path` (string, required) | The full feature report (loudness/LUFS, true peak, onsets, YIN pitch, chroma/key, silence, clipping) as pretty JSON. Works on any WAV or FLAC — no score required. |
+| `spectrogram` | `audio_path` (string, required), `out_path` (string, required), `sheet` (bool, default `false`), `bars_per_tile` (integer, default `8`) | Text: the written PNG path and its pixel dimensions. Plain spectrogram or, with `sheet: true`, a tiled contact sheet — no score-aware bar markers yet (those need score context via `render_score`). |
 | `lint_score` | `score_path` (string, required) | Text: `"ok: no lint findings"`, or the JSON list of findings. `isError: true` iff any finding is `Severity::Error`, matching `cochlea lint`'s exit-1 threshold. |
-| `probe_digest` | `wav_path` (string, required), `window_ms` (number, default `1000`) | A ~40-line deterministic text digest (`cochlea_features::digest_text`) instead of a full JSON report — the token-cheap way to "listen" to a WAV. Prefer this over `probe_wav` unless the caller needs exact numbers to assert against. |
-| `audio_diff` | `wav_path_a` (string, required), `wav_path_b` (string, required), `window_ms` (number, default `1000`), `json` (bool, default `false`) | Feature-space comparison text (`cochlea_features::compare_text`): a verdict (`byte-identical` / `tier2-equivalent` / `different (dimensions...)`) plus per-dimension deltas. `json: true` appends the full `CompareReport` as pretty JSON. A `different` verdict is a normal, successful answer — not `isError`. |
+| `probe_digest` | `audio_path` (string, required), `window_ms` (number, default `1000`) | A ~40-line deterministic text digest (`cochlea_features::digest_text`) instead of a full JSON report — the token-cheap way to "listen" to a WAV or FLAC. Prefer this over `probe_audio` unless the caller needs exact numbers to assert against. |
+| `audio_diff` | `audio_path_a` (string, required), `audio_path_b` (string, required), `window_ms` (number, default `1000`), `json` (bool, default `false`) | Feature-space comparison text (`cochlea_features::compare_text`): a verdict (`byte-identical` / `tier2-equivalent` / `different (dimensions...)`) plus per-dimension deltas. `json: true` appends the full `CompareReport` as pretty JSON. A `different` verdict is a normal, successful answer — not `isError`. |
 
 Tool-level failures (a bad path, a render error, a failed verify or lint)
 come back as a normal `tools/call` success response with `isError: true`
@@ -57,10 +57,10 @@ file without corrupting the transport.
 
 ## Example
 
-Request (`tools/call` for `probe_wav`, sent as one line):
+Request (`tools/call` for `probe_audio`, sent as one line):
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"probe_wav","arguments":{"wav_path":"mix.wav"}}}
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"probe_audio","arguments":{"audio_path":"mix.wav"}}}
 ```
 
 Response (one line back; the pretty-printed report is escaped into the

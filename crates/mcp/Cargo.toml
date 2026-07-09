@@ -22,6 +22,7 @@ cochlea-score.workspace = true
 cochlea-synth.workspace = true
 cochlea-render.workspace = true
 cochlea-features.workspace = true
+cochlea-decode.workspace = true
 cochlea-spectro.workspace = true
 cochlea-verify.workspace = true
 anyhow.workspace = true
