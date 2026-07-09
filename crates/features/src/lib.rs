@@ -21,6 +21,7 @@ mod pitch;
 mod report;
 mod segments;
 mod silence;
+mod stereo;
 mod stft;
 mod tempo;
 
@@ -31,6 +32,7 @@ pub use compare::{
     samples_identical,
 };
 pub use digest::digest_text;
+pub use loudness::{LoudnessDynamicsReport, ShortTermPoint, loudness_dynamics};
 pub use report::{
     ClippingReport, KeyReport, LoudnessReport, Mode, OnsetsReport, PitchClass, PitchReport,
     PitchSegment, ProbeOpts, Report, SilenceReport, SourceInfo,
@@ -38,6 +40,7 @@ pub use report::{
 pub use segments::{
     BandEnergy, SEGMENTS_SCHEMA_VERSION, Segment, SegmentOpts, SegmentTimeline, segment_timeline,
 };
+pub use stereo::{StereoReport, stereo_image};
 pub use tempo::{TempoOpts, TempoReport, estimate_tempo};
 
 /// Schema version of [`Report`]'s JSON form. Bump and document here on any
