@@ -1,10 +1,18 @@
 # cochlea
 
+[![CI](https://github.com/richer-richard/cochlea/actions/workflows/ci.yml/badge.svg)](https://github.com/richer-richard/cochlea/actions/workflows/ci.yml)
+
 **A headless audio engine for agents.** Write a score as data, render it
 offline to deterministic PCM, then *listen through numbers* — loudness,
 onsets, pitch, key, spectrograms — and assert what you heard. Compose →
 render → probe → verify, with no human ear (and no audio device) in the
 loop.
+
+![Mel spectrogram of first_light.ron: six note onsets followed by a reverb tail decaying to silence](docs/assets/first_light_spectro.png)
+
+*What the agent sees: the mel spectrogram of `examples/scores/first_light.ron`
+— the score used in the example below — after render and probe. No PCM in
+sight.*
 
 ```rust
 use cochlea_score::*;
@@ -42,6 +50,84 @@ cochlea spectro input.wav --out spec.png --sheet --bars-per-tile 8
 `cochlea probe` works on **any** WAV — no score required. That's the
 front door: point it at audio you didn't render and get the same JSON
 report and spectrogram an agent uses to review its own work.
+
+## How an agent listens
+
+compose → render → probe (JSON) → spectrogram (one vision call) → verify
+
+1. **compose** a score as data (RON, or the Rust builder above).
+2. **render** it to deterministic PCM — `cochlea render score.ron --out mix.wav`.
+3. **probe** the mix into a compact JSON report (loudness, onsets, pitch,
+   key, silence, clipping) — `cochlea probe mix.wav --json report.json`.
+   No image, no audio: the agent reads numbers.
+4. **look**, when numbers aren't enough — `cochlea spectro mix.wav --out
+   spec.png` renders one small PNG the agent reviews in a single vision
+   call instead of reasoning about raw samples.
+5. **verify** — `cochlea render score.ron --verify` runs the score's
+   embedded assertions and exits nonzero on failure, so an agent can retry
+   without a human confirming "yes, that sounds right."
+
+The economics are the point, not an afterthought. The `first_light` render
+above is 7 seconds of 48 kHz/32-bit-float PCM and weighs 2.7 MB; a
+3-minute piece at the same settings is ~66 MB — not something to hand an
+agent as text, let alone read sample-by-sample. Its probe report is 2 KB
+of JSON (trimmed here to the interesting fields):
+
+```json
+{
+  "schema_version": 1,
+  "source": {
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_ms": 7035.708333333333
+  },
+  "loudness": {
+    "integrated_lufs": -22.70045487928478,
+    "true_peak_dbtp": -15.910817022082783
+  },
+  "onsets": {
+    "count": 6,
+    "times_ms": [1077.33, 2149.33, 2346.67, 3221.33, 4538.67, 5034.67]
+  },
+  "pitch": {
+    "voiced_ratio": 0.9847560975609756,
+    "median_f0_hz": 110.00194603797897
+  },
+  "key": {
+    "tonic": "E",
+    "mode": "major",
+    "confidence": 0.8093960265638273
+  },
+  "silence": { "trailing_ms": 2485.708333333333 },
+  "clipping": { "clipped_samples": 0, "true_peak_over_0dbtp": false }
+}
+```
+
+And the spectrogram is one small image. Here's the `title_cue` demo — a
+pad whose `cutoff_hz` automation sweeps 250 Hz → 5000 Hz across bars 1–3:
+
+![Mel spectrogram of the title_cue demo: the quiet band at the top of the frame narrows across the first two bars as the filter sweep lets more high-frequency energy through](docs/assets/title_cue_spectro.png)
+
+*The dark band at the top of the frame narrows as the sweep runs — more
+high-frequency energy gets let through over time. An agent reads that
+directly off the image; the demo's `Monotone(track: "pad", param:
+"cutoff_hz", ...)` assertion checks the same thing numerically.*
+
+For a whole piece in one image regardless of length, `--sheet` tiles the
+spectrogram into a contact sheet instead of one long strip (two bars per
+tile here, `--bars-per-tile 2`):
+
+![Contact-sheet spectrogram of first_light.ron tiled two bars per row](docs/assets/first_light_sheet.png)
+
+## Install
+
+Not on crates.io yet — build the `cochlea` binary from source:
+
+```
+git clone https://github.com/richer-richard/cochlea
+cd cochlea
+cargo install --path crates/cli
+```
 
 ## Concepts
 
@@ -164,8 +250,8 @@ verify: [
 
 Three worked demos live in [`demos/`](demos/): `metronome` (sample-exact
 scheduling, onset tolerances), `chord_pad` (harmony reads as written),
-`title_cue` (a 10-second sting asserting a LUFS target, a monotone filter
-sweep, click-freedom, and silence after the fade).
+`title_cue` (a four-bar cinematic sting asserting a LUFS target, a
+monotone filter sweep, click-freedom, and silence after the fade).
 
 ## Workspace
 
@@ -178,6 +264,7 @@ crates/
   spectro    # mel spectrogram -> PNG, contact sheets, image diff
   verify     # assertion DSL + RON-embeddable specs + JSON reports
   cli        # the `cochlea` binary
+  mcp        # MCP stdio server (agents call render/probe/verify as tools)
 ```
 
 `features` and `spectro` depend on neither `score` nor `synth` — enforced
