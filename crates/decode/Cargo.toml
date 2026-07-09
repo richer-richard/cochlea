@@ -21,7 +21,11 @@ symphonia.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# Only for the #[ignore]d fixture-regeneration test (hound writes the WAV
+# twin, libm supplies the sine — clippy's disallowed-methods ban on std
+# transcendentals applies to test code too).
 hound.workspace = true
+libm.workspace = true
 
 [lints]
 workspace = true
