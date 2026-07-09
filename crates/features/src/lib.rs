@@ -12,18 +12,30 @@
 
 mod audio;
 mod clipping;
+mod compare;
+mod digest;
 mod key;
 mod loudness;
 mod onsets;
 mod pitch;
 mod report;
+mod segments;
 mod silence;
 mod stft;
 
 pub use audio::{Audio, AudioError};
+pub use compare::{
+    Analysis, COMPARE_SCHEMA_VERSION, CompareReport, KeyDelta, KeySummary, LoudnessDelta,
+    OnsetMatch, PitchDelta, SegmentDelta, Verdict, compare, compare_text, compare_with_identity,
+    samples_identical,
+};
+pub use digest::digest_text;
 pub use report::{
     ClippingReport, KeyReport, LoudnessReport, Mode, OnsetsReport, PitchClass, PitchReport,
     PitchSegment, ProbeOpts, Report, SilenceReport, SourceInfo,
+};
+pub use segments::{
+    BandEnergy, SEGMENTS_SCHEMA_VERSION, Segment, SegmentOpts, SegmentTimeline, segment_timeline,
 };
 
 /// Schema version of [`Report`]'s JSON form. Bump and document here on any

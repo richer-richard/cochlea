@@ -198,6 +198,25 @@ impl PitchClass {
         PitchClass::ASharp,
         PitchClass::B,
     ];
+
+    /// Note name as printed in text digests/comparisons (`"C"`, `"C#"`,
+    /// ...) — the same spelling as this type's serde wire form.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            PitchClass::C => "C",
+            PitchClass::CSharp => "C#",
+            PitchClass::D => "D",
+            PitchClass::DSharp => "D#",
+            PitchClass::E => "E",
+            PitchClass::F => "F",
+            PitchClass::FSharp => "F#",
+            PitchClass::G => "G",
+            PitchClass::GSharp => "G#",
+            PitchClass::A => "A",
+            PitchClass::ASharp => "A#",
+            PitchClass::B => "B",
+        }
+    }
 }
 
 /// Major or minor.

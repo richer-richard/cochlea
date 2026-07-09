@@ -125,17 +125,22 @@ fn midi_hz(n: i32) -> f64 {
     440.0 * libm::exp2((f64::from(n) - 69.0) / 12.0)
 }
 
-/// Nearest equal-tempered MIDI note number to `f0_hz`.
-fn nearest_midi(f0_hz: f64) -> i32 {
+/// Nearest equal-tempered MIDI note number to `f0_hz`. Exposed crate-wide so
+/// `segments`/`digest` can classify a per-window or per-buffer median f0 the
+/// same way this module classifies a per-run one.
+pub(crate) fn nearest_midi(f0_hz: f64) -> i32 {
     (69.0 + 12.0 * libm::log2(f0_hz / 440.0)).round() as i32
 }
 
-/// Deviation of `f0_hz` from `midi`'s pitch, in cents.
-fn cents_off(f0_hz: f64, midi: i32) -> f64 {
+/// Deviation of `f0_hz` from `midi`'s pitch, in cents. See [`nearest_midi`]
+/// on visibility.
+pub(crate) fn cents_off(f0_hz: f64, midi: i32) -> f64 {
     1200.0 * libm::log2(f0_hz / midi_hz(midi))
 }
 
-fn median(values: &mut [f64]) -> Option<f64> {
+/// Median of `values`. Exposed crate-wide for `digest`'s display-bucket
+/// aggregation (median f0 of the voiced segments in a merged row).
+pub(crate) fn median(values: &mut [f64]) -> Option<f64> {
     if values.is_empty() {
         return None;
     }
