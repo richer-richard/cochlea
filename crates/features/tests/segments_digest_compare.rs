@@ -197,7 +197,10 @@ fn digest_text_snapshot_with_silent_run_collapsing() {
         "onsets: count=2  rate=0.25/s",
         "silence: leading=0ms  trailing=0ms",
         "clipping: clipped=0  over_0dbtp=false",
-        "timeline: window=1000ms  bucket=1x  rows=8",
+        // rows=5 counts the table lines actually printed (post-collapse),
+        // not the 8 pre-collapse buckets — the header is what an agent
+        // budgets context against.
+        "timeline: window=1000ms  bucket=1x  rows=5",
         "   idx        t(s)     rms   peak  ons     f0  flags",
         "     0   0.000-1.000    -9.03  -6.02    0   440.0  -",
         "     1   1.000-2.000    -9.03  -6.02    0   440.0  -",

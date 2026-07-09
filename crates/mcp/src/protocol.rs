@@ -29,14 +29,20 @@ pub struct Message {
 /// The result of parsing one line.
 pub enum ParseOutcome {
     Message(Message),
-    /// Valid JSON, but not an object with a string "method" — e.g. a bare
-    /// array, or an object missing "method". `id` carries through if the
-    /// object had one, so a genuine (if malformed) request still gets an
-    /// Invalid Request error rather than silent drop; a notification-shaped
-    /// non-request (no "id") is dropped like any other notification.
+    /// A JSON *object* missing a string "method". `id` carries through if
+    /// present, so a genuine (if malformed) request still gets an Invalid
+    /// Request error rather than silent drop; a notification-shaped
+    /// non-request (object, no "id") is dropped like any other
+    /// notification.
     Invalid {
         id: Option<Value>,
     },
+    /// Valid JSON but not an object at all (array/string/number/bool/
+    /// null). Never a notification — JSON-RPC 2.0 notifications are
+    /// objects — so this always deserves an `id: null` Invalid Request
+    /// response (batches are unsupported by the MCP stdio transport, and
+    /// silence would hang a client awaiting *some* reply).
+    NotAnObject,
     /// The line was not valid JSON at all.
     ParseError,
 }
@@ -46,19 +52,18 @@ pub fn parse_line(line: &str) -> ParseOutcome {
     let Ok(value) = serde_json::from_str::<Value>(line) else {
         return ParseOutcome::ParseError;
     };
-    let obj = value.as_object();
-    let has_id = obj.is_some_and(|o| o.contains_key("id"));
-    let id = obj.and_then(|o| o.get("id")).cloned();
-    let method = obj.and_then(|o| o.get("method")).and_then(Value::as_str);
+    let Some(obj) = value.as_object() else {
+        return ParseOutcome::NotAnObject;
+    };
+    let has_id = obj.contains_key("id");
+    let id = obj.get("id").cloned();
+    let method = obj.get("method").and_then(Value::as_str);
 
     match method {
         Some(method) => ParseOutcome::Message(Message {
             id,
             method: method.to_string(),
-            params: obj
-                .and_then(|o| o.get("params"))
-                .cloned()
-                .unwrap_or(Value::Null),
+            params: obj.get("params").cloned().unwrap_or(Value::Null),
         }),
         None => ParseOutcome::Invalid {
             id: if has_id { id } else { None },

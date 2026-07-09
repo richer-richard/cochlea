@@ -179,3 +179,38 @@ fn probe_digest_reads_flac() {
     assert!(stdout.starts_with("cochlea digest:"), "{stdout}");
     assert!(stdout.contains("8000Hz"), "{stdout}");
 }
+
+/// Output flags pointing back at an input are a usage error (exit 2) —
+/// before this guard, `probe x.wav --json x.wav` silently destroyed the
+/// input audio with exit 0.
+#[test]
+fn output_flags_never_overwrite_an_input() {
+    let (a, b) = fixtures();
+    let a_str = a.to_str().unwrap();
+    let b_str = b.to_str().unwrap();
+    let before = std::fs::read(a).unwrap();
+
+    let output = cochlea()
+        .args(["probe", a_str, "--json", a_str])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+
+    let output = cochlea()
+        .args(["probe", a_str, "--segments", a_str])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+
+    let output = cochlea()
+        .args(["diff", a_str, b_str, "--json", b_str])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+
+    assert_eq!(
+        std::fs::read(a).unwrap(),
+        before,
+        "the input WAV must be byte-identical after the rejected calls"
+    );
+}

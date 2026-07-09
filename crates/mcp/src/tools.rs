@@ -227,6 +227,16 @@ pub fn render_score(args: &Value) -> ToolOutcome {
     let stems_dir = args.get("stems_dir").and_then(Value::as_str);
     let verify = bool_or(args, "verify", false);
 
+    // The score is fully read before out_path is written, so an equal path
+    // would "succeed" while destroying the caller's score file — reject it
+    // before any work starts.
+    if out_path == score_path {
+        return ToolOutcome::InvalidParams(
+            "out_path must not equal score_path (the WAV write would overwrite the score)"
+                .to_string(),
+        );
+    }
+
     let text = match std::fs::read_to_string(score_path) {
         Ok(text) => text,
         Err(err) => return ToolOutcome::Failed(format!("reading {score_path}: {err}")),
@@ -328,6 +338,16 @@ pub fn spectrogram(args: &Value) -> ToolOutcome {
     };
     let sheet = bool_or(args, "sheet", false);
     let bars_per_tile = usize_or(args, "bars_per_tile", 8);
+
+    // Same protection as render_score: the audio is fully decoded before
+    // out_path is written, so an equal path destroys the input while the
+    // call still "succeeds".
+    if out_path == audio_path {
+        return ToolOutcome::InvalidParams(
+            "out_path must not equal audio_path (the PNG write would overwrite the audio)"
+                .to_string(),
+        );
+    }
 
     let audio = match cochlea_decode::load(Path::new(audio_path)) {
         Ok(audio) => audio,

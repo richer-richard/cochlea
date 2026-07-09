@@ -7,38 +7,25 @@
 //! stdout carries only protocol response lines; everything else (this
 //! banner included) goes to stderr. EOF on stdin is a clean exit.
 //!
-//! This file is deliberately thin: framing only. The dispatch logic lives
-//! in the library's `server` module as a pure function of strings
-//! (`Server::handle_line`), so it's tested without a subprocess
+//! This file is deliberately thin: the framing loop (with its per-line
+//! size cap) is `server::serve`, and dispatch is a pure function of
+//! strings (`Server::handle_line`) — both tested without a subprocess
 //! (`crates/mcp/tests/`).
 
-use std::io::{BufRead, Write};
+use cochlea_mcp::server::{Server, serve};
 
-use cochlea_mcp::server::Server;
-
-fn main() {
+fn main() -> std::process::ExitCode {
     eprintln!(
         "cochlea-mcp {} starting on stdio",
         env!("CARGO_PKG_VERSION")
     );
     let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-    let server = Server::new();
-
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(line) => line,
-            Err(err) => {
-                eprintln!("cochlea-mcp: stdin read error: {err}");
-                break;
-            }
-        };
-        let Some(response) = server.handle_line(&line) else {
-            continue;
-        };
-        if writeln!(stdout, "{response}").is_err() || stdout.flush().is_err() {
-            eprintln!("cochlea-mcp: stdout write failed, exiting");
-            break;
+    let stdout = std::io::stdout();
+    match serve(&Server::new(), stdin.lock(), stdout.lock()) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("cochlea-mcp: stdio error: {err}");
+            std::process::ExitCode::from(1)
         }
     }
 }

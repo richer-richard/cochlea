@@ -172,16 +172,11 @@ fn write_timeline(out: &mut String, timeline: &SegmentTimeline) {
         .map(Row::merge)
         .collect();
 
-    writeln!(
-        out,
-        "timeline: window={:.0}ms  bucket={bucket_width}x  rows={}",
-        timeline.window_ms,
-        rows.len(),
-    )
-    .expect("String write is infallible");
-    writeln!(out, "   idx        t(s)     rms   peak  ons     f0  flags",)
-        .expect("String write is infallible");
-
+    // Render the table body first so the header's `rows=` counts the lines
+    // actually printed — silent-run collapsing merges 3+ rows into one, and
+    // a header counting pre-collapse buckets would overstate the table an
+    // agent is budgeting context for.
+    let mut lines: Vec<String> = Vec::with_capacity(rows.len());
     let mut i = 0;
     while i < rows.len() {
         if rows[i].silent {
@@ -203,38 +198,46 @@ fn write_timeline(out: &mut String, timeline: &SegmentTimeline) {
                     .map(|r| r.onset_count)
                     .sum();
                 if onsets > 0 {
-                    writeln!(
-                        out,
+                    lines.push(format!(
                         "  {}-{}  silent ({duration_s:.1} s, ons={onsets})",
                         first.first_idx, last.last_idx,
-                    )
-                    .expect("String write is infallible");
+                    ));
                 } else {
-                    writeln!(
-                        out,
+                    lines.push(format!(
                         "  {}-{}  silent ({duration_s:.1} s)",
                         first.first_idx, last.last_idx,
-                    )
-                    .expect("String write is infallible");
+                    ));
                 }
                 i = run_end + 1;
                 continue;
             }
         }
-        write_row(out, &rows[i]);
+        lines.push(row_line(&rows[i]));
         i += 1;
+    }
+
+    writeln!(
+        out,
+        "timeline: window={:.0}ms  bucket={bucket_width}x  rows={}",
+        timeline.window_ms,
+        lines.len(),
+    )
+    .expect("String write is infallible");
+    writeln!(out, "   idx        t(s)     rms   peak  ons     f0  flags",)
+        .expect("String write is infallible");
+    for line in lines {
+        writeln!(out, "{line}").expect("String write is infallible");
     }
 }
 
-fn write_row(out: &mut String, row: &Row) {
+fn row_line(row: &Row) -> String {
     let idx = if row.first_idx == row.last_idx {
         format!("{}", row.first_idx)
     } else {
         format!("{}-{}", row.first_idx, row.last_idx)
     };
     let flags = if row.silent { "S" } else { "-" };
-    writeln!(
-        out,
+    format!(
         "{idx:>6}  {:>6.3}-{:<6.3}  {:>6}  {:>5}  {:>3}  {:>6}  {flags}",
         row.start_ms / 1000.0,
         row.end_ms / 1000.0,
@@ -243,7 +246,6 @@ fn write_row(out: &mut String, row: &Row) {
         row.onset_count,
         fmt_dash(row.f0_hz, 1),
     )
-    .expect("String write is infallible");
 }
 
 /// LUFS-specific formatting: `None` (ebur128's `-inf` reading, silence or

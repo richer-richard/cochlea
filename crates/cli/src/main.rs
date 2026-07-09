@@ -207,6 +207,15 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                     }
                 }
             }
+            // And none of them may point back at the input — the write
+            // would silently destroy the audio being probed (exit 0).
+            for (flag, path) in &outputs {
+                if let Some(p) = path
+                    && *p == input.as_path()
+                {
+                    anyhow::bail!("{flag} would overwrite the input file {p:?}");
+                }
+            }
 
             let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
@@ -256,6 +265,14 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             tier2,
             window_ms,
         } => {
+            // Same input-protection rule as probe: writing the comparison
+            // JSON over either input would destroy a file being compared.
+            if let Some(path) = &json
+                && (path == &a || path == &b)
+            {
+                anyhow::bail!("--json would overwrite the input file {path:?}");
+            }
+
             let audio_a =
                 cochlea_decode::load(&a).with_context(|| format!("reading {}", a.display()))?;
             let audio_b =

@@ -177,3 +177,31 @@ fn render_score_reports_a_tool_level_failure_without_a_jsonrpc_error() {
         "{response}"
     );
 }
+
+/// out_path colliding with the input is Invalid Params, not a "successful"
+/// call that destroys the caller's file.
+#[test]
+fn out_path_must_not_overwrite_the_input() {
+    let server = Server::new();
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "render_score",
+                   "arguments": {"score_path": score_path(), "out_path": score_path()}},
+    });
+    let line = server.handle_line(&request.to_string()).unwrap();
+    let response: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "spectrogram",
+                   "arguments": {"audio_path": "x.wav", "out_path": "x.wav"}},
+    });
+    let line = server.handle_line(&request.to_string()).unwrap();
+    let response: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+}

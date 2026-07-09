@@ -552,6 +552,10 @@ fn verdict_text(v: &Verdict) -> String {
 
 fn fmt_delta(v: Option<f64>, unit: &str) -> String {
     match v {
+        // Unitless callers (correlation/balance) pass "" — appending the
+        // separator anyway would bake a stray trailing space into a text
+        // format that promises to be tidy and deterministic.
+        Some(x) if unit.is_empty() => format!("{x:+.2}"),
         Some(x) => format!("{x:+.2} {unit}"),
         None => "-".to_string(),
     }
