@@ -199,7 +199,11 @@ fn digest_text_snapshot_with_silent_run_collapsing() {
         "   idx        t(s)     rms   peak  ons     f0  flags",
         "     0   0.000-1.000    -9.03  -6.02    0   440.0  -",
         "     1   1.000-2.000    -9.03  -6.02    0   440.0  -",
-        "  2-5  silent (4.0 s)",
+        // ons=1: the tone that resumes at 6 s produces a spectral-flux
+        // onset whose frame-center lands just inside floor-silent segment
+        // 5 — the digest must surface it, not hide it in the collapsed
+        // run (its absence would contradict the header's count=2).
+        "  2-5  silent (4.0 s, ons=1)",
         "     6   6.000-7.000    -9.03  -6.02    1   440.0  -",
         "     7   7.000-8.000    -9.03  -6.02    0   440.0  -",
     ]
@@ -394,11 +398,20 @@ fn compare_added_onset_flags_onsets() {
 /// comparison with NaN is false, so a plain `<= 0.0` check passes it, after
 /// which it saturates into a 1-sample window and the timeline explodes to
 /// one segment per sample (reproduced at 337k segments / 132 MB of JSON for
-/// a 7 s file before the guard was fixed).
+/// a 7 s file before the guard was fixed). Tiny-but-positive values reach
+/// the same one-sample window through rounding, hence the 1 ms floor.
 #[test]
 fn segment_timeline_rejects_degenerate_window_ms() {
     let audio = mono_audio(sine_wave(440.0, 0.5, 1.0, SR), SR);
-    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1000.0] {
+    for bad in [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        0.0,
+        -1000.0,
+        0.001,
+        0.999,
+    ] {
         let timeline = segment_timeline(&audio, &SegmentOpts::default().with_window_ms(bad));
         assert!(
             timeline.segments.is_empty(),

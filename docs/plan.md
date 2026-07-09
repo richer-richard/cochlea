@@ -470,8 +470,11 @@ path: digest text instead of JSON, feature-space diff with a
 byte-identical / tier2-equivalent / different verdict). `probe` with no
 flags prints the JSON report to stdout. Exit codes: 0 ok, 1 verify/lint
 failures (and `diff --tier2` when the verdict is not equivalent), 2
-usage/IO errors. `--window-ms` rejects non-finite/non-positive values at
-the flag boundary (NaN defeats downstream range checks otherwise).
+usage/IO errors. `--window-ms` rejects non-finite or sub-1 ms values at
+the flag boundary (NaN defeats downstream range checks; sub-millisecond
+windows would round to one-sample segments and explode the timeline), and
+distinct output flags pointing at one path are a usage error, not a
+silent last-write-wins.
 
 The `cochlea-mcp` sibling binary (crates/mcp, v2 wave 1) serves the same
 pipeline as MCP tools over newline-delimited JSON-RPC 2.0 on stdio:

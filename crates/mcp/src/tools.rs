@@ -178,13 +178,37 @@ fn bool_or(args: &Value, key: &str, default: bool) -> bool {
 }
 
 fn usize_or(args: &Value, key: &str, default: usize) -> usize {
+    // `as_u64` alone would silently ignore a JSON number lexed with a
+    // decimal point — serde_json stores `8.0` as a float — so also accept
+    // integral non-negative floats rather than dropping to the default.
     args.get(key)
-        .and_then(Value::as_u64)
+        .and_then(|v| {
+            v.as_u64().or_else(|| {
+                v.as_f64()
+                    .filter(|f| f.fract() == 0.0 && *f >= 0.0)
+                    .map(|f| f as u64)
+            })
+        })
         .map_or(default, |v| v as usize)
 }
 
 fn f64_or(args: &Value, key: &str, default: f64) -> f64 {
     args.get(key).and_then(Value::as_f64).unwrap_or(default)
+}
+
+/// `window_ms` for the segment-timeline tools: finite and at least 1 ms
+/// (sub-millisecond windows round toward one-sample windows and explode
+/// the timeline — same guard as the CLI flag and the library itself; JSON
+/// can't express NaN, but it can express 0.001).
+fn window_ms_or_invalid(args: &Value) -> Result<f64, ToolOutcome> {
+    let v = f64_or(args, "window_ms", 1000.0);
+    if v.is_finite() && v >= 1.0 {
+        Ok(v)
+    } else {
+        Err(ToolOutcome::InvalidParams(format!(
+            "window_ms must be a finite number of at least 1 (ms), got {v}"
+        )))
+    }
 }
 
 /// `render_score`: mirrors `cochlea render` (`crates/cli/src/main.rs`
@@ -372,7 +396,10 @@ pub fn probe_digest(args: &Value) -> ToolOutcome {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    let window_ms = f64_or(args, "window_ms", 1000.0);
+    let window_ms = match window_ms_or_invalid(args) {
+        Ok(v) => v,
+        Err(outcome) => return outcome,
+    };
 
     let audio = match cochlea_features::Audio::from_wav(Path::new(wav_path)) {
         Ok(audio) => audio,
@@ -398,7 +425,10 @@ pub fn audio_diff(args: &Value) -> ToolOutcome {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    let window_ms = f64_or(args, "window_ms", 1000.0);
+    let window_ms = match window_ms_or_invalid(args) {
+        Ok(v) => v,
+        Err(outcome) => return outcome,
+    };
     let want_json = bool_or(args, "json", false);
 
     let audio_a = match cochlea_features::Audio::from_wav(Path::new(path_a)) {

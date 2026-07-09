@@ -143,11 +143,14 @@ pub enum Verdict {
     /// check on the source [`Audio`].
     ByteIdentical,
     /// Every dimension is inside the workspace's Tier-2 cross-platform
-    /// tolerance: integrated LUFS within 0.1 LU, every onset matched within
-    /// 2 ms with none unmatched, pitch within 5 cents, and the same key.
+    /// tolerance: duration within 1 ms, integrated LUFS within 0.1 LU,
+    /// every onset matched within 2 ms with none unmatched, pitch within 5
+    /// cents with matching voicing (both sides voiced, or both unvoiced),
+    /// and the same key.
     Tier2Equivalent,
     /// At least one dimension is outside tolerance; `dimensions` names each
-    /// one (`"loudness"`, `"onsets"`, `"pitch"`, `"key"`), in check order.
+    /// one (`"duration"`, `"loudness"`, `"onsets"`, `"pitch"`, `"key"`), in
+    /// check order.
     Different {
         /// Names of the out-of-tolerance dimensions.
         dimensions: Vec<String>,
@@ -248,6 +251,16 @@ fn key_delta(a: &Report, b: &Report) -> KeyDelta {
 }
 
 fn segment_rms_delta(a: &SegmentTimeline, b: &SegmentTimeline) -> SegmentDelta {
+    // Index-aligned comparison only means anything when both timelines
+    // were built on the same window width; mismatched timelines produce an
+    // empty (not wrong) segment delta.
+    if a.window_ms != b.window_ms {
+        return SegmentDelta {
+            max_abs_rms_delta_db: None,
+            max_abs_rms_delta_index: None,
+            rms_delta_db: Vec::new(),
+        };
+    }
     let n = a.segments.len().min(b.segments.len());
     let mut deltas = Vec::with_capacity(n);
     let mut max_abs: Option<f64> = None;
@@ -328,6 +341,14 @@ fn verdict_from(
 ) -> Verdict {
     let mut dimensions = Vec::new();
 
+    // Two same-input cross-platform renders have identical sample counts;
+    // any real duration difference means different material, however
+    // feature-similar (two silent files of different lengths must not read
+    // as equivalent).
+    if (b.source.duration_ms - a.source.duration_ms).abs() > 1.0 {
+        dimensions.push("duration".to_string());
+    }
+
     let loudness_ok = match (a.loudness.integrated_lufs, b.loudness.integrated_lufs) {
         (None, None) => true,
         (Some(av), Some(bv)) => (bv - av).abs() <= LUFS_TOL,
@@ -344,9 +365,15 @@ fn verdict_from(
         dimensions.push("onsets".to_string());
     }
 
-    let pitch_ok = pitch
-        .as_ref()
-        .is_none_or(|p| p.cents.abs() <= PITCH_TOL_CENTS);
+    // A voicing mismatch (one side has a voiced median f0, the other has
+    // none at all) is a pitch difference even though no cents delta can be
+    // computed — without this, a tone and a noise bed at matching loudness
+    // could read as equivalent.
+    let voicing_matches = a.pitch.median_f0_hz.is_some() == b.pitch.median_f0_hz.is_some();
+    let pitch_ok = voicing_matches
+        && pitch
+            .as_ref()
+            .is_none_or(|p| p.cents.abs() <= PITCH_TOL_CENTS);
     if !pitch_ok {
         dimensions.push("pitch".to_string());
     }

@@ -176,12 +176,29 @@ fn write_timeline(out: &mut String, timeline: &SegmentTimeline) {
                 let first = &rows[run_start];
                 let last = &rows[run_end];
                 let duration_s = (last.end_ms - first.start_ms) / 1000.0;
-                writeln!(
-                    out,
-                    "  {}-{}  silent ({duration_s:.1} s)",
-                    first.first_idx, last.last_idx,
-                )
-                .expect("String write is infallible");
+                // "silent" (RMS under floor) and "onset" (spectral flux)
+                // are independent detectors — a transient can land in a
+                // floor-silent window, and a digest that hides it would
+                // silently disagree with its own header onset count.
+                let onsets: u32 = rows[run_start..=run_end]
+                    .iter()
+                    .map(|r| r.onset_count)
+                    .sum();
+                if onsets > 0 {
+                    writeln!(
+                        out,
+                        "  {}-{}  silent ({duration_s:.1} s, ons={onsets})",
+                        first.first_idx, last.last_idx,
+                    )
+                    .expect("String write is infallible");
+                } else {
+                    writeln!(
+                        out,
+                        "  {}-{}  silent ({duration_s:.1} s)",
+                        first.first_idx, last.last_idx,
+                    )
+                    .expect("String write is infallible");
+                }
                 i = run_end + 1;
                 continue;
             }

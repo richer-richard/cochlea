@@ -122,16 +122,20 @@ fn load_score(path: &Path) -> anyhow::Result<Score> {
     Score::from_ron(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
-/// `--window-ms` must be a finite positive number. Rust's `f64::from_str`
+/// `--window-ms` must be finite and at least 1 ms. Rust's `f64::from_str`
 /// happily parses `"nan"` and `"inf"`, and NaN in particular defeats
 /// ordinary `<= 0.0` range checks downstream (every IEEE 754 comparison
-/// with NaN is false) — reject the whole class at the flag boundary.
+/// with NaN is false); tiny-but-positive values (`0.001`) round to a
+/// one-sample window and explode the timeline to one segment per sample —
+/// reject the whole class at the flag boundary.
 fn parse_window_ms(s: &str) -> Result<f64, String> {
     let v: f64 = s.parse().map_err(|err| format!("not a number: {err}"))?;
-    if v.is_finite() && v > 0.0 {
+    if v.is_finite() && v >= 1.0 {
         Ok(v)
     } else {
-        Err(format!("must be a finite positive number, got {v}"))
+        Err(format!(
+            "must be a finite number of at least 1 (ms), got {v}"
+        ))
     }
 }
 
@@ -187,6 +191,23 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             segments,
             window_ms,
         } => {
+            // Distinct output flags writing to one path would silently
+            // last-write-win; make the collision a usage error instead.
+            let outputs = [
+                ("--json", json.as_deref()),
+                ("--segments", segments.as_deref()),
+                ("--spectro", spectro.as_deref()),
+            ];
+            for (i, (flag_a, path_a)) in outputs.iter().enumerate() {
+                for (flag_b, path_b) in &outputs[i + 1..] {
+                    if let (Some(pa), Some(pb)) = (path_a, path_b)
+                        && pa == pb
+                    {
+                        anyhow::bail!("{flag_a} and {flag_b} point at the same path {pa:?}");
+                    }
+                }
+            }
+
             let audio = cochlea_features::Audio::from_wav(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             let report = cochlea_features::probe(&audio, &cochlea_features::ProbeOpts::default());

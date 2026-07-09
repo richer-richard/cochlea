@@ -140,17 +140,20 @@ pub struct Segment {
 /// frame's center time lands in, rather than re-running a windowed STFT per
 /// segment.
 ///
-/// Empty audio, a non-finite or non-positive `window_ms`, or a zero sample
-/// rate all produce an empty `segments` vec. (Non-finite matters: `NaN`
-/// would otherwise slip past a `<= 0.0` guard — IEEE 754 comparisons with
-/// NaN are all false — then saturate to a 1-sample window and explode the
-/// segment count.) A buffer shorter than one window produces a single
-/// partial segment.
+/// Empty audio, a zero sample rate, or a `window_ms` that is non-finite or
+/// under 1 ms all produce an empty `segments` vec. (Non-finite matters:
+/// `NaN` would otherwise slip past a `<= 0.0` guard — IEEE 754 comparisons
+/// with NaN are all false — then saturate to a 1-sample window and explode
+/// the segment count. The 1 ms floor closes the same resource hole for
+/// tiny-but-positive values like `0.001`, whose rounded window length is
+/// forced up to a single sample; sub-millisecond windows are also below
+/// anything the per-window analyzers can measure.) A buffer shorter than
+/// one window produces a single partial segment.
 pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
     let mono = audio.mono();
     let sample_rate = audio.sample_rate;
 
-    if mono.is_empty() || sample_rate == 0 || !opts.window_ms.is_finite() || opts.window_ms <= 0.0 {
+    if mono.is_empty() || sample_rate == 0 || !opts.window_ms.is_finite() || opts.window_ms < 1.0 {
         return SegmentTimeline {
             schema_version: SEGMENTS_SCHEMA_VERSION,
             window_ms: opts.window_ms,
@@ -164,7 +167,7 @@ pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
     let onsets_report = onsets::analyze(&mono, sample_rate);
     let mut onset_counts = vec![0u32; segment_count];
     for &t_ms in &onsets_report.times_ms {
-        onset_counts[bucket_index(t_ms, opts.window_ms, segment_count)] += 1;
+        onset_counts[bucket_index(t_ms, sample_rate, window_len, segment_count)] += 1;
     }
 
     let stft = Stft::compute(&mono, sample_rate, BAND_FFT_SIZE, BAND_HOP);
@@ -173,7 +176,7 @@ pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
         let center_ms = (t as f64 * BAND_HOP as f64 + BAND_FFT_SIZE as f64 / 2.0)
             / f64::from(sample_rate)
             * 1000.0;
-        let idx = bucket_index(center_ms, opts.window_ms, segment_count);
+        let idx = bucket_index(center_ms, sample_rate, window_len, segment_count);
         for (bin, &mag) in frame.iter().enumerate() {
             let hz = stft.bin_hz(bin);
             let energy = f64::from(mag) * f64::from(mag);
@@ -217,7 +220,10 @@ pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
             Some(f0) => {
                 let midi = pitch::nearest_midi(f0);
                 (
-                    Some(midi.clamp(0, i32::from(u8::MAX)) as u8),
+                    // 127, not u8::MAX: the field documents standard MIDI
+                    // range, and a YIN misfire above ~12.5 kHz must not
+                    // leak 128..=255 to consumers trusting that.
+                    Some(midi.clamp(0, 127) as u8),
                     Some(pitch::cents_off(f0, midi)),
                 )
             }
@@ -262,13 +268,22 @@ pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
     }
 }
 
-/// Map a time in milliseconds to a segment index by fixed-width bucketing
-/// (`floor(t_ms / window_ms)`), clamped into `0..segment_count`.
-fn bucket_index(t_ms: f64, window_ms: f64, segment_count: usize) -> usize {
-    if segment_count == 0 {
+/// Map a time in milliseconds to a segment index, clamped into
+/// `0..segment_count`.
+///
+/// Buckets on the same **sample-quantized** boundaries the segments are
+/// actually built on (`i * window_len` samples), not on nominal
+/// `floor(t_ms / window_ms)` — when `window_ms` doesn't map to a whole
+/// number of samples (e.g. 3.0 ms at 44.1 kHz → 132 samples ≈ 2.993 ms),
+/// nominal-ms bucketing drifts a full window off the real boundaries after
+/// `window_ms / (window_ms - real_ms)` segments, misattributing onsets and
+/// band energy to a neighboring segment.
+fn bucket_index(t_ms: f64, sample_rate: u32, window_len: usize, segment_count: usize) -> usize {
+    if segment_count == 0 || window_len == 0 {
         return 0;
     }
-    let idx = (t_ms / window_ms).floor();
+    let sample = t_ms / 1000.0 * f64::from(sample_rate);
+    let idx = (sample / window_len as f64).floor();
     if idx <= 0.0 {
         0
     } else {
@@ -280,13 +295,28 @@ fn bucket_index(t_ms: f64, window_ms: f64, segment_count: usize) -> usize {
 mod tests {
     use super::*;
 
+    const SR: u32 = 48_000;
+    /// 1000 ms at 48 kHz.
+    const WIN: usize = 48_000;
+
     #[test]
     fn bucket_index_clamps_to_last_segment() {
-        assert_eq!(bucket_index(-5.0, 1000.0, 5), 0);
-        assert_eq!(bucket_index(0.0, 1000.0, 5), 0);
-        assert_eq!(bucket_index(999.9, 1000.0, 5), 0);
-        assert_eq!(bucket_index(1000.0, 1000.0, 5), 1);
-        assert_eq!(bucket_index(4999.0, 1000.0, 5), 4);
-        assert_eq!(bucket_index(5001.0, 1000.0, 5), 4); // clamp past the end
+        assert_eq!(bucket_index(-5.0, SR, WIN, 5), 0);
+        assert_eq!(bucket_index(0.0, SR, WIN, 5), 0);
+        assert_eq!(bucket_index(999.9, SR, WIN, 5), 0);
+        assert_eq!(bucket_index(1000.0, SR, WIN, 5), 1);
+        assert_eq!(bucket_index(4999.0, SR, WIN, 5), 4);
+        assert_eq!(bucket_index(5001.0, SR, WIN, 5), 4); // clamp past the end
+    }
+
+    /// The drift case nominal-ms bucketing gets wrong: 3.0 ms at 44.1 kHz
+    /// rounds to a 132-sample window (~2.993 ms), so by t = 1300 ms the
+    /// real boundary grid is a full window behind the nominal one —
+    /// sample 57330 sits in window 434, while `floor(1300 / 3) = 433`.
+    #[test]
+    fn bucket_index_follows_sample_boundaries_not_nominal_ms() {
+        let sr = 44_100;
+        let window_len = 132; // (3.0 ms / 1000 * 44100).round()
+        assert_eq!(bucket_index(1300.0, sr, window_len, 1000), 434);
     }
 }
