@@ -99,7 +99,14 @@ fn tools_list_shape() {
         .collect();
     assert_eq!(
         names,
-        vec!["render_score", "probe_wav", "spectrogram", "lint_score"]
+        vec![
+            "render_score",
+            "probe_wav",
+            "spectrogram",
+            "lint_score",
+            "probe_digest",
+            "audio_diff",
+        ]
     );
     for tool in tools {
         assert!(tool["description"].is_string(), "{tool}");
@@ -150,6 +157,22 @@ fn tools_call_missing_required_argument_is_invalid_params() {
             "id": 5,
             "method": "tools/call",
             "params": {"name": "probe_wav", "arguments": {}},
+        }),
+    );
+    assert_eq!(response["error"]["code"], -32602);
+    assert!(response["result"].is_null());
+}
+
+#[test]
+fn audio_diff_missing_wav_path_b_is_invalid_params() {
+    let server = Server::new();
+    let response = call(
+        &server,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "audio_diff", "arguments": {"wav_path_a": "a.wav"}},
         }),
     );
     assert_eq!(response["error"]["code"], -32602);

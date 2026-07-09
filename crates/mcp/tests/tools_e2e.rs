@@ -1,7 +1,8 @@
-//! End-to-end tool tests: real render, real probe, real spectrogram, all
-//! driven through `Server::handle_line` in-process — the same path a JSON
-//! line arriving on stdin would take, just without the framing. Kept to
-//! one render (renders cost seconds); everything else reuses its output.
+//! End-to-end tool tests: real render, real probe, real spectrogram, real
+//! digest/diff, all driven through `Server::handle_line` in-process — the
+//! same path a JSON line arriving on stdin would take, just without the
+//! framing. Kept to one render (renders cost seconds); everything else
+//! reuses its output.
 
 use cochlea_mcp::server::Server;
 use serde_json::{Value, json};
@@ -95,6 +96,28 @@ fn render_probe_spectrogram_round_trip() {
     );
     assert_eq!(response["result"]["isError"], false, "{response}");
     assert!(std::path::Path::new(&sheet).exists());
+
+    // 4. probe_digest on the same file — the token-cheap alternative to
+    // probe_wav's full JSON.
+    let response = call_tool(&server, 5, "probe_digest", json!({"wav_path": wav}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let digest = tool_text(&response);
+    assert!(digest.starts_with("cochlea digest:"), "{digest}");
+
+    // 5. audio_diff against itself — same file both sides must land on
+    // ByteIdentical, not just Tier2Equivalent.
+    let response = call_tool(
+        &server,
+        6,
+        "audio_diff",
+        json!({"wav_path_a": wav, "wav_path_b": wav}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert!(
+        tool_text(&response).contains("byte-identical"),
+        "{}",
+        tool_text(&response)
+    );
 }
 
 #[test]

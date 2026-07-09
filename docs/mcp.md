@@ -2,9 +2,9 @@
 
 An MCP (Model Context Protocol) stdio server over the cochlea libraries.
 Any MCP client — Claude Code, another agent, a script — gets `render` /
-`probe` / `spectro` / `lint` as tool calls, so it can compose, render, and
-"listen" to audio through numbers and images without shelling out to the
-`cochlea` binary or reading raw PCM.
+`probe` / `spectro` / `lint` / `digest` / `diff` as tool calls, so it can
+compose, render, and "listen" to audio through numbers and images without
+shelling out to the `cochlea` binary or reading raw PCM.
 
 The protocol is hand-rolled JSON-RPC 2.0 over newline-delimited stdio: one
 JSON object per line in, at most one JSON object per line out. No async
@@ -24,13 +24,16 @@ second front end onto the same offline pipeline, not a reimplementation.
 | `probe_wav` | `wav_path` (string, required) | The full feature report (loudness/LUFS, true peak, onsets, YIN pitch, chroma/key, silence, clipping) as pretty JSON. Works on any WAV — no score required. |
 | `spectrogram` | `wav_path` (string, required), `out_path` (string, required), `sheet` (bool, default `false`), `bars_per_tile` (integer, default `8`) | Text: the written PNG path and its pixel dimensions. Plain spectrogram or, with `sheet: true`, a tiled contact sheet — no score-aware bar markers yet (those need score context via `render_score`). |
 | `lint_score` | `score_path` (string, required) | Text: `"ok: no lint findings"`, or the JSON list of findings. `isError: true` iff any finding is `Severity::Error`, matching `cochlea lint`'s exit-1 threshold. |
+| `probe_digest` | `wav_path` (string, required), `window_ms` (number, default `1000`) | A ~40-line deterministic text digest (`cochlea_features::digest_text`) instead of a full JSON report — the token-cheap way to "listen" to a WAV. Prefer this over `probe_wav` unless the caller needs exact numbers to assert against. |
+| `audio_diff` | `wav_path_a` (string, required), `wav_path_b` (string, required), `window_ms` (number, default `1000`), `json` (bool, default `false`) | Feature-space comparison text (`cochlea_features::compare_text`): a verdict (`byte-identical` / `tier2-equivalent` / `different (dimensions...)`) plus per-dimension deltas. `json: true` appends the full `CompareReport` as pretty JSON. A `different` verdict is a normal, successful answer — not `isError`. |
 
 Tool-level failures (a bad path, a render error, a failed verify or lint)
 come back as a normal `tools/call` success response with `isError: true`
 and the reason in the text content — never a JSON-RPC error. JSON-RPC
 errors (`-32700`/`-32601`/`-32602`) are reserved for protocol problems:
 malformed JSON, an unknown method, or missing/malformed arguments on a
-known tool.
+known tool. `audio_diff`'s `different` verdict is *not* one of these
+failures — see its row above.
 
 ## Client setup
 

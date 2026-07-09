@@ -108,6 +108,8 @@ impl Server {
             "probe_wav" => tools::probe_wav(args),
             "spectrogram" => tools::spectrogram(args),
             "lint_score" => tools::lint_score(args),
+            "probe_digest" => tools::probe_digest(args),
+            "audio_diff" => tools::audio_diff(args),
             other => return Err((INVALID_PARAMS, format!("unknown tool: {other}"))),
         };
 

@@ -115,6 +115,53 @@ pub fn schemas() -> Vec<Value> {
                 "required": ["score_path"]
             }
         }),
+        json!({
+            "name": "probe_digest",
+            "description": "The token-cheap way to listen to a WAV: a ~40-line deterministic text digest (duration, loudness, onsets, pitch, key, and a windowed timeline table) instead of a full JSON report or raw PCM. Reach for this first when you just need a sense of what's in a file, and only fall back to probe_wav when you need exact numbers to assert against.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "wav_path": {
+                        "type": "string",
+                        "description": "Path to a WAV file."
+                    },
+                    "window_ms": {
+                        "type": "number",
+                        "description": "Segment window length, milliseconds, for the digest's timeline rows. Default 1000.",
+                        "default": 1000
+                    }
+                },
+                "required": ["wav_path"]
+            }
+        }),
+        json!({
+            "name": "audio_diff",
+            "description": "Compare two WAV files in feature space (loudness, onsets, pitch, key, per-segment RMS) rather than byte-for-byte, and report a verdict: byte-identical, tier-2 equivalent (within this workspace's cross-platform tolerances), or different (naming which dimensions diverge). Use this to check whether a re-render, edit, or platform change actually altered the audio in a way that matters — a `different` verdict is a normal, successful answer, not a tool failure.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "wav_path_a": {
+                        "type": "string",
+                        "description": "Path to the first WAV."
+                    },
+                    "wav_path_b": {
+                        "type": "string",
+                        "description": "Path to the second WAV."
+                    },
+                    "window_ms": {
+                        "type": "number",
+                        "description": "Segment window length, milliseconds, for the per-segment comparison. Default 1000.",
+                        "default": 1000
+                    },
+                    "json": {
+                        "type": "boolean",
+                        "description": "Also append the full CompareReport as pretty JSON after the text summary. Default false.",
+                        "default": false
+                    }
+                },
+                "required": ["wav_path_a", "wav_path_b"]
+            }
+        }),
     ]
 }
 
@@ -134,6 +181,10 @@ fn usize_or(args: &Value, key: &str, default: usize) -> usize {
     args.get(key)
         .and_then(Value::as_u64)
         .map_or(default, |v| v as usize)
+}
+
+fn f64_or(args: &Value, key: &str, default: f64) -> f64 {
+    args.get(key).and_then(Value::as_f64).unwrap_or(default)
 }
 
 /// `render_score`: mirrors `cochlea render` (`crates/cli/src/main.rs`
@@ -311,4 +362,79 @@ pub fn lint_score(args: &Value) -> ToolOutcome {
     } else {
         ToolOutcome::Ok(text)
     }
+}
+
+/// `probe_digest`: the token-cheap sibling of `probe_wav` — a full probe
+/// plus segment timeline, rendered through `cochlea_features::digest_text`
+/// instead of returned as JSON.
+pub fn probe_digest(args: &Value) -> ToolOutcome {
+    let wav_path = match require_str(args, "wav_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let window_ms = f64_or(args, "window_ms", 1000.0);
+
+    let audio = match cochlea_features::Audio::from_wav(Path::new(wav_path)) {
+        Ok(audio) => audio,
+        Err(err) => return ToolOutcome::Failed(format!("reading {wav_path}: {err}")),
+    };
+    let report = cochlea_features::probe(&audio, &cochlea_features::ProbeOpts::default());
+    let timeline = cochlea_features::segment_timeline(
+        &audio,
+        &cochlea_features::SegmentOpts::default().with_window_ms(window_ms),
+    );
+    ToolOutcome::Ok(cochlea_features::digest_text(&report, &timeline))
+}
+
+/// `audio_diff`: feature-space comparison of two WAVs. A `Different`
+/// verdict is a valid, successful answer — only a real read failure on
+/// either side makes this a tool-level [`ToolOutcome::Failed`].
+pub fn audio_diff(args: &Value) -> ToolOutcome {
+    let path_a = match require_str(args, "wav_path_a") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let path_b = match require_str(args, "wav_path_b") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let window_ms = f64_or(args, "window_ms", 1000.0);
+    let want_json = bool_or(args, "json", false);
+
+    let audio_a = match cochlea_features::Audio::from_wav(Path::new(path_a)) {
+        Ok(audio) => audio,
+        Err(err) => return ToolOutcome::Failed(format!("reading {path_a}: {err}")),
+    };
+    let audio_b = match cochlea_features::Audio::from_wav(Path::new(path_b)) {
+        Ok(audio) => audio,
+        Err(err) => return ToolOutcome::Failed(format!("reading {path_b}: {err}")),
+    };
+
+    let opts = cochlea_features::SegmentOpts::default().with_window_ms(window_ms);
+    let report_a = cochlea_features::probe(&audio_a, &cochlea_features::ProbeOpts::default());
+    let timeline_a = cochlea_features::segment_timeline(&audio_a, &opts);
+    let report_b = cochlea_features::probe(&audio_b, &cochlea_features::ProbeOpts::default());
+    let timeline_b = cochlea_features::segment_timeline(&audio_b, &opts);
+
+    let byte_identical = cochlea_features::samples_identical(&audio_a, &audio_b);
+    let compare = cochlea_features::compare_with_identity(
+        cochlea_features::Analysis {
+            report: &report_a,
+            timeline: &timeline_a,
+        },
+        cochlea_features::Analysis {
+            report: &report_b,
+            timeline: &timeline_b,
+        },
+        byte_identical,
+    );
+
+    let mut text = cochlea_features::compare_text(&compare);
+    if want_json {
+        let compare_json = serde_json::to_string_pretty(&compare)
+            .unwrap_or_else(|err| format!("(failed to serialize compare report: {err})"));
+        text.push_str("\n\n");
+        text.push_str(&compare_json);
+    }
+    ToolOutcome::Ok(text)
 }
