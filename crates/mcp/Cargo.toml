@@ -1,0 +1,32 @@
+# MCP (Model Context Protocol) stdio server over the cochlea libraries, so
+# agents call render/probe/spectro/verify as tools without shelling out.
+# Hand-rolled JSON-RPC 2.0 on newline-delimited stdio — no async runtime;
+# offline batch work needs none, and the dependency graph stays small.
+[package]
+name = "cochlea-mcp"
+description = "MCP stdio server for cochlea: agents render, probe, and verify audio as tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "cochlea-mcp"
+path = "src/main.rs"
+
+[dependencies]
+cochlea-score.workspace = true
+cochlea-synth.workspace = true
+cochlea-render.workspace = true
+cochlea-features.workspace = true
+cochlea-spectro.workspace = true
+cochlea-verify.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

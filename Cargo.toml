@@ -8,6 +8,7 @@ members = [
     "crates/spectro",
     "crates/verify",
     "crates/cli",
+    "crates/mcp",
 ]
 
 [workspace.package]

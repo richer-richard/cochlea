@@ -206,6 +206,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cochlea-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cochlea-features",
+ "cochlea-render",
+ "cochlea-score",
+ "cochlea-spectro",
+ "cochlea-synth",
+ "cochlea-verify",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cochlea-render"
 version = "0.1.0"
 dependencies = [
