@@ -1,6 +1,7 @@
 [package]
 name = "cochlea-verify"
 description = "Assertion DSL and lints over renders; RON-embeddable assertions with JSON failure reports"
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

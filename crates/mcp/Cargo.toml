@@ -4,7 +4,8 @@
 # offline batch work needs none, and the dependency graph stays small.
 [package]
 name = "cochlea-mcp"
-description = "MCP stdio server for cochlea: agents render, probe, and verify audio as tools"
+description = "MCP stdio server for cochlea: agents render, probe, diff, and verify audio as tools"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

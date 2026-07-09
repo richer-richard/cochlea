@@ -1,6 +1,7 @@
 [package]
 name = "cochlea-synth"
 description = "Instrument trait over fundsp, preset library, typed param registry, counter-based RNG"
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
