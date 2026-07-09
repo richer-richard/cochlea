@@ -3,3 +3,8 @@
 !tests/fixtures/**/*.wav
 !demos/**/expected/*.wav
 /.claude/
+
+CLAUDE.local.md
+.vscode
+.omo
+
