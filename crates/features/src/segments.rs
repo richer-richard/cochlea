@@ -140,14 +140,17 @@ pub struct Segment {
 /// frame's center time lands in, rather than re-running a windowed STFT per
 /// segment.
 ///
-/// Empty audio, a non-positive `window_ms`, or a zero sample rate all
-/// produce an empty `segments` vec. A buffer shorter than one window
-/// produces a single partial segment.
+/// Empty audio, a non-finite or non-positive `window_ms`, or a zero sample
+/// rate all produce an empty `segments` vec. (Non-finite matters: `NaN`
+/// would otherwise slip past a `<= 0.0` guard — IEEE 754 comparisons with
+/// NaN are all false — then saturate to a 1-sample window and explode the
+/// segment count.) A buffer shorter than one window produces a single
+/// partial segment.
 pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
     let mono = audio.mono();
     let sample_rate = audio.sample_rate;
 
-    if mono.is_empty() || sample_rate == 0 || opts.window_ms <= 0.0 {
+    if mono.is_empty() || sample_rate == 0 || !opts.window_ms.is_finite() || opts.window_ms <= 0.0 {
         return SegmentTimeline {
             schema_version: SEGMENTS_SCHEMA_VERSION,
             window_ms: opts.window_ms,

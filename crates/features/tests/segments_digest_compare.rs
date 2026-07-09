@@ -389,3 +389,21 @@ fn compare_added_onset_flags_onsets() {
     }
     assert_eq!(result.onsets.unmatched_b, 1, "{:?}", result.onsets);
 }
+
+/// NaN in particular must not survive the `window_ms` guard: every IEEE 754
+/// comparison with NaN is false, so a plain `<= 0.0` check passes it, after
+/// which it saturates into a 1-sample window and the timeline explodes to
+/// one segment per sample (reproduced at 337k segments / 132 MB of JSON for
+/// a 7 s file before the guard was fixed).
+#[test]
+fn segment_timeline_rejects_degenerate_window_ms() {
+    let audio = mono_audio(sine_wave(440.0, 0.5, 1.0, SR), SR);
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1000.0] {
+        let timeline = segment_timeline(&audio, &SegmentOpts::default().with_window_ms(bad));
+        assert!(
+            timeline.segments.is_empty(),
+            "window_ms={bad} should yield an empty timeline, got {} segments",
+            timeline.segments.len()
+        );
+    }
+}

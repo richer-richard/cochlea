@@ -82,8 +82,10 @@ synth    → score, fundsp, libm
 render   → score, synth, hound, rayon
 features → ebur128, rustfft, hound, libm, serde        (NEVER score/synth)
 spectro  → rustfft, hound, image, libm                  (NEVER score/synth)
+decode   → features, symphonia                          (NEVER score/synth)
 verify   → score, features, render
 cli      → everything
+mcp      → score, synth, render, features, spectro, verify
 ```
 
 ---
@@ -389,6 +391,34 @@ crate, used by demo tests).
 
 ---
 
+## crates/decode
+
+```rust
+pub fn load(path: &Path) -> Result<Audio, DecodeError>;   // Audio = cochlea_features::Audio
+```
+
+Wave 2: lossless-only real-world file input. Dispatches on file extension:
+`.wav`/`.wave` delegates straight to `cochlea_features::Audio::from_wav`
+(hound); `.flac` goes through symphonia's bundled FLAC reader+decoder (the
+`symphonia` crate, `default-features = false, features = ["flac"]` — no
+other format/codec, so no lossy decode sneaks in via a shared feature).
+Depends on `cochlea-features` only for the `Audio` type; never score/synth,
+same law as `features`/`spectro`.
+
+FLAC is lossless by spec, so a correct decode reproduces the source PCM
+exactly — but `symphonia-bundle-flac` left-justifies every sample into the
+full 32-bit range regardless of the stream's true bit depth (its own
+`decode_inner` comment: "the decoder uses a 32bit sample format as a common
+denominator"). Normalizing by always dividing by 2^31 (not by a bit-depth-
+derived scale) is what makes FLAC decode land on the same `f32` bits as the
+WAV twin — verified, not assumed, by `tests/sample_exact.rs` against tiny
+committed FLAC fixtures with WAV twins (`tests/fixtures/`).
+
+mp3/ogg (lossy) are explicitly next, not this round (`docs/superpowers/
+specs/2026-07-09-agent-audio-v2-design.md` §2/§6).
+
+---
+
 ## crates/verify
 
 ```rust
@@ -428,13 +458,25 @@ pub struct VerifyReport { pub passed: bool, pub failures: Vec<Failure>, ... } //
 ```
 cochlea render score.ron --out mix.wav [--stems dir/] [--verify] [--report report.json]
 cochlea probe input.wav [--json report.json] [--spectro spec.png]
+                        [--digest] [--segments timeline.json] [--window-ms 1000]
+cochlea diff a.wav b.wav [--json compare.json] [--tier2] [--window-ms 1000]
 cochlea lint score.ron
 cochlea spectro input.wav --out spec.png [--sheet --bars-per-tile 8]
 ```
 
-clap derive; `probe` ships in P3, the rest complete in P4. `probe` with no
+clap derive; `probe` ships in P3, the rest complete in P4; `probe
+--digest`/`--segments` and `diff` land in v2 wave 1 (the token-cheap read
+path: digest text instead of JSON, feature-space diff with a
+byte-identical / tier2-equivalent / different verdict). `probe` with no
 flags prints the JSON report to stdout. Exit codes: 0 ok, 1 verify/lint
-failures, 2 usage/IO errors.
+failures (and `diff --tier2` when the verdict is not equivalent), 2
+usage/IO errors. `--window-ms` rejects non-finite/non-positive values at
+the flag boundary (NaN defeats downstream range checks otherwise).
+
+The `cochlea-mcp` sibling binary (crates/mcp, v2 wave 1) serves the same
+pipeline as MCP tools over newline-delimited JSON-RPC 2.0 on stdio:
+render_score, probe_wav, spectrogram, lint_score, probe_digest,
+audio_diff. Hand-rolled protocol, no async runtime; see `docs/mcp.md`.
 
 ---
 

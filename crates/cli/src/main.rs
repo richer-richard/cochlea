@@ -62,7 +62,7 @@ enum Cmd {
         #[arg(long)]
         segments: Option<PathBuf>,
         /// Window length for `--digest`/`--segments`, milliseconds.
-        #[arg(long, default_value_t = 1000.0)]
+        #[arg(long, default_value_t = 1000.0, value_parser = parse_window_ms)]
         window_ms: f64,
     },
     /// Feature-space diff of two WAVs — "did my change do what I meant":
@@ -81,7 +81,7 @@ enum Cmd {
         #[arg(long)]
         tier2: bool,
         /// Window length for the underlying segment timelines, milliseconds.
-        #[arg(long, default_value_t = 1000.0)]
+        #[arg(long, default_value_t = 1000.0, value_parser = parse_window_ms)]
         window_ms: f64,
     },
     /// Statically validate a score against the preset catalog.
@@ -120,6 +120,19 @@ fn load_score(path: &Path) -> anyhow::Result<Score> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     Score::from_ron(&text).with_context(|| format!("parsing {}", path.display()))
+}
+
+/// `--window-ms` must be a finite positive number. Rust's `f64::from_str`
+/// happily parses `"nan"` and `"inf"`, and NaN in particular defeats
+/// ordinary `<= 0.0` range checks downstream (every IEEE 754 comparison
+/// with NaN is false) — reject the whole class at the flag boundary.
+fn parse_window_ms(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|err| format!("not a number: {err}"))?;
+    if v.is_finite() && v > 0.0 {
+        Ok(v)
+    } else {
+        Err(format!("must be a finite positive number, got {v}"))
+    }
 }
 
 fn run() -> anyhow::Result<std::process::ExitCode> {
