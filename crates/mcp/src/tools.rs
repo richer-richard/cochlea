@@ -61,7 +61,7 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "probe_audio",
-            "description": "Extract the full feature report (integrated LUFS/true peak, onsets, YIN pitch track, chroma/key, silence, clipping) from any WAV or FLAC file — no score needed. Use this to 'listen' to audio through numbers: check loudness targets, confirm onset timing, or read back pitch/key.",
+            "description": "Extract the full feature report (integrated LUFS/true peak/LRA, onsets, YIN pitch track, chroma/key, tempo with a clear_rhythm flag, stereo image, structural sections, silence, clipping — schema v2) from any WAV or FLAC file, no score needed. Use this to 'listen' to audio through numbers: check loudness targets, confirm onset timing or tempo, or read back pitch/key/stereo width.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

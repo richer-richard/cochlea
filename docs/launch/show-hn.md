@@ -47,12 +47,15 @@ duration-scaled). Here's what that digest actually looks like, real
 output from `cochlea probe demo.wav --digest`:
 
     cochlea digest: 7.036s  2ch  48000Hz
-    loudness: integrated=-22.70  momentary_max=-21.84  true_peak=-15.91
+    loudness: integrated=-22.70  momentary_max=-21.84  true_peak=-15.91  lra=10.61
     key: E major (conf 0.81)  pitch: voiced=98%  median=110.0Hz (A2 +0.0c)
+    tempo: 56.0bpm (conf 0.00) clear_rhythm=false
+    stereo: width=0.03 corr=1.00 bal=-0.00
+    structure: 1 section
     onsets: count=6  rate=0.85/s
     silence: leading=0ms  trailing=2486ms
     clipping: clipped=0  over_0dbtp=false
-    timeline: window=1000ms  bucket=1x  rows=8
+    timeline: window=1000ms  bucket=1x  rows=6
        idx        t(s)     rms   peak  ons     f0  flags
          0   0.000-1.000   -23.57  -18.99    0   110.0  -
          1   1.000-2.000   -24.16  -17.97    1    80.5  -
@@ -102,7 +105,8 @@ it's the part I'd most want pushback on.
 Notes for whoever posts this:
 
 - The digest excerpt is real output (`cochlea probe` against
-  `examples/scores/first_light.ron` rendered to WAV, run 2026-07-09) —
+  `examples/scores/first_light.ron` rendered to WAV, rerun 2026-07-09 after
+  the schema-v2 digest lines landed) —
   re-run it before posting if the score, presets, or digest format have
   changed since, rather than trusting this copy verbatim.
 - The closing line is deliberate: HN rewards a specific, answerable

@@ -103,11 +103,14 @@ assert!(report.passed);
 And the CLI side, probing a real FLAC file end to end:
 
 ```
-$ cochlea probe drum_loop.flac --digest
-cochlea digest: 0.500s  1ch  8000Hz
-loudness: integrated=-9.51  momentary_max=-9.51  true_peak=-6.02
-key: C major (conf 0.00)  pitch: voiced=100%  median=440.6Hz (A4 +2.5c)
-onsets: count=0  rate=0.00/s
+$ cochlea probe drum_groove.flac --digest
+cochlea digest: 20.755s  2ch  48000Hz
+loudness: integrated=-19.91  momentary_max=-17.54  true_peak=-4.78  lra=1.73
+key: G major (conf 0.28)  pitch: voiced=25%  median=55.0Hz (A1 +0.5c)
+tempo: 110.3bpm (conf 0.01) clear_rhythm=false
+stereo: width=0.01 corr=1.00 bal=-0.00
+structure: 2 sections @ 19.0s
+onsets: count=33  rate=1.59/s
 ...
 ```
 

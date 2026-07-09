@@ -64,7 +64,7 @@ outside tolerance). Exit-code convention unchanged (0/1/2).
 ### 1.3 `cochlea-mcp`
 
 Stdio MCP server, hand-rolled JSON-RPC 2.0 over newline-delimited stdio —
-no async runtime, no new external deps. Tools: `render_score`, `probe_wav`,
+no async runtime, no new external deps. Tools: `render_score`, `probe_audio`,
 `spectrogram`, `lint_score`, then `probe_digest` + `audio_diff` once 1.1
 lands. Dispatch is a pure `handle_line(&str) -> Option<String>` for
 unit-testing. Tool failures are `isError: true` text results; JSON-RPC

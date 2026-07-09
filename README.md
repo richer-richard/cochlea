@@ -133,7 +133,7 @@ timeline: window=1000ms  bucket=1x  rows=21
      0   0.000-1.000   -25.71  -7.38    2    55.0  -
      1   1.000-2.000   -25.60  -7.87    2    55.0  -
      ...
-    17  17.000-18.000  -34.66  -16.80    1       -  -
+    17  17.000-18.000  -34.66  -16.80    1    54.7  -
     18  18.000-19.000  -58.77  -41.61    0       -  -
     19  19.000-20.000  -118.98 -103.16    0    54.7  S
     20  20.000-20.755  -161.14 -144.94    0    54.8  S
@@ -161,7 +161,7 @@ pitch        delta +1.0 cents
 key          a=E major (conf 0.81)  b=A minor (conf 0.86)  changed=true
 segments     max_abs_rms_delta 121.71 dB at idx=7
 tempo        bpm +38.57 bpm  clear_rhythm_changed=false
-stereo       width +0.00  correlation -0.00   balance +0.00
+stereo       width +0.00  correlation -0.00  balance +0.00
 structure    section_count +0
 ```
 

@@ -321,14 +321,19 @@ impl Audio { pub fn from_wav(path: &Path) -> Result<Self, ...>;
 pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report;
 ```
 
-`Report` (serde, `schema_version: 1`):
+`Report` (serde, `schema_version: 2` — v1 lacked `loudness.lra`, `tempo`,
+`stereo`, and `structure`):
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": { "sample_rate": 48000, "channels": 2, "samples": 480000, "duration_ms": 10000.0 },
   "loudness": { "integrated_lufs": -14.2, "momentary_max_lufs": -10.1,
-                "true_peak_dbtp": -1.3, "sample_peak_dbfs": -1.5 },
+                "true_peak_dbtp": -1.3, "sample_peak_dbfs": -1.5, "lra": 4.2 },
+  "tempo":    { "bpm": 110.3, "confidence": 0.01, "clear_rhythm": false,
+                "beat_count": 32, "mean_beat_interval_ms": 545.4 },
+  "stereo":   { "width": 0.01, "correlation": 1.0, "balance": -0.0 },
+  "structure": { "boundaries_ms": [8000.0], "section_count": 2, "confidence": 0.74 },
   "onsets":   { "count": 17, "times_ms": [...] },
   "pitch":    { "voiced_ratio": 0.82, "median_f0_hz": 440.1,
                 "segments": [ { "start_ms": 0.0, "end_ms": 500.0, "f0_hz": 440.1, "midi_nearest": 69, "cents_off": 0.4 } ] },
@@ -446,6 +451,14 @@ pub struct VerifyReport { pub passed: bool, pub failures: Vec<Failure>, ... } //
 - `no_discontinuity`: max sample-to-sample jump (in dB of |Δ|) away from
   note on/off boundaries ± a guard window — click detector.
 - `silent_after`: windowed RMS below floor for everything after the tick.
+- Wave-2 assertions over the v2 analyzers (same builder + RON dual form):
+  `tempo_is(bpm, BpmTol)` / `TempoIs(bpm, tol_bpm, [min_bpm, max_bpm])` —
+  optional search-range override, the escape hatch for >~170 BPM material
+  where the octave prior favors half-time; `has_clear_rhythm(bool)`;
+  `stereo_width_within(min, max)`; `lra_below(lu)`;
+  `section_count(min, max)`. Undefined-metric policy (stated in
+  `verify::checks`): bounded-above checks pass on an undefined metric,
+  value assertions fail on one.
 - Every assertion is also a serde data form embeddable in score RON under
   `verify:`; `Verifier::from_specs(&[VerifySpec])` builds the same run. CLI
   `cochlea render score.ron --verify` runs them, writes the JSON failure
@@ -478,7 +491,7 @@ silent last-write-wins.
 
 The `cochlea-mcp` sibling binary (crates/mcp, v2 wave 1) serves the same
 pipeline as MCP tools over newline-delimited JSON-RPC 2.0 on stdio:
-render_score, probe_wav, spectrogram, lint_score, probe_digest,
+render_score, probe_audio, spectrogram, lint_score, probe_digest,
 audio_diff. Hand-rolled protocol, no async runtime; see `docs/mcp.md`.
 
 ---

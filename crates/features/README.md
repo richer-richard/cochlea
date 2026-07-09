@@ -1,11 +1,16 @@
 # cochlea-features
 
 Feature extraction over PCM for [cochlea](https://github.com/richer-richard/cochlea):
-one schema-versioned JSON report — integrated LUFS / momentary max / true
-peak (via [ebur128]), spectral-flux onsets, YIN pitch with cents
-deviation, chroma + Krumhansl-Schmuckler key, silence/tail, clipping —
-plus a windowed segment timeline and a compact plain-text digest sized
-for LLM context windows.
+one schema-versioned JSON report (v2) — integrated LUFS / momentary max /
+true peak / loudness range (via [ebur128]), spectral-flux onsets, YIN
+pitch with cents deviation, chroma + Krumhansl-Schmuckler key, tempo/beat
+tracking with a calibrated `clear_rhythm` flag, stereo image
+(width/correlation/balance), structural section boundaries, silence/tail,
+clipping — plus a windowed segment timeline, a compact plain-text digest
+sized for LLM context windows, and a feature-space `compare` API
+(`compare`/`compare_text`/`samples_identical`) whose verdicts reuse the
+workspace's Tier-2 tolerances: `byte-identical` / `tier2-equivalent` /
+`different (dimensions…)`.
 
 Works on **any** WAV — this crate depends on neither the score IR nor
 the synth, which is why `cochlea probe` works on audio you didn't

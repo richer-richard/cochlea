@@ -21,7 +21,7 @@ second front end onto the same offline pipeline, not a reimplementation.
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `render_score` | `score_path` (string, required), `out_path` (string, required), `stems_dir` (string, optional), `verify` (bool, default `false`) | Text summary: frame count, duration, sample rate, peak dBFS, stems written; if `verify` is set, the full verify-report JSON is appended and the call reports `isError: true` on a failed verification. |
-| `probe_audio` | `audio_path` (string, required) | The full feature report (loudness/LUFS, true peak, onsets, YIN pitch, chroma/key, silence, clipping) as pretty JSON. Works on any WAV or FLAC — no score required. |
+| `probe_audio` | `audio_path` (string, required) | The full feature report, schema v2 (loudness/LUFS/true peak/LRA, onsets, YIN pitch, chroma/key, tempo + `clear_rhythm`, stereo image, structural sections, silence, clipping) as pretty JSON. Works on any WAV or FLAC — no score required. |
 | `spectrogram` | `audio_path` (string, required), `out_path` (string, required), `sheet` (bool, default `false`), `bars_per_tile` (integer, default `8`) | Text: the written PNG path and its pixel dimensions. Plain spectrogram or, with `sheet: true`, a tiled contact sheet — no score-aware bar markers yet (those need score context via `render_score`). |
 | `lint_score` | `score_path` (string, required) | Text: `"ok: no lint findings"`, or the JSON list of findings. `isError: true` iff any finding is `Severity::Error`, matching `cochlea lint`'s exit-1 threshold. |
 | `probe_digest` | `audio_path` (string, required), `window_ms` (number, default `1000`) | A ~40-line deterministic text digest (`cochlea_features::digest_text`) instead of a full JSON report — the token-cheap way to "listen" to a WAV or FLAC. Prefer this over `probe_audio` unless the caller needs exact numbers to assert against. |
@@ -67,7 +67,7 @@ Response (one line back; the pretty-printed report is escaped into the
 `text` field, shown here unescaped for readability):
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\n  \"schema_version\": 1,\n  \"source\": {\n    \"sample_rate\": 48000,\n    \"channels\": 2,\n    ...\n  },\n  ...\n}"}],"isError":false}}
+{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\n  \"schema_version\": 2,\n  \"source\": {\n    \"sample_rate\": 48000,\n    \"channels\": 2,\n    ...\n  },\n  ...\n}"}],"isError":false}}
 ```
 
 ## Testing this crate

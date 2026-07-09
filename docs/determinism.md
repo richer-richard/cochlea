@@ -265,3 +265,39 @@ transcript):
    (round-to-nearest-even), documented here, applied at the very end.
 
 Nothing else in the pipeline rounds between integer domains.
+
+## v2 analyzers and decode (wave 2 additions)
+
+The wave-2 surface introduces no new determinism mechanism — it reuses the
+existing rules — but each addition deserves its line in this ledger:
+
+- **FLAC decode (`cochlea-decode`, symphonia 0.6, FLAC feature only).**
+  FLAC reconstruction is pure integer arithmetic by spec; the only place a
+  decode could diverge from a WAV twin is float normalization.
+  `symphonia-bundle-flac` left-justifies every sample into 32 bits (its
+  own documented "common denominator"), so the crate divides by `2^31`
+  unconditionally — exactly equal to the WAV path's per-depth
+  `2^(bits-1)` divide (both are the same power-of-two rescale, exact in
+  IEEE 754). Enforced bit-for-bit by committed WAV/FLAC twin fixtures.
+  Zero-packet streams take their shape from STREAMINFO and their sample
+  vector stays empty — no fabricated rates.
+- **Tempo (`tempo.rs`), stereo (`stereo.rs`), structure (`structure.rs`),
+  segment timeline (`segments.rs`).** All transcendentals via `libm`; the
+  onsets-grade STFT they share comes from the same `FftPlannerScalar`
+  path as everything else; autocorrelation and the novelty kernel use
+  fixed ascending summation order; every float sort uses `total_cmp`. The
+  analyzers are pure functions of the buffer — `probe()` computes shared
+  intermediates (STFT, onset report, YIN track) once and fans them out,
+  which is a pure refactor precisely *because* the passes were
+  deterministic duplicates.
+- **Non-finite input policy.** Float WAVs can legally encode NaN/±inf;
+  IEEE 754 comparison semantics would let a single NaN sample masquerade
+  as silence in one analyzer and a real peak in another. `Audio::from_wav`
+  rejects non-finite samples at ingestion (`NonFiniteSample`), so no
+  analyzer ever sees one. Degenerate *options* (NaN window/frame lengths,
+  non-finite silence floors) are guarded with `is_finite()` checks — a
+  plain `<= 0.0` range check is NaN-blind.
+- **Text outputs (digest, compare).** Fixed-precision `{:.N}` formatting
+  only, stable field order, no wall clock, no hash-map iteration — byte-
+  deterministic per platform for identical input; the numbers inside stay
+  Tier-2 across platforms like every other analysis float.
