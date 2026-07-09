@@ -38,7 +38,14 @@ versions all crates together.
 - **Stereo image + loudness range** (`cochlea-features`): width /
   correlation / balance, and EBU R128 LRA.
 - **Structure detection** (`cochlea-features`): self-similarity novelty
-  section boundaries. *(in progress)*
+  section boundaries (Foote checkerboard-kernel novelty over per-second
+  chroma+band+RMS vectors).
+- **Report schema v2**: probe JSON now carries tempo (bpm / confidence /
+  `clear_rhythm` / beat count), stereo image, structure, and LRA; the
+  digest surfaces the same. Five new RON-embeddable verify assertions
+  (`TempoIs`, `HasClearRhythm`, `StereoWidthWithin`, `LraBelow`,
+  `SectionCount`) and a fourth demo (`drum_groove`, 110 BPM) with its own
+  golden PCM hash.
 - Per-crate READMEs and crates.io metadata for the whole workspace.
 
 ## [0.1.0] — 2026-07-03

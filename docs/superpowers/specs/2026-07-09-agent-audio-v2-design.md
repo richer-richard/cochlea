@@ -1,7 +1,14 @@
 # cochlea v2 design: agents read real-world audio, plus launch plan
 
-Date: 2026-07-09. Status: approved (build authorized; promotion *execution*
-separately gated — see §5).
+Date: 2026-07-09. Status: **implemented** same day (both waves built,
+reviewed, gates-green; §5 promotion *execution* remains gated on Richard's
+explicit go). Deviations from the letter of this spec, all deliberate:
+Report v2 embeds a compact `TempoSummary` (full beat grid via
+`estimate_tempo`); the short-term loudness curve was dropped as redundant
+with the segment timeline (LRA shipped); `SectionCount` took a min/max
+range; the drum demo asserts `HasClearRhythm(false)` — a layered groove
+dilutes autocorrelation salience below the calibrated threshold, and the
+honest assertion beat retuning the detector for one fixture.
 
 ## 0. Goal and locked decisions
 
