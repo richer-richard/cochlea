@@ -173,3 +173,25 @@ fn tempo_opts_bounds_are_chainable_and_respected() {
         "bpm {bpm} outside the requested [60, 100] range"
     );
 }
+
+/// Reversed BPM bounds normalize by swapping — the caller's intent is the
+/// range between them, not a ~1 BPM sliver around the larger value (which
+/// is what a naive clamp used to search).
+#[test]
+fn reversed_bpm_bounds_are_swapped_not_collapsed() {
+    let audio = mono_audio(click_track_at_bpm(120.0, 12.0, SR), SR);
+    let reversed = estimate_tempo(
+        &audio,
+        &TempoOpts::default().with_min_bpm(300.0).with_max_bpm(30.0),
+    );
+    let ordered = estimate_tempo(
+        &audio,
+        &TempoOpts::default().with_min_bpm(30.0).with_max_bpm(300.0),
+    );
+    assert_eq!(
+        reversed.bpm, ordered.bpm,
+        "swapped bounds must search the same range: {reversed:?} vs {ordered:?}"
+    );
+    let bpm = reversed.bpm.expect("click track has a tempo");
+    assert!((bpm - 120.0).abs() <= 1.0, "bpm = {bpm}");
+}

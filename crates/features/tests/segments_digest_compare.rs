@@ -425,3 +425,30 @@ fn segment_timeline_rejects_degenerate_window_ms() {
         );
     }
 }
+
+/// A NaN silence floor would make every `<=` comparison false and silently
+/// disable silence detection; the timeline must fall back to the default
+/// and serialize the floor it actually used.
+#[test]
+fn non_finite_silence_floor_falls_back_to_the_default() {
+    let mut samples = sine_wave(440.0, 0.5, 1.0, SR);
+    samples.extend(silence(1.0, SR));
+    let audio = mono_audio(samples, SR);
+
+    let timeline = segment_timeline(
+        &audio,
+        &SegmentOpts::default().with_silence_floor_dbfs(f64::NAN),
+    );
+    assert_eq!(timeline.silence_floor_dbfs, -60.0);
+    assert!(
+        timeline.segments[1].silent,
+        "digital silence must still classify as silent under the fallback floor"
+    );
+
+    // And the floor actually used is always serialized on the timeline.
+    let custom = segment_timeline(
+        &audio,
+        &SegmentOpts::default().with_silence_floor_dbfs(-40.0),
+    );
+    assert_eq!(custom.silence_floor_dbfs, -40.0);
+}

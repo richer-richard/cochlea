@@ -330,3 +330,29 @@ fn wav_round_trip_through_hound() {
     assert_eq!(report.schema_version, 2);
     assert_eq!(report.source.samples, audio.frames());
 }
+
+/// A float WAV can legally encode NaN/±inf samples; letting them in
+/// poisons analyzers in quiet, contradictory ways (a NaN buffer reads as
+/// "silent" while its peak is real) — from_wav must reject at the door.
+#[test]
+fn from_wav_rejects_non_finite_float_samples() {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("nan_samples.wav");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 48_000,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    writer.write_sample(0.5f32).unwrap();
+    writer.write_sample(f32::NAN).unwrap();
+    writer.write_sample(-0.5f32).unwrap();
+    writer.finalize().unwrap();
+
+    let err = Audio::from_wav(&path).expect_err("NaN samples must be rejected");
+    let message = err.to_string();
+    assert!(message.contains("non-finite"), "{message}");
+    assert!(message.contains("index 1"), "{message}");
+}

@@ -176,8 +176,18 @@ fn estimate_tempo_mono(mono: &[f32], sample_rate: u32, opts: &TempoOpts) -> Temp
     let flux = onsets::spectral_flux(&stft);
     let frame_rate = f64::from(sample_rate) / onsets::HOP as f64;
 
-    let min_bpm = opts.min_bpm.max(1.0);
-    let max_bpm = opts.max_bpm.max(min_bpm + 1.0);
+    // Reversed bounds are normalized by swapping — a caller writing
+    // (min 200, max 100) meant the range 100..=200; the old clamp silently
+    // discarded max_bpm and searched a ~1 BPM sliver around min instead.
+    // (Non-finite bounds degrade safely through f64::max's NaN-ignoring
+    // behavior to a narrow-but-valid range.)
+    let (lo, hi) = if opts.min_bpm <= opts.max_bpm {
+        (opts.min_bpm, opts.max_bpm)
+    } else {
+        (opts.max_bpm, opts.min_bpm)
+    };
+    let min_bpm = lo.max(1.0);
+    let max_bpm = hi.max(min_bpm + 1.0);
     let min_lag = ((frame_rate * 60.0 / max_bpm).round() as usize).max(1);
     let max_lag = ((frame_rate * 60.0 / min_bpm).round() as usize).max(min_lag + 1);
 

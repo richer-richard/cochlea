@@ -31,6 +31,15 @@ pub enum AudioError {
         /// Integer vs. float sample encoding.
         format: hound::SampleFormat,
     },
+    /// A float WAV containing NaN or ±infinity. Non-finite samples aren't
+    /// audio, and letting them in poisons every downstream analyzer in
+    /// quiet, contradictory ways (a NaN-corrupted buffer can read as
+    /// "silent" while its peak is real) — rejected at the door instead.
+    #[error("non-finite sample (NaN or infinity) at sample index {index}")]
+    NonFiniteSample {
+        /// Index into the interleaved sample stream of the first offender.
+        index: usize,
+    },
 }
 
 impl Audio {
@@ -38,14 +47,21 @@ impl Audio {
     ///
     /// Supports 8/16/24/32-bit integer PCM, normalized by the format's
     /// full-scale magnitude (e.g. 16-bit by `/32768.0`), and 32-bit float
-    /// WAV (used as-is, already in `[-1.0, 1.0]` by convention).
+    /// WAV (used as-is, already in `[-1.0, 1.0]` by convention — except
+    /// that non-finite samples, which a float WAV can legally encode, are
+    /// rejected with [`AudioError::NonFiniteSample`] rather than let loose
+    /// on analyzers whose math silently misreads NaN as silence).
     pub fn from_wav(path: &Path) -> Result<Self, AudioError> {
         let mut reader = hound::WavReader::open(path)?;
         let spec = reader.spec();
 
         let samples = match spec.sample_format {
             hound::SampleFormat::Float if spec.bits_per_sample == 32 => {
-                reader.samples::<f32>().collect::<Result<Vec<_>, _>>()?
+                let samples = reader.samples::<f32>().collect::<Result<Vec<_>, _>>()?;
+                if let Some(index) = samples.iter().position(|s| !s.is_finite()) {
+                    return Err(AudioError::NonFiniteSample { index });
+                }
+                samples
             }
             hound::SampleFormat::Int if matches!(spec.bits_per_sample, 8 | 16 | 24 | 32) => {
                 let full_scale = full_scale(spec.bits_per_sample);

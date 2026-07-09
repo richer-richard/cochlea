@@ -155,9 +155,10 @@ fn one_section_report() -> StructureReport {
 /// adaptive threshold scores near `0.0`. `0.0` whenever no boundaries were
 /// picked (including all degenerate cases).
 ///
-/// Degenerate input: empty audio (or a zero sample rate, or a non-positive
-/// `frame_ms`) returns `section_count: 0` — there's no audio to have even
-/// one section. Non-empty audio too short for one checkerboard-kernel
+/// Degenerate input: empty audio (or a zero sample rate, or a `frame_ms`
+/// that is non-finite or under 1 ms) returns `section_count: 0` — there's
+/// no audio to have even one section, or no sane frame grid to analyze it
+/// on. Non-empty audio too short for one checkerboard-kernel
 /// window (fewer than `2 * KERNEL_HALF_WIDTH` frames) returns
 /// `section_count: 1` with no boundaries — there's audio, just not enough
 /// of it to say anything about its internal structure. A homogeneous
@@ -167,7 +168,16 @@ fn one_section_report() -> StructureReport {
 /// peak ever clears the adaptive threshold. Neither case panics.
 pub fn detect_structure(audio: &Audio, opts: &StructureOpts) -> StructureReport {
     let mono = audio.mono();
-    if mono.is_empty() || audio.sample_rate == 0 || opts.frame_ms <= 0.0 {
+    // Same guard shape as `segment_timeline`'s window_ms: NaN slips past a
+    // `<= 0.0` check (IEEE 754 comparisons with NaN are all false), then
+    // saturates to a 1-sample frame and the O(n²) similarity matrix
+    // explodes toward vec![vec![_; len]; len] — terabytes for real audio.
+    // The 1 ms floor closes the tiny-positive route to the same blowup.
+    if mono.is_empty()
+        || audio.sample_rate == 0
+        || !opts.frame_ms.is_finite()
+        || opts.frame_ms < 1.0
+    {
         return empty_report();
     }
 

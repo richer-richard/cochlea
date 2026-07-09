@@ -159,3 +159,30 @@ fn structure_opts_are_chainable() {
     assert_eq!(opts.frame_ms, 500.0);
     assert_eq!(opts.max_sections, 6);
 }
+
+/// NaN and tiny-positive `frame_ms` must hit the degenerate guard, not the
+/// O(n²) similarity matrix: NaN passes a plain `<= 0.0` check (IEEE 754
+/// comparisons with NaN are all false), then saturates to a one-sample
+/// frame, making frame_count = mono.len() and the matrix allocation
+/// terabyte-scale. Same class of bug as segment_timeline's window_ms,
+/// fixed there first, mirrored here.
+#[test]
+fn detect_structure_rejects_degenerate_frame_ms() {
+    let audio = mono_audio(sine_wave(440.0, 0.5, 2.0, SR), SR);
+    for bad in [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        0.0,
+        -3.0,
+        0.01,
+        0.999,
+    ] {
+        let report = detect_structure(&audio, &StructureOpts::default().with_frame_ms(bad));
+        assert_eq!(
+            report.section_count, 0,
+            "frame_ms={bad} should resolve as degenerate, got {report:?}"
+        );
+        assert!(report.boundaries_ms.is_empty(), "frame_ms={bad}");
+    }
+}

@@ -27,6 +27,11 @@ const BAND_HOP: usize = 256;
 const LOW_HIGH_HZ: f64 = 250.0;
 const MID_HIGH_HZ: f64 = 4000.0;
 
+/// Default silence floor, dBFS — also the fallback when a caller hands
+/// [`segment_timeline`] a non-finite floor (a NaN floor would make every
+/// `<=` comparison false and silently disable silence detection).
+const DEFAULT_SILENCE_FLOOR_DBFS: f64 = -60.0;
+
 /// Tunables for [`segment_timeline`]. Mirrors [`crate::ProbeOpts`]'s
 /// chainable-setter style.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,7 +49,7 @@ impl Default for SegmentOpts {
     fn default() -> Self {
         Self {
             window_ms: 1000.0,
-            silence_floor_dbfs: -60.0,
+            silence_floor_dbfs: DEFAULT_SILENCE_FLOOR_DBFS,
         }
     }
 }
@@ -73,6 +78,11 @@ pub struct SegmentTimeline {
     pub schema_version: u32,
     /// The window length this timeline was built with, milliseconds.
     pub window_ms: f64,
+    /// The RMS floor, dBFS, that each segment's `silent` flag was computed
+    /// against — serialized so a JSON consumer holding only the timeline
+    /// can interpret (or re-derive) the classification instead of trusting
+    /// an unstated threshold.
+    pub silence_floor_dbfs: f64,
     /// One entry per window, in order, index 0 first.
     pub segments: Vec<Segment>,
 }
@@ -153,10 +163,20 @@ pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
     let mono = audio.mono();
     let sample_rate = audio.sample_rate;
 
+    // A NaN floor would make every `<=` comparison false and silently
+    // disable silence detection; fall back to the documented default and
+    // report the floor actually used (the timeline serializes it).
+    let floor_dbfs = if opts.silence_floor_dbfs.is_finite() {
+        opts.silence_floor_dbfs
+    } else {
+        DEFAULT_SILENCE_FLOOR_DBFS
+    };
+
     if mono.is_empty() || sample_rate == 0 || !opts.window_ms.is_finite() || opts.window_ms < 1.0 {
         return SegmentTimeline {
             schema_version: SEGMENTS_SCHEMA_VERSION,
             window_ms: opts.window_ms,
+            silence_floor_dbfs: floor_dbfs,
             segments: Vec::new(),
         };
     }
@@ -213,7 +233,7 @@ pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
             .fold(0.0f64, |acc, &x| acc.max(f64::from(x).abs()));
         let peak_dbfs = (peak > 0.0).then(|| 20.0 * libm::log10(peak));
 
-        let silent = rms_dbfs.unwrap_or(f64::NEG_INFINITY) <= opts.silence_floor_dbfs;
+        let silent = rms_dbfs.unwrap_or(f64::NEG_INFINITY) <= floor_dbfs;
 
         let f0_hz = pitch::analyze(slice, sample_rate).median_f0_hz;
         let (midi_nearest, cents_off) = match f0_hz {
@@ -264,6 +284,7 @@ pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
     SegmentTimeline {
         schema_version: SEGMENTS_SCHEMA_VERSION,
         window_ms: opts.window_ms,
+        silence_floor_dbfs: floor_dbfs,
         segments,
     }
 }
