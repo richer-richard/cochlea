@@ -78,13 +78,25 @@ pub(crate) fn decode(path: &Path) -> Result<Audio, DecodeError> {
     if codec_params.bits_per_sample.is_none() {
         return Err(DecodeError::UnknownBitDepth);
     }
+    // The returned Audio's shape comes from STREAMINFO, not from whatever
+    // packets happen to decode — a truncated/metadata-only stream that
+    // yields zero packets previously fabricated an Audio with
+    // channels: 0 / sample_rate: 0 that downstream analyzers quietly
+    // rendered as an all-null report. Declared shape + empty samples is an
+    // honest "this file contains no audio frames" instead.
+    let sample_rate = codec_params
+        .sample_rate
+        .ok_or(DecodeError::MissingStreamInfo)?;
+    let channels = codec_params
+        .channels
+        .as_ref()
+        .map(|c| c.count() as u16)
+        .ok_or(DecodeError::MissingStreamInfo)?;
 
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(codec_params, &AudioDecoderOptions::default())?;
 
     let mut samples = Vec::new();
-    let mut sample_rate = 0u32;
-    let mut channels = 0u16;
 
     while let Some(packet) = format.next_packet()? {
         if packet.track_id != track_id {
@@ -104,8 +116,11 @@ pub(crate) fn decode(path: &Path) -> Result<Audio, DecodeError> {
             return Err(DecodeError::UnexpectedSampleFormat);
         };
 
-        sample_rate = buf.spec().rate();
-        channels = buf.spec().channels().count() as u16;
+        // One fixed spec per FLAC stream; a packet disagreeing with
+        // STREAMINFO is malformed input, not something to silently adopt.
+        if buf.spec().rate() != sample_rate || buf.spec().channels().count() as u16 != channels {
+            return Err(DecodeError::InconsistentStream);
+        }
         let frames = buf.frames();
 
         // Planar (per-channel) in the decoded buffer; cochlea_features::Audio

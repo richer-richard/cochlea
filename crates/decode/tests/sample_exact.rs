@@ -60,13 +60,40 @@ fn stereo_24bit_flac_matches_its_wav_twin() {
 }
 
 #[test]
-fn unsupported_extension_is_a_clear_error() {
-    let err = cochlea_decode::load(&fixture("tone_mono_16.wav").with_extension("ogg"))
-        .expect_err("no such file, and .ogg isn't handled anyway");
+fn unrecognized_extension_and_content_is_a_clear_error() {
+    // An unknown extension falls back to content sniffing, so the error
+    // only fires when the bytes are unrecognizable too.
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let garbage = dir.join("not_audio.ogg");
+    std::fs::write(&garbage, b"OggS this is not a format we decode").unwrap();
+
+    let err = cochlea_decode::load(&garbage).expect_err(".ogg with non-WAV/FLAC bytes");
     assert!(matches!(
         err,
         cochlea_decode::DecodeError::UnsupportedExtension(ref ext) if ext == "ogg"
     ));
+}
+
+#[test]
+fn extensionless_files_load_by_content_sniffing() {
+    // The v1 CLI read WAVs purely by content (hound never saw the file
+    // name); extension dispatch must not regress that — a valid WAV or
+    // FLAC without any extension still loads via its magic bytes.
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let bare_wav = dir.join("extensionless_wav");
+    std::fs::copy(fixture("tone_mono_16.wav"), &bare_wav).unwrap();
+    let from_wav = cochlea_decode::load(&bare_wav).expect("extensionless WAV must sniff as RIFF");
+    let reference = cochlea_decode::load(&fixture("tone_mono_16.wav")).unwrap();
+    assert_eq!(from_wav.samples, reference.samples);
+
+    let bare_flac = dir.join("extensionless_flac");
+    std::fs::copy(fixture("tone_mono_16.flac"), &bare_flac).unwrap();
+    let from_flac =
+        cochlea_decode::load(&bare_flac).expect("extensionless FLAC must sniff as fLaC");
+    assert_eq!(from_flac.samples, reference.samples);
 }
 
 #[test]

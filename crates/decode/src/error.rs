@@ -30,12 +30,27 @@ pub enum DecodeError {
     /// stream missing it is unusual enough to flag rather than ignore.
     #[error("FLAC stream is missing its STREAMINFO bit depth")]
     UnknownBitDepth,
+    /// The FLAC stream's STREAMINFO didn't declare a sample rate or
+    /// channel count. These are what a zero-packet (truncated or
+    /// metadata-only) stream falls back to — without them there's no
+    /// honest `Audio` shape to return at all.
+    #[error("FLAC stream is missing its STREAMINFO sample rate or channel count")]
+    MissingStreamInfo,
+    /// A decoded packet's sample rate or channel count disagreed with the
+    /// stream's STREAMINFO declaration — malformed input; FLAC streams
+    /// have one fixed spec.
+    #[error("FLAC packet spec disagrees with the stream's STREAMINFO")]
+    InconsistentStream,
     /// Defensive: the FLAC decoder is documented to always produce 32-bit
     /// integer PCM buffers; this fires only if that internal contract ever
     /// changes out from under us.
     #[error("decoded FLAC buffer wasn't 32-bit integer PCM")]
     UnexpectedSampleFormat,
-    /// `load`'s extension dispatch didn't recognize the file.
-    #[error("unsupported file extension {0:?} (expected \"wav\" or \"flac\")")]
+    /// Neither the extension nor the file's leading magic bytes identify a
+    /// format this crate decodes.
+    #[error(
+        "unrecognized audio file: extension {0:?} and content match neither WAV nor FLAC \
+         (expected a \"wav\"/\"flac\" extension, or RIFF/fLaC magic bytes)"
+    )]
     UnsupportedExtension(String),
 }
