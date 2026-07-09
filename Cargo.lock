@@ -216,6 +216,7 @@ dependencies = [
  "cochlea-spectro",
  "cochlea-synth",
  "cochlea-verify",
+ "libm",
  "serde",
  "serde_json",
 ]
