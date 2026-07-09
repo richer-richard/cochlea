@@ -4,27 +4,8 @@
 
 use cochlea_features::{Audio, analyze_stereo, loudness_range};
 
-const SR: u32 = 48_000;
-
-/// A mono sine wave at `freq_hz`, constant `amplitude`, `seconds` long.
-fn sine_wave(freq_hz: f64, amplitude: f64, seconds: f64, sample_rate: u32) -> Vec<f32> {
-    let n = (seconds * f64::from(sample_rate)).round() as usize;
-    (0..n)
-        .map(|i| {
-            let t = i as f64 / f64::from(sample_rate);
-            let phase = 2.0 * std::f64::consts::PI * freq_hz * t;
-            (amplitude * libm::sin(phase)) as f32
-        })
-        .collect()
-}
-
-fn mono_audio(samples: Vec<f32>, sample_rate: u32) -> Audio {
-    Audio {
-        samples,
-        channels: 1,
-        sample_rate,
-    }
-}
+mod common;
+use common::*;
 
 /// Interleave two equal-length mono channels into stereo `Audio`.
 fn stereo_audio(left: Vec<f32>, right: Vec<f32>, sample_rate: u32) -> Audio {

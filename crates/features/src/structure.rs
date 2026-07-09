@@ -24,6 +24,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::audio::Audio;
+// median/MAD and non-maximum suppression come from `onsets` — the novelty
+// curve is thresholded and peak-picked with exactly the machinery the
+// onset flux uses, one implementation instead of drift-prone copies.
+use crate::onsets::{mad_of, median_of, suppress_close_peaks};
 use crate::stft::Stft;
 
 /// STFT size for the per-frame chroma/band-energy pass, samples. Smaller
@@ -412,38 +416,6 @@ fn pick_boundaries(novelty: &[f64], min_gap_frames: usize, max_boundaries: usize
         chosen.sort_unstable();
     }
     chosen
-}
-
-fn median_of(values: &[f64]) -> f64 {
-    let mut sorted = values.to_vec();
-    sorted.sort_by(f64::total_cmp);
-    sorted[sorted.len() / 2]
-}
-
-fn mad_of(values: &[f64], median: f64) -> f64 {
-    let deviations: Vec<f64> = values.iter().map(|v| (v - median).abs()).collect();
-    median_of(&deviations)
-}
-
-/// Non-maximum suppression: within any window of `min_gap` frames, keep
-/// only the highest-novelty candidate peak. Mirrors `onsets`' own
-/// suppression helper (reimplemented locally).
-fn suppress_close_peaks(peaks: &[usize], novelty: &[f64], min_gap: usize) -> Vec<usize> {
-    let mut accepted = Vec::new();
-    let mut i = 0;
-    while i < peaks.len() {
-        let mut best = peaks[i];
-        let mut j = i + 1;
-        while j < peaks.len() && peaks[j] - best <= min_gap {
-            if novelty[peaks[j]] > novelty[best] {
-                best = peaks[j];
-            }
-            j += 1;
-        }
-        accepted.push(best);
-        i = j;
-    }
-    accepted
 }
 
 fn confidence_of(novelty: &[f64], picked: &[usize]) -> f64 {

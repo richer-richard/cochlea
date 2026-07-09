@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::audio::Audio;
 use crate::report::{Mode, PitchClass, Report};
 use crate::segments::SegmentTimeline;
+use crate::util::{max_of, mode_name};
 
 /// Schema version of [`CompareReport`]'s JSON form.
 pub const COMPARE_SCHEMA_VERSION: u32 = 1;
@@ -390,12 +391,6 @@ fn match_onsets(a_times: &[f64], b_times: &[f64], window_ms: f64) -> OnsetMatch 
     }
 }
 
-fn max_of(values: impl Iterator<Item = f64>) -> Option<f64> {
-    values.fold(None, |acc: Option<f64>, v| {
-        Some(acc.map_or(v, |m| m.max(v)))
-    })
-}
-
 /// The [`Verdict`]: [`Verdict::Tier2Equivalent`] iff loudness, onsets,
 /// pitch, and key are all within the workspace's Tier-2 tolerances (see
 /// [`Verdict`]'s docs), else [`Verdict::Different`] naming every
@@ -493,10 +488,10 @@ pub fn compare_text(r: &CompareReport) -> String {
         out,
         "key          a={} {} (conf {:.2})  b={} {} (conf {:.2})  changed={}",
         r.key.a.tonic.name(),
-        mode_text(r.key.a.mode),
+        mode_name(r.key.a.mode),
         r.key.a.confidence,
         r.key.b.tonic.name(),
-        mode_text(r.key.b.mode),
+        mode_name(r.key.b.mode),
         r.key.b.confidence,
         r.key.changed,
     )
@@ -565,12 +560,5 @@ fn fmt_ms(v: Option<f64>) -> String {
     match v {
         Some(x) => format!("{x:.2} ms"),
         None => "-".to_string(),
-    }
-}
-
-fn mode_text(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Major => "major",
-        Mode::Minor => "minor",
     }
 }

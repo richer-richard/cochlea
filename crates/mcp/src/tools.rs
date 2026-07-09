@@ -196,19 +196,13 @@ fn f64_or(args: &Value, key: &str, default: f64) -> f64 {
     args.get(key).and_then(Value::as_f64).unwrap_or(default)
 }
 
-/// `window_ms` for the segment-timeline tools: finite and at least 1 ms
-/// (sub-millisecond windows round toward one-sample windows and explode
-/// the timeline — same guard as the CLI flag and the library itself; JSON
-/// can't express NaN, but it can express 0.001).
+/// `window_ms` for the segment-timeline tools — validation delegates to
+/// the library's single rule (`cochlea_features::validate_window_ms`);
+/// JSON can't express NaN, but it can express 0.001.
 fn window_ms_or_invalid(args: &Value) -> Result<f64, ToolOutcome> {
     let v = f64_or(args, "window_ms", 1000.0);
-    if v.is_finite() && v >= 1.0 {
-        Ok(v)
-    } else {
-        Err(ToolOutcome::InvalidParams(format!(
-            "window_ms must be a finite number of at least 1 (ms), got {v}"
-        )))
-    }
+    cochlea_features::validate_window_ms(v)
+        .map_err(|reason| ToolOutcome::InvalidParams(format!("window_ms {reason}")))
 }
 
 /// `render_score`: mirrors `cochlea render` (`crates/cli/src/main.rs`

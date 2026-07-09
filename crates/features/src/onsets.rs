@@ -129,20 +129,23 @@ fn adaptive_threshold(flux: &[f64]) -> Vec<f64> {
         .collect()
 }
 
-fn median_of(values: &[f64]) -> f64 {
+/// `pub(crate)`: `structure`'s novelty thresholding uses the same
+/// median/MAD/peak-suppression trio — one implementation, not drift-prone
+/// copies.
+pub(crate) fn median_of(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     sorted[sorted.len() / 2]
 }
 
-fn mad_of(values: &[f64], median: f64) -> f64 {
+pub(crate) fn mad_of(values: &[f64], median: f64) -> f64 {
     let deviations: Vec<f64> = values.iter().map(|v| (v - median).abs()).collect();
     median_of(&deviations)
 }
 
 /// Non-maximum suppression: within any window of `min_gap` frames, keep
 /// only the highest-flux candidate peak.
-fn suppress_close_peaks(peaks: &[usize], flux: &[f64], min_gap: usize) -> Vec<usize> {
+pub(crate) fn suppress_close_peaks(peaks: &[usize], flux: &[f64], min_gap: usize) -> Vec<usize> {
     let mut accepted = Vec::new();
     let mut i = 0;
     while i < peaks.len() {

@@ -5,8 +5,9 @@
 
 use std::fmt::Write as _;
 
-use crate::report::{Mode, PitchClass, Report};
+use crate::report::{PitchClass, Report};
 use crate::segments::{Segment, SegmentTimeline};
+use crate::util::{max_of, mode_name};
 
 /// Cap on rendered timeline rows: longer timelines are merged into coarser
 /// display buckets (see [`write_timeline`]) so a multi-minute file still
@@ -145,12 +146,6 @@ impl Row {
             f0_hz,
         }
     }
-}
-
-fn max_of(values: impl Iterator<Item = f64>) -> Option<f64> {
-    values.fold(None, |acc: Option<f64>, v| {
-        Some(acc.map_or(v, |m| m.max(v)))
-    })
 }
 
 /// Append the timeline table: one row per window, or — if `timeline` has
@@ -331,11 +326,4 @@ fn note_name(midi: i32) -> String {
     let pc = PitchClass::ALL[midi.rem_euclid(12) as usize];
     let octave = midi.div_euclid(12) - 1;
     format!("{}{octave}", pc.name())
-}
-
-fn mode_name(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Major => "major",
-        Mode::Minor => "minor",
-    }
 }

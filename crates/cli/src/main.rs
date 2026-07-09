@@ -122,21 +122,12 @@ fn load_score(path: &Path) -> anyhow::Result<Score> {
     Score::from_ron(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
-/// `--window-ms` must be finite and at least 1 ms. Rust's `f64::from_str`
-/// happily parses `"nan"` and `"inf"`, and NaN in particular defeats
-/// ordinary `<= 0.0` range checks downstream (every IEEE 754 comparison
-/// with NaN is false); tiny-but-positive values (`0.001`) round to a
-/// one-sample window and explode the timeline to one segment per sample —
-/// reject the whole class at the flag boundary.
+/// `--window-ms` validation delegates to the library's single rule
+/// (`cochlea_features::validate_window_ms`): finite and at least 1 ms,
+/// rejected at the flag boundary rather than degraded downstream.
 fn parse_window_ms(s: &str) -> Result<f64, String> {
     let v: f64 = s.parse().map_err(|err| format!("not a number: {err}"))?;
-    if v.is_finite() && v >= 1.0 {
-        Ok(v)
-    } else {
-        Err(format!(
-            "must be a finite number of at least 1 (ms), got {v}"
-        ))
-    }
+    cochlea_features::validate_window_ms(v)
 }
 
 fn run() -> anyhow::Result<std::process::ExitCode> {

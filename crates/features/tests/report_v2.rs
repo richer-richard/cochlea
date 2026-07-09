@@ -5,59 +5,8 @@
 
 use cochlea_features::{Analysis, Audio, ProbeOpts, SegmentOpts, compare, probe, segment_timeline};
 
-const SR: u32 = 48_000;
-
-fn sine_wave(freq_hz: f64, amplitude: f64, seconds: f64, sample_rate: u32) -> Vec<f32> {
-    let n = (seconds * f64::from(sample_rate)).round() as usize;
-    (0..n)
-        .map(|i| {
-            let t = i as f64 / f64::from(sample_rate);
-            let phase = 2.0 * std::f64::consts::PI * freq_hz * t;
-            (amplitude * libm::sin(phase)) as f32
-        })
-        .collect()
-}
-
-fn click_track(onset_times_s: &[f64], total_s: f64, sample_rate: u32) -> Vec<f32> {
-    let n = (total_s * f64::from(sample_rate)).round() as usize;
-    let mut buf = vec![0.0f32; n];
-    let tone_hz = 1000.0;
-    let burst_len = (0.010 * f64::from(sample_rate)).round() as usize;
-    let decay_len = (0.020 * f64::from(sample_rate)).round() as usize;
-    let decay_tau_s = 0.005;
-
-    for &t0 in onset_times_s {
-        let start = (t0 * f64::from(sample_rate)).round() as usize;
-        for i in 0..burst_len {
-            let Some(sample) = buf.get_mut(start + i) else {
-                break;
-            };
-            let t = i as f64 / f64::from(sample_rate);
-            *sample = (0.9 * libm::sin(2.0 * std::f64::consts::PI * tone_hz * t)) as f32;
-        }
-        for i in 0..decay_len {
-            let Some(sample) = buf.get_mut(start + burst_len + i) else {
-                break;
-            };
-            let t = i as f64 / f64::from(sample_rate);
-            let decay = libm::exp(-t / decay_tau_s);
-            let phase = 2.0
-                * std::f64::consts::PI
-                * tone_hz
-                * (burst_len as f64 / f64::from(sample_rate) + t);
-            *sample = (0.9 * decay * libm::sin(phase)) as f32;
-        }
-    }
-    buf
-}
-
-fn mono_audio(samples: Vec<f32>, sample_rate: u32) -> Audio {
-    Audio {
-        samples,
-        channels: 1,
-        sample_rate,
-    }
-}
+mod common;
+use common::*;
 
 fn stereo_audio(left: Vec<f32>, right: Vec<f32>, sample_rate: u32) -> Audio {
     assert_eq!(left.len(), right.len());

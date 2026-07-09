@@ -150,6 +150,23 @@ pub struct Segment {
 /// forced up to a single sample; sub-millisecond windows are also below
 /// anything the per-window analyzers can measure.) A buffer shorter than
 /// one window produces a single partial segment.
+/// Validates a caller-supplied window length: finite and at least 1 ms —
+/// the single source of truth the CLI flag parser and the MCP argument
+/// validator delegate to, so the rule (and its rationale: NaN defeats
+/// `<= 0.0` range checks, and sub-millisecond windows round to one-sample
+/// segments and explode the timeline) lives in exactly one place.
+/// [`segment_timeline`] itself stays infallible and degrades the same
+/// class of input to an empty timeline.
+pub fn validate_window_ms(window_ms: f64) -> Result<f64, String> {
+    if window_ms.is_finite() && window_ms >= 1.0 {
+        Ok(window_ms)
+    } else {
+        Err(format!(
+            "must be a finite number of at least 1 (ms), got {window_ms}"
+        ))
+    }
+}
+
 pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
     let mono = audio.mono();
     let sample_rate = audio.sample_rate;
