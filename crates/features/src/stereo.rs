@@ -1,59 +1,54 @@
-//! Stereo image: phase correlation, mid/side width, and left/right level
-//! balance — whole-buffer aggregate metrics over interleaved stereo
+//! Stereo image: mid/side width, zero-lag L/R correlation, and left/right
+//! level balance — whole-buffer aggregate metrics over interleaved stereo
 //! samples. No score/synth involved (`docs/plan.md`).
 
 use serde::{Deserialize, Serialize};
 
 use crate::audio::Audio;
 
-/// Stereo-image metrics for one [`Audio`] buffer, `schema_version`-free
-/// (parallel API, not embedded in [`crate::Report`] — see [`stereo_image`]
-/// for why). `None` fields mean "no stereo image to measure": non-stereo
-/// input (`channels != 2`) or digital silence both produce all-`None`.
+/// Stereo-image metrics for one [`Audio`] buffer. Plain struct, no own
+/// schema version — parallel API, meant to be embedded into a future
+/// `Report` schema bump rather than stand alone (mirrors
+/// [`crate::TempoReport`]'s status). See [`analyze_stereo`].
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct StereoReport {
-    /// Pearson correlation coefficient of the left/right channels,
-    /// `-1.0..=1.0`. `1.0` = identical (mono-compatible), `0.0` =
-    /// decorrelated, `-1.0` = fully out of phase (`R = -L`).
+    /// Mid/side energy width, `0.0..=1.0`. `0.0` = mono-identical channels,
+    /// `~0.5` = uncorrelated channels, `1.0` = pure out-of-phase. See
+    /// [`analyze_stereo`] for the exact formula. Always defined (defaults
+    /// to `0.0` — "no side signal" — when both channels are digital
+    /// silence, rather than being `Option`).
+    pub width: f64,
+    /// Zero-lag normalized cross-correlation of the left/right channels,
+    /// `-1.0..=1.0`. `1.0` = identical, `0.0` = decorrelated, `-1.0` =
+    /// fully out of phase (`R = -L`). `None` when either channel is
+    /// digital silence (undefined, never `NaN`).
     pub correlation: Option<f64>,
-    /// Fraction of mid/side energy that's side, `0.0..=1.0`. `0.0` = mono
-    /// (all energy in the mid channel), `1.0` = maximally wide (no shared
-    /// mid content at all). See [`stereo_image`] for the exact formula.
-    pub width: Option<f64>,
-    /// Left/right level balance, `-1.0..=1.0`. Negative = left-heavy,
-    /// positive = right-heavy, `0.0` = balanced.
+    /// Left/right level balance, `-1.0..=1.0`: `(r_rms - l_rms) / (l_rms +
+    /// r_rms)`. Negative = left-heavy, positive = right-heavy. `None` when
+    /// both channels are digital silence (undefined, never `NaN`).
     pub balance: Option<f64>,
 }
 
-fn undefined() -> StereoReport {
-    StereoReport {
-        correlation: None,
-        width: None,
-        balance: None,
-    }
-}
-
-/// Whole-buffer stereo-image metrics. Only meaningful for `audio.channels
-/// == 2`; anything else (mono, or >2 channels — this crate has no
-/// surround-specific handling) returns all-`None`, as does digital
-/// silence.
+/// Whole-buffer stereo-image metrics. `None` unless `audio.channels == 2`
+/// — there's no stereo image to measure for mono or >2-channel input (this
+/// crate has no surround-specific handling).
 ///
-/// `width` is derived from the mid/side decomposition (`mid = (l+r)/2`,
-/// `side = (l-r)/2`): `width = side_energy / (mid_energy + side_energy)`,
-/// where `*_energy` is the buffer's mean squared amplitude. Because
-/// `l^2+r^2 = 2*(mid^2+side^2)` exactly for every sample (the mid/side
-/// transform preserves energy up to that constant factor), this is a
-/// bounded `0.0..=1.0` fraction of total stereo energy that's "side" —
-/// `0.0` at mono, `1.0` at maximally decorrelated — rather than an
-/// unbounded mid/side ratio.
-pub fn stereo_image(audio: &Audio) -> StereoReport {
+/// `width` comes from the mid/side decomposition (`mid = (l+r)/2`, `side =
+/// (l-r)/2`): `width = side_rms / (mid_rms + side_rms)`. `correlation` is
+/// the standard Pearson coefficient of the L/R sample streams. `balance` is
+/// `(r_rms - l_rms) / (l_rms + r_rms)`.
+pub fn analyze_stereo(audio: &Audio) -> Option<StereoReport> {
     if audio.channels != 2 {
-        return undefined();
+        return None;
     }
 
     let n = audio.samples.len() / 2;
     if n == 0 {
-        return undefined();
+        return Some(StereoReport {
+            width: 0.0,
+            correlation: None,
+            balance: None,
+        });
     }
 
     let mut sum_l = 0.0f64;
@@ -61,8 +56,8 @@ pub fn stereo_image(audio: &Audio) -> StereoReport {
     let mut sum_l2 = 0.0f64;
     let mut sum_r2 = 0.0f64;
     let mut sum_lr = 0.0f64;
-    let mut mid_energy = 0.0f64;
-    let mut side_energy = 0.0f64;
+    let mut mid_sq_sum = 0.0f64;
+    let mut side_sq_sum = 0.0f64;
 
     for frame in audio.samples.chunks_exact(2) {
         let l = f64::from(frame[0]);
@@ -75,8 +70,8 @@ pub fn stereo_image(audio: &Audio) -> StereoReport {
 
         let mid = (l + r) / 2.0;
         let side = (l - r) / 2.0;
-        mid_energy += mid * mid;
-        side_energy += side * side;
+        mid_sq_sum += mid * mid;
+        side_sq_sum += side * side;
     }
 
     let count = n as f64;
@@ -92,17 +87,22 @@ pub fn stereo_image(audio: &Audio) -> StereoReport {
     let correlation = (var_l > 0.0 && var_r > 0.0)
         .then(|| (cov / (var_l.sqrt() * var_r.sqrt())).clamp(-1.0, 1.0));
 
-    let total_ms_energy = mid_energy + side_energy;
-    let width = (total_ms_energy > 0.0).then(|| (side_energy / total_ms_energy).clamp(0.0, 1.0));
+    let mid_rms = (mid_sq_sum / count).sqrt();
+    let side_rms = (side_sq_sum / count).sqrt();
+    let width = if mid_rms + side_rms > 0.0 {
+        (side_rms / (mid_rms + side_rms)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
 
     let rms_l = (sum_l2 / count).sqrt();
     let rms_r = (sum_r2 / count).sqrt();
     let balance =
-        (rms_l + rms_r > 0.0).then(|| ((rms_r - rms_l) / (rms_r + rms_l)).clamp(-1.0, 1.0));
+        (rms_l + rms_r > 0.0).then(|| ((rms_r - rms_l) / (rms_l + rms_r)).clamp(-1.0, 1.0));
 
-    StereoReport {
-        correlation,
+    Some(StereoReport {
         width,
+        correlation,
         balance,
-    }
+    })
 }
