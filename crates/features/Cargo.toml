@@ -3,6 +3,7 @@
 [package]
 name = "cochlea-features"
 description = "Audio feature extraction: LUFS/true peak, onsets, pitch, chroma/key, silence, clipping"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -44,4 +44,30 @@ pub enum VerifySpec {
     /// Windowed RMS stays below the silence floor from `at` to the end of
     /// the render.
     SilentAfter { at: Ticks },
+    /// The mix's estimated tempo (`cochlea_features::estimate_tempo`) is
+    /// within `tol_bpm` of `bpm`. `min_bpm`/`max_bpm` optionally override
+    /// the detector's search range (default 30–300 BPM) — the escape hatch
+    /// for material above ~170 BPM, where the octave-error prior otherwise
+    /// favors the half-time subharmonic.
+    TempoIs {
+        bpm: f64,
+        tol_bpm: f64,
+        min_bpm: Option<f64>,
+        max_bpm: Option<f64>,
+    },
+    /// The mix's estimated tempo's trustworthiness
+    /// (`cochlea_features::TempoReport::clear_rhythm`) equals `expected`
+    /// — asserts a clear, steady pulse when `true`, or asserts the
+    /// *absence* of one (a low-confidence or non-rhythmic mix) when
+    /// `false`.
+    HasClearRhythm { expected: bool },
+    /// The mix's stereo width (`cochlea_features::StereoReport::width`,
+    /// `0.0..=1.0`) falls within `[min, max]`.
+    StereoWidthWithin { min: f64, max: f64 },
+    /// The mix's EBU R128 loudness range (LRA) is at or below `lu` LU.
+    LraBelow { lu: f64 },
+    /// The mix's detected structural section count
+    /// (`cochlea_features::StructureReport::section_count`) falls within
+    /// `[min, max]`.
+    SectionCount { min: usize, max: usize },
 }

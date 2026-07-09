@@ -4,19 +4,8 @@
 
 use cochlea_features::{Audio, Mode, PitchClass, ProbeOpts, probe};
 
-const SR: u32 = 48_000;
-
-/// A mono sine wave at `freq_hz`, constant `amplitude`, `seconds` long.
-fn sine_wave(freq_hz: f64, amplitude: f64, seconds: f64, sample_rate: u32) -> Vec<f32> {
-    let n = (seconds * f64::from(sample_rate)).round() as usize;
-    (0..n)
-        .map(|i| {
-            let t = i as f64 / f64::from(sample_rate);
-            let phase = 2.0 * std::f64::consts::PI * freq_hz * t;
-            (amplitude * libm::sin(phase)) as f32
-        })
-        .collect()
-}
+mod common;
+use common::*;
 
 /// A mono chord: the equal-amplitude sum of several sines, peak-normalized
 /// so the mix itself never clips.
@@ -32,51 +21,6 @@ fn chord(freqs_hz: &[f64], seconds: f64, sample_rate: u32) -> Vec<f32> {
             (sum / freqs_hz.len() as f64 * 0.8) as f32
         })
         .collect()
-}
-
-/// A click track: short tone bursts (10 ms of `tone_hz`, then a 20 ms
-/// exponential-decay tail so the STFT sees a real spectral onset rather
-/// than a single-sample impulse) at each of `onset_times_s`, in an
-/// otherwise-silent buffer `total_s` long.
-fn click_track(onset_times_s: &[f64], total_s: f64, sample_rate: u32) -> Vec<f32> {
-    let n = (total_s * f64::from(sample_rate)).round() as usize;
-    let mut buf = vec![0.0f32; n];
-    let tone_hz = 1000.0;
-    let burst_len = (0.010 * f64::from(sample_rate)).round() as usize;
-    let decay_len = (0.020 * f64::from(sample_rate)).round() as usize;
-    let decay_tau_s = 0.005;
-
-    for &t0 in onset_times_s {
-        let start = (t0 * f64::from(sample_rate)).round() as usize;
-        for i in 0..burst_len {
-            let Some(sample) = buf.get_mut(start + i) else {
-                break;
-            };
-            let t = i as f64 / f64::from(sample_rate);
-            *sample = (0.9 * libm::sin(2.0 * std::f64::consts::PI * tone_hz * t)) as f32;
-        }
-        for i in 0..decay_len {
-            let Some(sample) = buf.get_mut(start + burst_len + i) else {
-                break;
-            };
-            let t = i as f64 / f64::from(sample_rate);
-            let decay = libm::exp(-t / decay_tau_s);
-            let phase = 2.0
-                * std::f64::consts::PI
-                * tone_hz
-                * (burst_len as f64 / f64::from(sample_rate) + t);
-            *sample = (0.9 * decay * libm::sin(phase)) as f32;
-        }
-    }
-    buf
-}
-
-fn mono_audio(samples: Vec<f32>, sample_rate: u32) -> Audio {
-    Audio {
-        samples,
-        channels: 1,
-        sample_rate,
-    }
 }
 
 #[test]
@@ -269,7 +213,26 @@ fn pure_silence_never_panics_and_reports_undefined_measurements() {
     assert_eq!(report.clipping.clipped_samples, 0);
     assert!(!report.clipping.true_peak_over_0dbtp);
 
-    // Round-trips through serde without emitting non-finite JSON floats.
+    // v2 fields: degenerate but defined, never panicking.
+    assert_eq!(report.tempo.bpm, None);
+    assert_eq!(report.tempo.confidence, 0.0);
+    assert!(!report.tempo.clear_rhythm);
+    assert_eq!(report.tempo.beat_count, 0);
+    assert_eq!(report.tempo.mean_beat_interval_ms, None);
+    assert!(
+        report.stereo.is_none(),
+        "mono input should have no stereo report"
+    );
+    assert_eq!(report.structure.section_count, 1);
+    assert!(report.structure.boundaries_ms.is_empty());
+    // Measured: ebur128's LRA reads a defined Some(0.0) even for pure
+    // silence (no range to speak of is still an answer, not an error —
+    // matches the `loudness_range` standalone fn's documented behavior).
+    assert_eq!(report.loudness.lra, Some(0.0));
+
+    // Round-trips through serde without emitting non-finite JSON floats —
+    // covers every v2 field too (tempo/stereo/structure/lra), not just the
+    // v1 ones asserted individually above.
     let json = serde_json::to_string(&report).expect("silent report should still serialize");
     assert!(
         !json.contains("inf"),
@@ -308,6 +271,32 @@ fn wav_round_trip_through_hound() {
     assert_eq!(audio.samples.len(), samples.len());
 
     let report = probe(&audio, &ProbeOpts::default());
-    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.schema_version, 2);
     assert_eq!(report.source.samples, audio.frames());
+}
+
+/// A float WAV can legally encode NaN/±inf samples; letting them in
+/// poisons analyzers in quiet, contradictory ways (a NaN buffer reads as
+/// "silent" while its peak is real) — from_wav must reject at the door.
+#[test]
+fn from_wav_rejects_non_finite_float_samples() {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("nan_samples.wav");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 48_000,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    writer.write_sample(0.5f32).unwrap();
+    writer.write_sample(f32::NAN).unwrap();
+    writer.write_sample(-0.5f32).unwrap();
+    writer.finalize().unwrap();
+
+    let err = Audio::from_wav(&path).expect_err("NaN samples must be rejected");
+    let message = err.to_string();
+    assert!(message.contains("non-finite"), "{message}");
+    assert!(message.contains("index 1"), "{message}");
 }

@@ -1,7 +1,7 @@
-//! The `cochlea` binary: `render`, `probe`, `lint`, `spectro`.
+//! The `cochlea` binary: `render`, `probe`, `lint`, `spectro`, `diff`.
 //!
-//! Exit codes: 0 ok, 1 verify/lint failures, 2 usage/IO/render errors
-//! (clap and anyhow errors both land on 2 via the wrapper in `main`).
+//! Exit codes: 0 ok, 1 verify/lint/`diff --tier2` failures, 2 usage/IO/render
+//! errors (clap and anyhow errors both land on 2 via the wrapper in `main`).
 
 use std::path::{Path, PathBuf};
 
@@ -41,10 +41,10 @@ enum Cmd {
         #[arg(long)]
         report: Option<PathBuf>,
     },
-    /// Extract the feature report (and optionally a spectrogram) from a WAV
-    /// — works on arbitrary WAVs, no score needed.
+    /// Extract the feature report (and optionally a spectrogram) from an
+    /// audio file (WAV or FLAC) — works on arbitrary files, no score needed.
     Probe {
-        /// Input WAV (f32 or 16/24/32-bit PCM).
+        /// Input audio: WAV (f32 or 16/24/32-bit PCM) or FLAC.
         input: PathBuf,
         /// Write the JSON report here instead of stdout.
         #[arg(long)]
@@ -52,15 +52,46 @@ enum Cmd {
         /// Also render a mel spectrogram PNG here.
         #[arg(long)]
         spectro: Option<PathBuf>,
+        /// Print a compact text digest — sized for LLM context windows —
+        /// to stdout instead of the JSON report. Combine with `--json` to
+        /// get both: digest to stdout, full JSON report to the file.
+        #[arg(long)]
+        digest: bool,
+        /// Write a windowed feature timeline (`SegmentTimeline` JSON) here.
+        /// Composable with any other flag.
+        #[arg(long)]
+        segments: Option<PathBuf>,
+        /// Window length for `--digest`/`--segments`, milliseconds.
+        #[arg(long, default_value_t = 1000.0, value_parser = parse_window_ms)]
+        window_ms: f64,
+    },
+    /// Feature-space diff of two audio files (WAV or FLAC) — "did my change do what I meant":
+    /// loudness/onset/pitch/key deltas plus an equivalence verdict, printed
+    /// as a compact text digest sized for LLM context windows.
+    Diff {
+        /// First input audio file (WAV or FLAC).
+        a: PathBuf,
+        /// Second input audio file (WAV or FLAC).
+        b: PathBuf,
+        /// Write the comparison JSON here.
+        #[arg(long)]
+        json: Option<PathBuf>,
+        /// Exit 1 unless the verdict is byte-identical or Tier-2 equivalent
+        /// (the workspace's cross-platform feature tolerances).
+        #[arg(long)]
+        tier2: bool,
+        /// Window length for the underlying segment timelines, milliseconds.
+        #[arg(long, default_value_t = 1000.0, value_parser = parse_window_ms)]
+        window_ms: f64,
     },
     /// Statically validate a score against the preset catalog.
     Lint {
         /// The score (RON data form, version 1).
         score: PathBuf,
     },
-    /// Render a mel spectrogram (or tiled contact sheet) from a WAV.
+    /// Render a mel spectrogram (or tiled contact sheet) from an audio file.
     Spectro {
-        /// Input WAV.
+        /// Input audio (WAV or FLAC).
         input: PathBuf,
         /// Output PNG path.
         #[arg(long)]
@@ -89,6 +120,14 @@ fn load_score(path: &Path) -> anyhow::Result<Score> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     Score::from_ron(&text).with_context(|| format!("parsing {}", path.display()))
+}
+
+/// `--window-ms` validation delegates to the library's single rule
+/// (`cochlea_features::validate_window_ms`): finite and at least 1 ms,
+/// rejected at the flag boundary rather than degraded downstream.
+fn parse_window_ms(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|err| format!("not a number: {err}"))?;
+    cochlea_features::validate_window_ms(v)
 }
 
 fn run() -> anyhow::Result<std::process::ExitCode> {
@@ -139,18 +178,135 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             input,
             json,
             spectro,
+            digest,
+            segments,
+            window_ms,
         } => {
-            let audio = cochlea_features::Audio::from_wav(&input)
+            // Distinct output flags writing to one path would silently
+            // last-write-win; make the collision a usage error instead.
+            let outputs = [
+                ("--json", json.as_deref()),
+                ("--segments", segments.as_deref()),
+                ("--spectro", spectro.as_deref()),
+            ];
+            for (i, (flag_a, path_a)) in outputs.iter().enumerate() {
+                for (flag_b, path_b) in &outputs[i + 1..] {
+                    if let (Some(pa), Some(pb)) = (path_a, path_b)
+                        && pa == pb
+                    {
+                        anyhow::bail!("{flag_a} and {flag_b} point at the same path {pa:?}");
+                    }
+                }
+            }
+            // And none of them may point back at the input — the write
+            // would silently destroy the audio being probed (exit 0).
+            for (flag, path) in &outputs {
+                if let Some(p) = path
+                    && *p == input.as_path()
+                {
+                    anyhow::bail!("{flag} would overwrite the input file {p:?}");
+                }
+            }
+
+            let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             let report = cochlea_features::probe(&audio, &cochlea_features::ProbeOpts::default());
-            let text = serde_json::to_string_pretty(&report)?;
-            match json {
-                Some(path) => std::fs::write(&path, text)
-                    .with_context(|| format!("writing {}", path.display()))?,
-                None => println!("{text}"),
+
+            // Only pay for the segment timeline when a flag actually needs
+            // it (docs/plan.md: probe stays cheap otherwise).
+            let timeline = (digest || segments.is_some()).then(|| {
+                let opts = cochlea_features::SegmentOpts::default().with_window_ms(window_ms);
+                cochlea_features::segment_timeline(&audio, &opts)
+            });
+
+            if digest {
+                let timeline = timeline
+                    .as_ref()
+                    .expect("computed above when digest is set");
+                println!("{}", cochlea_features::digest_text(&report, timeline));
             }
+
+            let report_text = serde_json::to_string_pretty(&report)?;
+            match &json {
+                Some(path) => std::fs::write(path, &report_text)
+                    .with_context(|| format!("writing {}", path.display()))?,
+                None if !digest => println!("{report_text}"),
+                None => {}
+            }
+
+            if let Some(path) = &segments {
+                let timeline = timeline
+                    .as_ref()
+                    .expect("computed above when segments is set");
+                let text = serde_json::to_string_pretty(timeline)?;
+                std::fs::write(path, text)
+                    .with_context(|| format!("writing {}", path.display()))?;
+            }
+
             if let Some(path) = spectro {
                 write_spectro(&audio, &path, false, 0)?;
+            }
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+
+        Cmd::Diff {
+            a,
+            b,
+            json,
+            tier2,
+            window_ms,
+        } => {
+            // Same input-protection rule as probe: writing the comparison
+            // JSON over either input would destroy a file being compared.
+            if let Some(path) = &json
+                && (path == &a || path == &b)
+            {
+                anyhow::bail!("--json would overwrite the input file {path:?}");
+            }
+
+            let audio_a =
+                cochlea_decode::load(&a).with_context(|| format!("reading {}", a.display()))?;
+            let audio_b =
+                cochlea_decode::load(&b).with_context(|| format!("reading {}", b.display()))?;
+
+            let opts = cochlea_features::SegmentOpts::default().with_window_ms(window_ms);
+            let report_a =
+                cochlea_features::probe(&audio_a, &cochlea_features::ProbeOpts::default());
+            let report_b =
+                cochlea_features::probe(&audio_b, &cochlea_features::ProbeOpts::default());
+            let timeline_a = cochlea_features::segment_timeline(&audio_a, &opts);
+            let timeline_b = cochlea_features::segment_timeline(&audio_b, &opts);
+
+            let identical = cochlea_features::samples_identical(&audio_a, &audio_b);
+            let result = cochlea_features::compare_with_identity(
+                cochlea_features::Analysis {
+                    report: &report_a,
+                    timeline: &timeline_a,
+                },
+                cochlea_features::Analysis {
+                    report: &report_b,
+                    timeline: &timeline_b,
+                },
+                identical,
+            );
+
+            println!("{}", cochlea_features::compare_text(&result));
+
+            if let Some(path) = &json {
+                let text = serde_json::to_string_pretty(&result)?;
+                std::fs::write(path, text)
+                    .with_context(|| format!("writing {}", path.display()))?;
+            }
+
+            if tier2 {
+                let equivalent = matches!(
+                    result.verdict,
+                    cochlea_features::Verdict::ByteIdentical
+                        | cochlea_features::Verdict::Tier2Equivalent
+                );
+                if !equivalent {
+                    return Ok(std::process::ExitCode::from(1));
+                }
             }
             Ok(std::process::ExitCode::SUCCESS)
         }
@@ -176,7 +332,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             sheet,
             bars_per_tile,
         } => {
-            let audio = cochlea_features::Audio::from_wav(&input)
+            let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             write_spectro(&audio, &out, sheet, bars_per_tile)?;
             Ok(std::process::ExitCode::SUCCESS)

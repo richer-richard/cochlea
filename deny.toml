@@ -46,7 +46,6 @@ deny = [
     { crate = "portaudio", reason = "offline only: no audio device crates" },
     # Planned for phase 2, deliberately absent from v1: remove the ban in the
     # PR that introduces the feature, not before.
-    { crate = "symphonia", reason = "compressed-format probe is phase 2; also keeps fundsp's `files` feature from sneaking in" },
     { crate = "rustysynth", reason = "sampled instruments (SF2) are phase 2" },
 ]
 

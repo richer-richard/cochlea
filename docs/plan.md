@@ -82,8 +82,10 @@ synth    → score, fundsp, libm
 render   → score, synth, hound, rayon
 features → ebur128, rustfft, hound, libm, serde        (NEVER score/synth)
 spectro  → rustfft, hound, image, libm                  (NEVER score/synth)
+decode   → features, symphonia                          (NEVER score/synth)
 verify   → score, features, render
 cli      → everything
+mcp      → score, synth, render, features, spectro, verify
 ```
 
 ---
@@ -319,14 +321,19 @@ impl Audio { pub fn from_wav(path: &Path) -> Result<Self, ...>;
 pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report;
 ```
 
-`Report` (serde, `schema_version: 1`):
+`Report` (serde, `schema_version: 2` — v1 lacked `loudness.lra`, `tempo`,
+`stereo`, and `structure`):
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": { "sample_rate": 48000, "channels": 2, "samples": 480000, "duration_ms": 10000.0 },
   "loudness": { "integrated_lufs": -14.2, "momentary_max_lufs": -10.1,
-                "true_peak_dbtp": -1.3, "sample_peak_dbfs": -1.5 },
+                "true_peak_dbtp": -1.3, "sample_peak_dbfs": -1.5, "lra": 4.2 },
+  "tempo":    { "bpm": 110.3, "confidence": 0.01, "clear_rhythm": false,
+                "beat_count": 32, "mean_beat_interval_ms": 545.4 },
+  "stereo":   { "width": 0.01, "correlation": 1.0, "balance": -0.0 },
+  "structure": { "boundaries_ms": [8000.0], "section_count": 2, "confidence": 0.74 },
   "onsets":   { "count": 17, "times_ms": [...] },
   "pitch":    { "voiced_ratio": 0.82, "median_f0_hz": 440.1,
                 "segments": [ { "start_ms": 0.0, "end_ms": 500.0, "f0_hz": 440.1, "midi_nearest": 69, "cents_off": 0.4 } ] },
@@ -389,6 +396,34 @@ crate, used by demo tests).
 
 ---
 
+## crates/decode
+
+```rust
+pub fn load(path: &Path) -> Result<Audio, DecodeError>;   // Audio = cochlea_features::Audio
+```
+
+Wave 2: lossless-only real-world file input. Dispatches on file extension:
+`.wav`/`.wave` delegates straight to `cochlea_features::Audio::from_wav`
+(hound); `.flac` goes through symphonia's bundled FLAC reader+decoder (the
+`symphonia` crate, `default-features = false, features = ["flac"]` — no
+other format/codec, so no lossy decode sneaks in via a shared feature).
+Depends on `cochlea-features` only for the `Audio` type; never score/synth,
+same law as `features`/`spectro`.
+
+FLAC is lossless by spec, so a correct decode reproduces the source PCM
+exactly — but `symphonia-bundle-flac` left-justifies every sample into the
+full 32-bit range regardless of the stream's true bit depth (its own
+`decode_inner` comment: "the decoder uses a 32bit sample format as a common
+denominator"). Normalizing by always dividing by 2^31 (not by a bit-depth-
+derived scale) is what makes FLAC decode land on the same `f32` bits as the
+WAV twin — verified, not assumed, by `tests/sample_exact.rs` against tiny
+committed FLAC fixtures with WAV twins (`tests/fixtures/`).
+
+mp3/ogg (lossy) are explicitly next, not this round (`docs/superpowers/
+specs/2026-07-09-agent-audio-v2-design.md` §2/§6).
+
+---
+
 ## crates/verify
 
 ```rust
@@ -416,6 +451,14 @@ pub struct VerifyReport { pub passed: bool, pub failures: Vec<Failure>, ... } //
 - `no_discontinuity`: max sample-to-sample jump (in dB of |Δ|) away from
   note on/off boundaries ± a guard window — click detector.
 - `silent_after`: windowed RMS below floor for everything after the tick.
+- Wave-2 assertions over the v2 analyzers (same builder + RON dual form):
+  `tempo_is(bpm, BpmTol)` / `TempoIs(bpm, tol_bpm, [min_bpm, max_bpm])` —
+  optional search-range override, the escape hatch for >~170 BPM material
+  where the octave prior favors half-time; `has_clear_rhythm(bool)`;
+  `stereo_width_within(min, max)`; `lra_below(lu)`;
+  `section_count(min, max)`. Undefined-metric policy (stated in
+  `verify::checks`): bounded-above checks pass on an undefined metric,
+  value assertions fail on one.
 - Every assertion is also a serde data form embeddable in score RON under
   `verify:`; `Verifier::from_specs(&[VerifySpec])` builds the same run. CLI
   `cochlea render score.ron --verify` runs them, writes the JSON failure
@@ -427,14 +470,29 @@ pub struct VerifyReport { pub passed: bool, pub failures: Vec<Failure>, ... } //
 
 ```
 cochlea render score.ron --out mix.wav [--stems dir/] [--verify] [--report report.json]
-cochlea probe input.wav [--json report.json] [--spectro spec.png]
+cochlea probe input.{wav,flac} [--json report.json] [--spectro spec.png]
+                               [--digest] [--segments timeline.json] [--window-ms 1000]
+cochlea diff a.{wav,flac} b.{wav,flac} [--json compare.json] [--tier2] [--window-ms 1000]
 cochlea lint score.ron
-cochlea spectro input.wav --out spec.png [--sheet --bars-per-tile 8]
+cochlea spectro input.{wav,flac} --out spec.png [--sheet --bars-per-tile 8]
 ```
 
-clap derive; `probe` ships in P3, the rest complete in P4. `probe` with no
+clap derive; `probe` ships in P3, the rest complete in P4; `probe
+--digest`/`--segments` and `diff` land in v2 wave 1 (the token-cheap read
+path: digest text instead of JSON, feature-space diff with a
+byte-identical / tier2-equivalent / different verdict). `probe` with no
 flags prints the JSON report to stdout. Exit codes: 0 ok, 1 verify/lint
-failures, 2 usage/IO errors.
+failures (and `diff --tier2` when the verdict is not equivalent), 2
+usage/IO errors. `--window-ms` rejects non-finite or sub-1 ms values at
+the flag boundary (NaN defeats downstream range checks; sub-millisecond
+windows would round to one-sample segments and explode the timeline), and
+distinct output flags pointing at one path are a usage error, not a
+silent last-write-wins.
+
+The `cochlea-mcp` sibling binary (crates/mcp, v2 wave 1) serves the same
+pipeline as MCP tools over newline-delimited JSON-RPC 2.0 on stdio:
+render_score, probe_audio, spectrogram, lint_score, probe_digest,
+audio_diff. Hand-rolled protocol, no async runtime; see `docs/mcp.md`.
 
 ---
 

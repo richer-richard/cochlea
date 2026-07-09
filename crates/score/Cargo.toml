@@ -1,6 +1,7 @@
 [package]
 name = "cochlea-score"
 description = "Score IR for cochlea: ticks, tempo map, bar/beat math, tracks, notes, automation, RON data form"
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,7 @@
 /target
 *.wav
 !tests/fixtures/**/*.wav
+!crates/*/tests/fixtures/**/*.wav
 !demos/**/expected/*.wav
 /.claude/
 

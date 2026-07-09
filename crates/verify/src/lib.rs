@@ -36,5 +36,5 @@ mod types;
 mod verifier;
 
 pub use report::{CheckResult, VerifyReport};
-pub use types::{Cents, Db, Ms, Tol};
+pub use types::{BpmTol, Cents, Db, Ms, Tol};
 pub use verifier::{Verifier, VerifyExt};

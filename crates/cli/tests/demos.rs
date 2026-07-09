@@ -142,6 +142,38 @@ fn title_cue_hits_its_targets() {
 }
 
 #[test]
+fn drum_groove_rhythm_analysis_reads_as_written() {
+    // run_demo already runs the score's embedded verify: block (TempoIs,
+    // HasClearRhythm, StereoWidthWithin, LraBelow, SectionCount,
+    // TruePeakBelow) and checks the Tier 3 spectrogram sentinel; this test
+    // adds the same assertions directly against a fresh probe, so a
+    // regression in `Report`'s v2 fields fails here even if the score's
+    // own tolerances happen to still be loose enough to pass.
+    let rendered = run_demo("drum_groove");
+    let report = probe(&audio_of(&rendered), &ProbeOpts::default());
+
+    let bpm = report.tempo.bpm.expect("drum groove should have a tempo");
+    assert!((bpm - 110.3).abs() <= 2.0, "bpm = {bpm}");
+    // See the score's own verify: block comment: this specific layered
+    // real-instrument groove doesn't clear the clear_rhythm confidence
+    // bar even though the tempo itself is accurate — an honest, measured
+    // outcome, not a bug.
+    assert!(!report.tempo.clear_rhythm, "{:?}", report.tempo);
+
+    let stereo = report
+        .stereo
+        .expect("stereo input should have a stereo report");
+    assert!(
+        (0.001..=0.05).contains(&stereo.width),
+        "width = {}",
+        stereo.width
+    );
+
+    assert!(report.loudness.lra.expect("should have an LRA") <= 3.0);
+    assert_eq!(report.structure.section_count, 1);
+}
+
+#[test]
 fn the_cochlea_binary_renders_and_verifies_end_to_end() {
     let dir = std::env::temp_dir().join("cochlea-demo-e2e");
     std::fs::create_dir_all(&dir).unwrap();

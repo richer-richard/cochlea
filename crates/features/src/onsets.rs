@@ -21,10 +21,13 @@ use crate::report::OnsetsReport;
 use crate::stft::Stft;
 
 /// FFT size in samples. At 48 kHz this is ~21 ms — good time resolution
-/// for locating transients (`docs/plan.md`).
-const FFT_SIZE: usize = 1024;
-/// Hop size in samples (75% overlap at `FFT_SIZE = 1024`).
-const HOP: usize = 256;
+/// for locating transients (`docs/plan.md`). `pub(crate)`: `tempo` reuses
+/// this exact STFT so its autocorrelation lag-to-BPM math and this module's
+/// frame-center convention stay in lockstep.
+pub(crate) const FFT_SIZE: usize = 1024;
+/// Hop size in samples (75% overlap at `FFT_SIZE = 1024`). See `FFT_SIZE`
+/// on visibility.
+pub(crate) const HOP: usize = 256;
 /// Rolling-median window for the adaptive threshold, in STFT frames. Wide
 /// enough to average over a full cycle of the "picket fence" flux ripple a
 /// stationary, non-bin-aligned tone produces (see `DELTA_SCALE`).
@@ -47,8 +50,17 @@ const DELTA_MIN: f64 = 1e-6;
 /// Minimum time between accepted onsets.
 const MIN_GAP_MS: f64 = 30.0;
 
-pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> OnsetsReport {
-    let stft = Stft::compute(mono, sample_rate, FFT_SIZE, HOP);
+/// The detector over a caller-provided STFT — the shared-pass contract:
+/// every caller (`probe()`, `segment_timeline`, the standalone
+/// `estimate_tempo`) computes the 1024/256 transform exactly once and
+/// hands it to onsets, tempo, and band-energy bucketing instead of each
+/// recomputing an identical one. Caller contract: the STFT was computed at
+/// [`FFT_SIZE`]/[`HOP`] (the frame-center time math depends on it).
+pub(crate) fn analyze_stft(stft: &Stft) -> OnsetsReport {
+    debug_assert_eq!(
+        stft.fft_size, FFT_SIZE,
+        "onset timing math assumes FFT_SIZE"
+    );
     let frame_count = stft.magnitudes.len();
     if frame_count < 3 {
         return OnsetsReport {
@@ -57,7 +69,7 @@ pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> OnsetsReport {
         };
     }
 
-    let flux = spectral_flux(&stft);
+    let flux = spectral_flux(stft);
     let threshold = adaptive_threshold(&flux);
 
     let min_gap_frames =
@@ -86,7 +98,9 @@ pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> OnsetsReport {
 
 /// Half-wave-rectified spectral flux: `flux[t] = sum(max(0, mag[t][b] -
 /// mag[t-1][b]))` over bins `b`. `flux[0]` is always `0.0` (no predecessor).
-fn spectral_flux(stft: &Stft) -> Vec<f64> {
+/// `pub(crate)`: `tempo`'s autocorrelation runs over this same onset
+/// strength envelope rather than recomputing it.
+pub(crate) fn spectral_flux(stft: &Stft) -> Vec<f64> {
     let mut flux = vec![0.0];
     flux.extend(stft.magnitudes.windows(2).map(|pair| {
         let (prev, cur) = (&pair[0], &pair[1]);
@@ -115,20 +129,23 @@ fn adaptive_threshold(flux: &[f64]) -> Vec<f64> {
         .collect()
 }
 
-fn median_of(values: &[f64]) -> f64 {
+/// `pub(crate)`: `structure`'s novelty thresholding uses the same
+/// median/MAD/peak-suppression trio — one implementation, not drift-prone
+/// copies.
+pub(crate) fn median_of(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     sorted[sorted.len() / 2]
 }
 
-fn mad_of(values: &[f64], median: f64) -> f64 {
+pub(crate) fn mad_of(values: &[f64], median: f64) -> f64 {
     let deviations: Vec<f64> = values.iter().map(|v| (v - median).abs()).collect();
     median_of(&deviations)
 }
 
 /// Non-maximum suppression: within any window of `min_gap` frames, keep
 /// only the highest-flux candidate peak.
-fn suppress_close_peaks(peaks: &[usize], flux: &[f64], min_gap: usize) -> Vec<usize> {
+pub(crate) fn suppress_close_peaks(peaks: &[usize], flux: &[f64], min_gap: usize) -> Vec<usize> {
     let mut accepted = Vec::new();
     let mut i = 0;
     while i < peaks.len() {
@@ -164,7 +181,8 @@ mod tests {
                 (0.5 * libm::sin(2.0 * std::f64::consts::PI * 440.0 * t)) as f32
             })
             .collect();
-        let report = analyze(&mono, sr);
+        let stft = Stft::compute(&mono, sr, FFT_SIZE, HOP);
+        let report = analyze_stft(&stft);
         assert_eq!(
             report.count, 0,
             "sustained tone should have no onsets after its own start: {:?}",

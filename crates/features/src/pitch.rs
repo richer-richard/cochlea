@@ -25,12 +25,11 @@ pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> PitchReport {
     }
 
     let frame_count = (mono.len() - WINDOW) / HOP + 1;
-    let f0s: Vec<Option<f64>> = (0..frame_count)
-        .map(|f| {
-            let start = f * HOP;
-            yin_f0(&mono[start..start + WINDOW], f64::from(sample_rate))
-        })
+    let f0s: Vec<Option<f64>> = f0_track(mono, sample_rate)
+        .into_iter()
+        .map(|(_, f0)| f0)
         .collect();
+    debug_assert_eq!(f0s.len(), frame_count);
 
     let voiced_count = f0s.iter().filter(|v| v.is_some()).count();
     let voiced_ratio = voiced_count as f64 / frame_count as f64;
@@ -45,6 +44,35 @@ pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> PitchReport {
         median_f0_hz,
         segments,
     }
+}
+
+/// The raw per-hop f0 track `analyze` summarizes: one
+/// `(window start sample, f0)` per `HOP`-spaced `WINDOW`-sample frame.
+/// `pub(crate)`: `segments` buckets these per display window (a hop
+/// contributes to a window only when its analysis frame lies fully inside
+/// it) instead of re-running a full YIN pass per window — for a 3-minute
+/// file at 1 s windows that was ~180 extra YIN passes over audio this
+/// track already covers.
+pub(crate) fn f0_track(mono: &[f32], sample_rate: u32) -> Vec<(usize, Option<f64>)> {
+    if mono.len() < WINDOW || sample_rate == 0 {
+        return Vec::new();
+    }
+    let frame_count = (mono.len() - WINDOW) / HOP + 1;
+    (0..frame_count)
+        .map(|f| {
+            let start = f * HOP;
+            (
+                start,
+                yin_f0(&mono[start..start + WINDOW], f64::from(sample_rate)),
+            )
+        })
+        .collect()
+}
+
+/// Analysis window length in samples — `pub(crate)` so `segments` can test
+/// whether a hop's frame lies fully inside a display window.
+pub(crate) const fn window_len() -> usize {
+    WINDOW
 }
 
 /// One frame of YIN: `Some(f0_hz)` if some period passed the absolute
@@ -125,17 +153,22 @@ fn midi_hz(n: i32) -> f64 {
     440.0 * libm::exp2((f64::from(n) - 69.0) / 12.0)
 }
 
-/// Nearest equal-tempered MIDI note number to `f0_hz`.
-fn nearest_midi(f0_hz: f64) -> i32 {
+/// Nearest equal-tempered MIDI note number to `f0_hz`. Exposed crate-wide so
+/// `segments`/`digest` can classify a per-window or per-buffer median f0 the
+/// same way this module classifies a per-run one.
+pub(crate) fn nearest_midi(f0_hz: f64) -> i32 {
     (69.0 + 12.0 * libm::log2(f0_hz / 440.0)).round() as i32
 }
 
-/// Deviation of `f0_hz` from `midi`'s pitch, in cents.
-fn cents_off(f0_hz: f64, midi: i32) -> f64 {
+/// Deviation of `f0_hz` from `midi`'s pitch, in cents. See [`nearest_midi`]
+/// on visibility.
+pub(crate) fn cents_off(f0_hz: f64, midi: i32) -> f64 {
     1200.0 * libm::log2(f0_hz / midi_hz(midi))
 }
 
-fn median(values: &mut [f64]) -> Option<f64> {
+/// Median of `values`. Exposed crate-wide for `digest`'s display-bucket
+/// aggregation (median f0 of the voiced segments in a merged row).
+pub(crate) fn median(values: &mut [f64]) -> Option<f64> {
     if values.is_empty() {
         return None;
     }

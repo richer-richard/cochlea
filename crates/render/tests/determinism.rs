@@ -239,3 +239,39 @@ fn golden_pcm_hash_of_the_committed_example() {
     all(target_arch = "aarch64", target_os = "macos"),
 ))]
 const GOLDEN_MIX_HASH: u64 = 0x3DC3_B57D_406D_E89F; // blessed 2026-07-03, rustc 1.95.0
+
+/// Golden PCM hash of the `drum_groove` demo (`demos/drum_groove`) — Wave
+/// 2's rhythm-analysis showcase. Extends Tier 1 coverage to a DSP
+/// combination the original golden doesn't exercise: `pluck` +
+/// `noise_hat` + `chord_pad` together, with a `reverb` insert on one
+/// track. See [`golden_pcm_hash_of_the_committed_example`]'s docs on the
+/// re-blessing process.
+///
+/// Blessed on aarch64-macos only so far (2026-07-09) — not yet confirmed
+/// cross-arch by a Tier 1 CI run the way the first-light golden above was;
+/// update this note once CI runs it on x86_64-linux.
+#[test]
+#[cfg(any(
+    all(target_arch = "x86_64", target_os = "linux"),
+    all(target_arch = "aarch64", target_os = "macos"),
+))]
+fn golden_pcm_hash_of_the_drum_groove_demo() {
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../demos/drum_groove/score.ron"
+    ))
+    .unwrap();
+    let score = Score::from_ron(&text).unwrap();
+    let rendered = render(&score).unwrap();
+    let hash = pcm_hash(rendered.mix());
+    assert_eq!(
+        hash, DRUM_GROOVE_GOLDEN_MIX_HASH,
+        "golden mismatch: got {hash:#018x} — a deliberate DSP change re-blesses this constant"
+    );
+}
+
+#[cfg(any(
+    all(target_arch = "x86_64", target_os = "linux"),
+    all(target_arch = "aarch64", target_os = "macos"),
+))]
+const DRUM_GROOVE_GOLDEN_MIX_HASH: u64 = 0xBECB_EB55_B4F8_DD00; // blessed 2026-07-09, aarch64-macos, rustc 1.95.0

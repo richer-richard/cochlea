@@ -275,6 +275,141 @@ fn silent_after_passes_after_the_tail_and_fails_mid_note() {
     assert!(!fail.passed, "{:?}", fail.checks);
 }
 
+// --- tempo_is / has_clear_rhythm ----------------------------------------
+
+/// A steady `pluck` hit on every beat, `bars` bars of 4/4 at `bpm` —
+/// enough regular attacks for `estimate_tempo` to lock onto a real tempo.
+/// `pluck`'s Karplus-Strong excitation reads a much sharper onset than
+/// `noise_hat`'s highpass-noise burst (measured: ~0.12 confidence vs
+/// ~0.03 at the same tempo/duration — `noise_hat`'s energy sits almost
+/// entirely above 7 kHz, which the onset detector's spectral flux weights
+/// less sharply than `pluck`'s broadband pluck transient), so this is the
+/// preset this workspace's own click-track calibration (`~0.11-0.15`
+/// confidence, see `cochlea_features::tempo`'s docs) actually matches.
+fn metronome_score(bpm: f64, bars: u32) -> Score {
+    let mut score = Score::new(SampleRate(48_000), Ppq(960))
+        .tempo(Ticks(0), Bpm(bpm))
+        .track("hat", Instrument::preset("pluck"));
+    for b in 1..=bars {
+        for beat in 1..=4 {
+            score = score.note(
+                "hat",
+                bar(b).beat(beat),
+                Dur::sixteenth(),
+                Pitch::A4,
+                Vel(127),
+            );
+        }
+    }
+    score
+}
+
+#[test]
+fn tempo_is_and_has_clear_rhythm_pass_a_steady_metronome_and_tempo_is_fails_off_target() {
+    // 8 bars at 120 BPM = 16 s, comfortably past the ~12 s this workspace's
+    // own tempo-detector tests calibrate a confident lock against.
+    let score = metronome_score(120.0, 8);
+    let rendered = render(&score).unwrap();
+
+    let pass = rendered
+        .verify(&score)
+        .tempo_is(120.0, BpmTol(2.0))
+        .has_clear_rhythm(true)
+        .run();
+    assert!(pass.passed, "{:?}", pass.checks);
+    assert_eq!(pass.checks[0].kind, "tempo_is");
+    assert_eq!(pass.checks[1].kind, "has_clear_rhythm");
+
+    let fail = rendered.verify(&score).tempo_is(90.0, BpmTol(2.0)).run();
+    assert!(!fail.passed, "{:?}", fail.checks);
+}
+
+#[test]
+fn has_clear_rhythm_expected_false_passes_and_expected_true_fails_for_a_sustained_tone() {
+    // A held sine has no attacks at all, hence no periodicity worth
+    // calling a rhythm — same fixture shape as `cochlea_features`' own
+    // `steady_tone_has_no_clear_rhythm` test.
+    let score = sine_score();
+    let rendered = render(&score).unwrap();
+
+    let pass = rendered.verify(&score).has_clear_rhythm(false).run();
+    assert!(pass.passed, "{:?}", pass.checks);
+    assert_eq!(pass.checks[0].kind, "has_clear_rhythm");
+
+    let fail = rendered.verify(&score).has_clear_rhythm(true).run();
+    assert!(!fail.passed, "{:?}", fail.checks);
+}
+
+// --- stereo_width_within --------------------------------------------------
+
+#[test]
+fn stereo_width_within_passes_a_narrow_range_and_fails_a_disjoint_one_for_a_dry_mono_panned_voice()
+{
+    // No insert: a bare mono-panned voice's dry output is bit-identical
+    // on both channels, so this has ~zero stereo width to test against.
+    let score = sine_score();
+    let rendered = render(&score).unwrap();
+
+    let pass = rendered.verify(&score).stereo_width_within(0.0, 0.01).run();
+    assert!(pass.passed, "{:?}", pass.checks);
+    assert_eq!(pass.checks[0].kind, "stereo_width_within");
+
+    let fail = rendered.verify(&score).stereo_width_within(0.5, 1.0).run();
+    assert!(!fail.passed, "{:?}", fail.checks);
+}
+
+// --- lra_below -------------------------------------------------------------
+
+/// A quiet passage then a loud passage, long enough per section for EBU
+/// R128's gated-block history to register both levels distinctly (mirrors
+/// `cochlea_features`' own LRA calibration, ~12 s/13 s sections). Velocity
+/// maps to amplitude as `(vel/127)^2`, so `Vel(20)` vs `Vel(120)` is a
+/// large, unambiguous level step.
+fn stepped_loudness_score() -> Score {
+    let mut score = Score::new(SampleRate(48_000), Ppq(960))
+        .tempo(Ticks(0), Bpm(120.0))
+        .track("lead", Instrument::preset("sine"));
+    for b in 1..=6 {
+        score = score.note("lead", bar(b), Dur::whole(), Pitch::A4, Vel(20));
+    }
+    for b in 7..=12 {
+        score = score.note("lead", bar(b), Dur::whole(), Pitch::A4, Vel(120));
+    }
+    score
+}
+
+#[test]
+fn lra_below_passes_a_generous_bound_and_fails_a_strict_one_for_stepped_loudness() {
+    let score = stepped_loudness_score();
+    let rendered = render(&score).unwrap();
+
+    let pass = rendered.verify(&score).lra_below(30.0).run();
+    assert!(pass.passed, "{:?}", pass.checks);
+    assert_eq!(pass.checks[0].kind, "lra_below");
+
+    let fail = rendered.verify(&score).lra_below(1.0).run();
+    assert!(!fail.passed, "{:?}", fail.checks);
+}
+
+// --- section_count ---------------------------------------------------------
+
+#[test]
+fn section_count_reads_one_section_for_a_short_uniform_render() {
+    // `detect_structure` needs at least 2*KERNEL_HALF_WIDTH frames (16 s
+    // at the default 1 s frame) to look for boundaries at all; anything
+    // shorter — like this ordinary short render — always reads as exactly
+    // one section.
+    let score = sine_score();
+    let rendered = render(&score).unwrap();
+
+    let pass = rendered.verify(&score).section_count(1, 1).run();
+    assert!(pass.passed, "{:?}", pass.checks);
+    assert_eq!(pass.checks[0].kind, "section_count");
+
+    let fail = rendered.verify(&score).section_count(2, 12).run();
+    assert!(!fail.passed, "{:?}", fail.checks);
+}
+
 // --- unknown tracks: fail, never panic ----------------------------------
 
 #[test]
@@ -344,6 +479,121 @@ fn with_specs_mirrors_the_typed_builder_results() {
 }
 
 #[test]
+fn a_score_ron_string_embedding_all_four_wave2_specs_parses_and_evaluates() {
+    // A literal RON `verify:` block, the same text form an agent would
+    // author or a `score.ron` file would commit — not a `VerifySpec`
+    // constructed directly in Rust — to prove the full pipeline: RON text
+    // -> `Score::from_ron` -> render -> `Verifier::with_specs`.
+    let text = r#"Score(
+        version: 1,
+        sample_rate: 48000,
+        ppq: 960,
+        tempo: [(tick: 0, bpm: 120.0)],
+        tracks: [
+            Track(
+                name: "hat",
+                instrument: Preset("pluck"),
+                notes: [
+                    Note(at: (1, 1), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (1, 2), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (1, 3), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (1, 4), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (2, 1), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (2, 2), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (2, 3), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (2, 4), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (3, 1), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (3, 2), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (3, 3), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (3, 4), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (4, 1), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (4, 2), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (4, 3), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (4, 4), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (5, 1), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (5, 2), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (5, 3), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (5, 4), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (6, 1), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (6, 2), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (6, 3), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (6, 4), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (7, 1), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (7, 2), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (7, 3), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (7, 4), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (8, 1), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (8, 2), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (8, 3), dur: "1/16", pitch: "A4", vel: 127),
+                    Note(at: (8, 4), dur: "1/16", pitch: "A4", vel: 127),
+                ],
+            ),
+        ],
+        verify: [
+            TempoIs(bpm: 120.0, tol_bpm: 2.0),
+            HasClearRhythm(expected: true),
+            StereoWidthWithin(min: 0.0, max: 1.0),
+            LraBelow(lu: 30.0),
+        ],
+    )"#;
+
+    let score = Score::from_ron(text).expect("valid RON with all four new verify specs");
+    assert_eq!(score.verify_specs().len(), 4);
+
+    let rendered = render(&score).unwrap();
+    let report = rendered
+        .verify(&score)
+        .with_specs(score.verify_specs())
+        .run();
+    assert!(report.passed, "{:?}", report.checks);
+    assert_eq!(
+        report.checks.iter().map(|c| c.kind).collect::<Vec<_>>(),
+        [
+            "tempo_is",
+            "has_clear_rhythm",
+            "stereo_width_within",
+            "lra_below"
+        ]
+    );
+}
+
+#[test]
+fn wave2_specs_data_form_mirrors_typed_builder_results() {
+    let score = metronome_score(120.0, 8);
+    let rendered = render(&score).unwrap();
+
+    let typed = rendered
+        .verify(&score)
+        .tempo_is(120.0, BpmTol(2.0))
+        .has_clear_rhythm(true)
+        .stereo_width_within(0.0, 1.0)
+        .lra_below(30.0)
+        .section_count(1, 12)
+        .run();
+    assert!(typed.passed, "{:?}", typed.checks);
+
+    let specs = vec![
+        VerifySpec::TempoIs {
+            min_bpm: None,
+            max_bpm: None,
+            bpm: 120.0,
+            tol_bpm: 2.0,
+        },
+        VerifySpec::HasClearRhythm { expected: true },
+        VerifySpec::StereoWidthWithin { min: 0.0, max: 1.0 },
+        VerifySpec::LraBelow { lu: 30.0 },
+        VerifySpec::SectionCount { min: 1, max: 12 },
+    ];
+    let data_form = rendered.verify(&score).with_specs(&specs).run();
+    assert!(data_form.passed, "{:?}", data_form.checks);
+    assert_eq!(typed.checks.len(), data_form.checks.len());
+    for (t, d) in typed.checks.iter().zip(data_form.checks.iter()) {
+        assert_eq!(t.kind, d.kind);
+        assert_eq!(t.passed, d.passed);
+    }
+}
+
+#[test]
 fn with_spec_monotone_direction_overrides_inference() {
     // A falling sweep authored with `direction: Falling` in the data form
     // should be checked *as falling*, regardless of what the typed
@@ -401,4 +651,61 @@ fn verify_report_serializes_with_schema_version_and_stable_kinds() {
     // have non-empty expected/actual text.
     assert!(!json["checks"][1]["expected"].as_str().unwrap().is_empty());
     assert!(!json["checks"][1]["actual"].as_str().unwrap().is_empty());
+}
+
+/// The TempoIs search-range override must actually reach the detector:
+/// forcing 200..=300 BPM on a true-120 BPM metronome moves the estimate
+/// inside the forced window (measured first via the features API, then
+/// asserted through both the typed builder and the RON spec form). The
+/// default range keeps finding ~120, so the same assertion fails there.
+#[test]
+fn tempo_is_range_override_reaches_the_detector() {
+    use cochlea_features::{Audio, TempoOpts, estimate_tempo};
+
+    let score = metronome_score(120.0, 8);
+    let rendered = render(&score).unwrap();
+    let audio = Audio {
+        samples: rendered.mix().to_vec(),
+        channels: 2,
+        sample_rate: rendered.sample_rate().0,
+    };
+
+    let forced_report = estimate_tempo(
+        &audio,
+        &TempoOpts::default().with_min_bpm(200.0).with_max_bpm(300.0),
+    );
+    let forced_bpm = forced_report.bpm.expect("a metronome has periodicity");
+    assert!(
+        (200.0..=300.0).contains(&forced_bpm),
+        "the forced range must constrain the estimate: {forced_bpm}"
+    );
+
+    let via_builder = rendered
+        .verify(&score)
+        .tempo_is_in_range(forced_bpm, BpmTol(1.0), 200.0, 300.0)
+        .run();
+    assert!(via_builder.passed, "{via_builder:?}");
+
+    let default_range = rendered
+        .verify(&score)
+        .tempo_is(forced_bpm, BpmTol(1.0))
+        .run();
+    assert!(
+        !default_range.passed,
+        "the default range finds ~120 BPM, not {forced_bpm}: {default_range:?}"
+    );
+
+    let spec_form = rendered
+        .verify(&score)
+        .with_spec(&VerifySpec::TempoIs {
+            bpm: forced_bpm,
+            tol_bpm: 1.0,
+            min_bpm: Some(200.0),
+            max_bpm: Some(300.0),
+        })
+        .run();
+    assert!(
+        spec_form.passed,
+        "data form must thread the range: {spec_form:?}"
+    );
 }

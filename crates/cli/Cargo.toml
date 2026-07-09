@@ -1,6 +1,7 @@
 [package]
 name = "cochlea"
-description = "Headless audio engine for agents: render, probe, lint, spectro"
+description = "Headless audio engine for agents: render, probe, diff, lint, spectro"
+readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,6 +19,7 @@ cochlea-score.workspace = true
 cochlea-synth.workspace = true
 cochlea-render.workspace = true
 cochlea-features.workspace = true
+cochlea-decode.workspace = true
 cochlea-spectro.workspace = true
 cochlea-verify.workspace = true
 anyhow.workspace = true

@@ -32,15 +32,18 @@ impl ProbeOpts {
     }
 }
 
-/// Top-level probe report, `schema_version: 1`. Mirrors the JSON sketch in
-/// `docs/plan.md` (`crates/features`) field-for-field.
+/// Top-level probe report, `schema_version: 2`. Mirrors the JSON sketch in
+/// `docs/plan.md` (`crates/features`) field-for-field, plus the `v2`
+/// analyzers added after the initial sketch (`tempo`/`stereo`/`structure`,
+/// and `loudness.lra`) — see [`crate::SCHEMA_VERSION`]'s docs for the
+/// version history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
     /// Report schema version; see [`crate::SCHEMA_VERSION`].
     pub schema_version: u32,
     /// Input metadata (rate, channels, length).
     pub source: SourceInfo,
-    /// EBU R128 loudness/true-peak measurements.
+    /// EBU R128 loudness/true-peak/loudness-range measurements.
     pub loudness: LoudnessReport,
     /// Spectral-flux onset times.
     pub onsets: OnsetsReport,
@@ -52,6 +55,38 @@ pub struct Report {
     pub silence: SilenceReport,
     /// Sample-clamp clipping count and true-peak-over-0dBTP flag.
     pub clipping: ClippingReport,
+    /// Compact tempo/beat-tracking summary. Added in `schema_version: 2`.
+    pub tempo: TempoSummary,
+    /// Stereo-image metrics; `None` for non-stereo input. Added in
+    /// `schema_version: 2`.
+    pub stereo: Option<crate::StereoReport>,
+    /// Self-similarity structural section boundaries. Added in
+    /// `schema_version: 2`.
+    pub structure: crate::StructureReport,
+}
+
+/// Compact tempo summary embedded in [`Report`]. Deliberately not the full
+/// [`crate::TempoReport`] — that struct's `beats_ms` grid can run to
+/// hundreds of entries for a multi-minute track, which would bloat every
+/// probe JSON for information most callers don't need at that resolution.
+/// Callers that want the full beat grid call
+/// [`crate::estimate_tempo`] directly on the same [`crate::Audio`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TempoSummary {
+    /// Estimated tempo, BPM. `None` for degenerate/non-rhythmic input.
+    pub bpm: Option<f64>,
+    /// Salience of the winning tempo lag, `0.0..=1.0`. See
+    /// [`crate::TempoReport::confidence`] for the exact definition.
+    pub confidence: f64,
+    /// Whether the tempo/beat grid is trustworthy as a real, steady pulse.
+    /// See [`crate::TempoReport::clear_rhythm`] for the exact rule.
+    pub clear_rhythm: bool,
+    /// `beats_ms.len()` from the full [`crate::TempoReport`] — how many
+    /// beats were placed, without embedding the grid itself.
+    pub beat_count: usize,
+    /// Mean of consecutive beat-to-beat intervals, milliseconds. `None`
+    /// when there are fewer than two beats to form an interval from.
+    pub mean_beat_interval_ms: Option<f64>,
 }
 
 /// Input metadata.
@@ -82,6 +117,10 @@ pub struct LoudnessReport {
     pub true_peak_dbtp: Option<f64>,
     /// Sample peak (no oversampling), dBFS.
     pub sample_peak_dbfs: Option<f64>,
+    /// EBU R128 loudness range (LRA) per EBU 3342, LU. Added in
+    /// `schema_version: 2`; see [`crate::loudness_range`] for the standalone
+    /// entry point and its exact undefined-vs-zero convention.
+    pub lra: Option<f64>,
 }
 
 /// Onset times from half-wave-rectified spectral flux with an adaptive
@@ -198,6 +237,25 @@ impl PitchClass {
         PitchClass::ASharp,
         PitchClass::B,
     ];
+
+    /// Note name as printed in text digests/comparisons (`"C"`, `"C#"`,
+    /// ...) — the same spelling as this type's serde wire form.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            PitchClass::C => "C",
+            PitchClass::CSharp => "C#",
+            PitchClass::D => "D",
+            PitchClass::DSharp => "D#",
+            PitchClass::E => "E",
+            PitchClass::F => "F",
+            PitchClass::FSharp => "F#",
+            PitchClass::G => "G",
+            PitchClass::GSharp => "G#",
+            PitchClass::A => "A",
+            PitchClass::ASharp => "A#",
+            PitchClass::B => "B",
+        }
+    }
 }
 
 /// Major or minor.

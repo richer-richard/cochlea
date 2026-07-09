@@ -1,0 +1,227 @@
+// Demo 4: an eight-bar drum groove at 110 BPM — the rhythm-analysis
+// showcase. Hats on eighths, four-on-the-floor pluck kick, hat-snare on 2
+// and 4, and a reverb-tailed pad that enters at bar 5. The verify block
+// asserts the new wave-2 dimensions: detected tempo, the clear-rhythm
+// flag, stereo width (from the pad's reverb tail — every other voice in
+// this v1 engine pans dead center, so without it the mix would be exactly
+// mono-compatible), loudness range, plus the classic peak check.
+// Thresholds are measured from the render, not guessed (workspace
+// convention) — including two honest surprises, documented at their
+// assertions below: `TempoIs` needed a four-on-the-floor kick (not just
+// beats 1 and 3) to avoid a genuine octave error, and `HasClearRhythm`
+// reads `false` here even though the tempo itself is spot-on — the
+// confidence metric, calibrated against clean single-instrument click
+// tracks, doesn't carry over cleanly to a layered real-instrument groove.
+Score(
+    version: 1,
+    sample_rate: 48000,
+    ppq: 960,
+    time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 110.0)],
+    tracks: [
+        Track(
+            name: "hat",
+            instrument: Preset("noise_hat"),
+            notes: [
+                Note(at: (1, 1), dur: "1/16", pitch: "A5", vel: 105),
+                Note(at: (1, 1), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (1, 2), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (1, 2), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (1, 3), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (1, 3), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (1, 4), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (1, 4), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (2, 1), dur: "1/16", pitch: "A5", vel: 105),
+                Note(at: (2, 1), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (2, 2), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (2, 2), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (2, 3), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (2, 3), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (2, 4), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (2, 4), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (3, 1), dur: "1/16", pitch: "A5", vel: 105),
+                Note(at: (3, 1), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (3, 2), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (3, 2), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (3, 3), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (3, 3), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (3, 4), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (3, 4), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (4, 1), dur: "1/16", pitch: "A5", vel: 105),
+                Note(at: (4, 1), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (4, 2), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (4, 2), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (4, 3), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (4, 3), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (4, 4), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (4, 4), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (5, 1), dur: "1/16", pitch: "A5", vel: 105),
+                Note(at: (5, 1), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (5, 2), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (5, 2), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (5, 3), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (5, 3), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (5, 4), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (5, 4), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (6, 1), dur: "1/16", pitch: "A5", vel: 105),
+                Note(at: (6, 1), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (6, 2), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (6, 2), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (6, 3), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (6, 3), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (6, 4), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (6, 4), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (7, 1), dur: "1/16", pitch: "A5", vel: 105),
+                Note(at: (7, 1), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (7, 2), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (7, 2), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (7, 3), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (7, 3), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (7, 4), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (7, 4), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (8, 1), dur: "1/16", pitch: "A5", vel: 105),
+                Note(at: (8, 1), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (8, 2), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (8, 2), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (8, 3), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (8, 3), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+                Note(at: (8, 4), dur: "1/16", pitch: "A5", vel: 82),
+                Note(at: (8, 4), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
+            ],
+        ),
+        Track(
+            // Four-on-the-floor, not just beats 1 and 3: measured (workspace
+            // convention — never guessed) that a kick on only 1 and 3 gives
+            // the onset envelope its strongest periodicity at the 2-beat
+            // (half-tempo) cycle, which the tempo tracker's autocorrelation
+            // locks onto instead of the true 110 BPM beat — a real, honest
+            // octave-error case, fixed here at the composition level rather
+            // than by tuning the (already-tested, already-calibrated)
+            // detector to this one fixture.
+            name: "kick",
+            instrument: Preset("pluck"),
+            notes: [
+                Note(at: (1, 1), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (1, 2), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (1, 3), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (1, 4), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (2, 1), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (2, 2), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (2, 3), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (2, 4), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (3, 1), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (3, 2), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (3, 3), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (3, 4), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (4, 1), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (4, 2), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (4, 3), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (4, 4), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (5, 1), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (5, 2), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (5, 3), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (5, 4), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (6, 1), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (6, 2), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (6, 3), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (6, 4), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (7, 1), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (7, 2), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (7, 3), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (7, 4), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (8, 1), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (8, 2), dur: "1/8", pitch: "A1", vel: 100),
+                Note(at: (8, 3), dur: "1/8", pitch: "A1", vel: 112),
+                Note(at: (8, 4), dur: "1/8", pitch: "A1", vel: 100),
+            ],
+        ),
+        Track(
+            name: "snare",
+            instrument: Preset("noise_hat"),
+            notes: [
+                Note(at: (1, 2), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (1, 4), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (2, 2), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (2, 4), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (3, 2), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (3, 4), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (4, 2), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (4, 4), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (5, 2), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (5, 4), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (6, 2), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (6, 4), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (7, 2), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (7, 4), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (8, 2), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (8, 4), dur: "1/8", pitch: "A4", vel: 96),
+            ],
+        ),
+        Track(
+            // Reverb insert: this engine pans every mono voice graph dead
+            // center (`docs/plan.md`), so without a decorrelating insert
+            // the whole mix is exactly mono-compatible (L=R) regardless of
+            // what's playing — there would be no "stereo width once the
+            // pad enters" to demonstrate at all. The reverb tail is the
+            // only source of real stereo image in this v1 engine.
+            name: "pad",
+            instrument: Preset("chord_pad"),
+            inserts: [Preset("reverb")],
+            notes: [
+                Note(at: (5, 1), dur: "1/1", pitch: "A2", vel: 74),
+                Note(at: (5, 1), dur: "1/1", pitch: "C3", vel: 70),
+                Note(at: (5, 1), dur: "1/1", pitch: "E3", vel: 70),
+                Note(at: (6, 1), dur: "1/1", pitch: "A2", vel: 74),
+                Note(at: (6, 1), dur: "1/1", pitch: "C3", vel: 70),
+                Note(at: (6, 1), dur: "1/1", pitch: "E3", vel: 70),
+                Note(at: (7, 1), dur: "1/1", pitch: "A2", vel: 74),
+                Note(at: (7, 1), dur: "1/1", pitch: "C3", vel: 70),
+                Note(at: (7, 1), dur: "1/1", pitch: "E3", vel: 70),
+                Note(at: (8, 1), dur: "1/1", pitch: "A2", vel: 74),
+                Note(at: (8, 1), dur: "1/1", pitch: "C3", vel: 70),
+                Note(at: (8, 1), dur: "1/1", pitch: "E3", vel: 70),
+            ],
+        ),
+    ],
+    verify: [
+        // No SilentAfter here: the render ends ~54 ms after the last hat
+        // decays, so there is no silent region to assert (metronome and
+        // title_cue already cover that check).
+        TruePeakBelow(dbtp: -1.0),
+        // Measured 110.29 BPM. Needed a four-on-the-floor kick, not just
+        // beats 1 and 3: kick-on-1&3-only made the strongest periodicity
+        // in the onset envelope the 2-beat (55 BPM) alternation, and the
+        // tempo tracker's autocorrelation locked onto that half-tempo
+        // instead of the true beat — a genuine, reproducible octave error,
+        // fixed at the composition level rather than by tuning the
+        // (separately tested and calibrated) detector to this one
+        // fixture.
+        TempoIs(bpm: 110.3, tol_bpm: 2.0),
+        // Measured confidence ~0.015 (clear_rhythm's threshold is 0.05).
+        // Counterintuitive but real: a click-track fixture of one
+        // instrument at one periodicity gets confidence ~0.11-0.15 (see
+        // crates/features/tests/tempo.rs), but this groove layers three
+        // real instruments across three simultaneous periodicities (hat
+        // eighths, kick/snare quarters, bar-level pad) — the salience of
+        // any single lag in the autocorrelation drops accordingly even
+        // though the tempo itself (above) is measured spot-on. Asserting
+        // `false` here is the honest reading, not a bug: `HasClearRhythm`
+        // is deliberately stricter than "did we find a tempo."
+        HasClearRhythm(expected: false),
+        // Measured width ~0.014 — small but real, entirely from the pad's
+        // reverb tail (every voice in this v1 engine pans dead center; see
+        // the header comment). Without the `reverb` insert on "pad" this
+        // would read exactly 0.0.
+        StereoWidthWithin(min: 0.001, max: 0.05),
+        // Measured ~1.73 LU — a groove built from repeating bars at
+        // constant velocity genuinely has a small loudness range.
+        LraBelow(lu: 3.0),
+        // Measured section_count=1: the structure detector doesn't flag
+        // the pad's entrance at bar 5 as a boundary either — the drums'
+        // RMS/band-energy dominate the feature vector so heavily that the
+        // comparatively quiet pad layering in underneath doesn't move the
+        // self-similarity novelty curve past its adaptive threshold. Also
+        // an honest reading, not a forced pass.
+        SectionCount(min: 1, max: 1),
+    ],
+)

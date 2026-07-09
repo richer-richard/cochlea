@@ -1,7 +1,8 @@
-//! `integrated_lufs` and `true_peak_below`: whole-mix loudness checks via
-//! `cochlea_features::probe`'s ebur128-backed loudness report.
+//! `integrated_lufs`, `true_peak_below`, and `lra_below`: whole-mix
+//! loudness checks via `cochlea_features`' ebur128-backed loudness
+//! extractors.
 
-use cochlea_features::{ProbeOpts, probe};
+use cochlea_features::{ProbeOpts, loudness_range, probe};
 use cochlea_render::Rendered;
 
 use crate::checks::util::stereo_audio;
@@ -68,6 +69,38 @@ pub(crate) fn true_peak_below(rendered: &Rendered, dbtp: f64) -> CheckResult {
             expected,
             actual: "-inf dBTP".to_string(),
             detail: Some("no measurable true peak (silence?)".to_string()),
+        },
+    }
+}
+
+/// EBU R128 loudness range (LRA) of the mix at or below `lu` LU. A mix
+/// with no measurable range (too short, or entirely below the -70 LUFS
+/// absolute gate) has nothing to exceed the bound, so it always passes
+/// (with a detail note) — mirrors [`true_peak_below`]'s convention for an
+/// undefined metric.
+pub(crate) fn lra_below(rendered: &Rendered, lu: f64) -> CheckResult {
+    let kind = "lra_below";
+    let assertion = format!("mix loudness range is at or below {lu} LU");
+    let expected = format!("<= {lu:.2} LU");
+
+    let audio = stereo_audio(rendered.mix(), rendered.sample_rate().0);
+
+    match loudness_range(&audio) {
+        Some(measured) => CheckResult {
+            kind,
+            assertion,
+            passed: measured <= lu,
+            expected,
+            actual: format!("{measured:.2} LU"),
+            detail: None,
+        },
+        None => CheckResult {
+            kind,
+            assertion,
+            passed: true,
+            expected,
+            actual: "no measurable loudness range".to_string(),
+            detail: Some("no measurable loudness range (too short or silent?)".to_string()),
         },
     }
 }

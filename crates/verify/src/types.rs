@@ -22,3 +22,10 @@ pub struct Cents(pub f64);
 /// [`cochlea_score::VerifySpec::NoDiscontinuity`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Db(pub f64);
+
+/// A tempo tolerance in BPM. Used by [`crate::Verifier::tempo_is`]. A
+/// distinct type from `cochlea_score::Bpm` (which authors tempo, not
+/// tolerances) so the two are never accidentally interchangeable at a
+/// call site.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BpmTol(pub f64);

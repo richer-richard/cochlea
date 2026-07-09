@@ -1,0 +1,32 @@
+# Lossless decode into the analysis pipeline's `Audio` type: WAV via hound,
+# FLAC via symphonia (pure Rust, MPL-2.0 — no ffmpeg, no system codecs).
+# Depends on cochlea-features only for `Audio` itself; never on score/synth,
+# so `cochlea probe some.flac` stays score-free like the rest of the read
+# path. FLAC is lossless: decoded PCM is bit-exact by spec, so nothing here
+# weakens the determinism contract.
+[package]
+name = "cochlea-decode"
+description = "Lossless audio decode (WAV, FLAC) for the cochlea analysis pipeline"
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+cochlea-features.workspace = true
+symphonia.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Only for the #[ignore]d fixture-regeneration test (hound writes the WAV
+# twin, libm supplies the sine — clippy's disallowed-methods ban on std
+# transcendentals applies to test code too).
+hound.workspace = true
+libm.workspace = true
+
+[lints]
+workspace = true
