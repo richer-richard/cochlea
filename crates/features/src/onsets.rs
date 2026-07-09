@@ -50,8 +50,17 @@ const DELTA_MIN: f64 = 1e-6;
 /// Minimum time between accepted onsets.
 const MIN_GAP_MS: f64 = 30.0;
 
-pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> OnsetsReport {
-    let stft = Stft::compute(mono, sample_rate, FFT_SIZE, HOP);
+/// The detector over a caller-provided STFT — the shared-pass contract:
+/// every caller (`probe()`, `segment_timeline`, the standalone
+/// `estimate_tempo`) computes the 1024/256 transform exactly once and
+/// hands it to onsets, tempo, and band-energy bucketing instead of each
+/// recomputing an identical one. Caller contract: the STFT was computed at
+/// [`FFT_SIZE`]/[`HOP`] (the frame-center time math depends on it).
+pub(crate) fn analyze_stft(stft: &Stft) -> OnsetsReport {
+    debug_assert_eq!(
+        stft.fft_size, FFT_SIZE,
+        "onset timing math assumes FFT_SIZE"
+    );
     let frame_count = stft.magnitudes.len();
     if frame_count < 3 {
         return OnsetsReport {
@@ -60,7 +69,7 @@ pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> OnsetsReport {
         };
     }
 
-    let flux = spectral_flux(&stft);
+    let flux = spectral_flux(stft);
     let threshold = adaptive_threshold(&flux);
 
     let min_gap_frames =
@@ -169,7 +178,8 @@ mod tests {
                 (0.5 * libm::sin(2.0 * std::f64::consts::PI * 440.0 * t)) as f32
             })
             .collect();
-        let report = analyze(&mono, sr);
+        let stft = Stft::compute(&mono, sr, FFT_SIZE, HOP);
+        let report = analyze_stft(&stft);
         assert_eq!(
             report.count, 0,
             "sustained tone should have no onsets after its own start: {:?}",

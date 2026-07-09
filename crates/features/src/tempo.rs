@@ -161,19 +161,30 @@ fn degenerate_report() -> TempoReport {
 /// `confidence: 0.0`, `clear_rhythm: false`, `beats_ms: []` — never panics.
 pub fn estimate_tempo(audio: &Audio, opts: &TempoOpts) -> TempoReport {
     let mono = audio.mono();
-    estimate_tempo_mono(&mono, audio.sample_rate, opts)
+    if audio.sample_rate == 0 || mono.len() < onsets::FFT_SIZE {
+        return degenerate_report();
+    }
+    let stft = Stft::compute(&mono, audio.sample_rate, onsets::FFT_SIZE, onsets::HOP);
+    let onset_report = onsets::analyze_stft(&stft);
+    let duration_s = mono.len() as f64 / f64::from(audio.sample_rate);
+    estimate_from_parts(&stft, &onset_report, duration_s, audio.sample_rate, opts)
 }
 
-fn estimate_tempo_mono(mono: &[f32], sample_rate: u32, opts: &TempoOpts) -> TempoReport {
-    if sample_rate == 0 || mono.len() < onsets::FFT_SIZE {
+/// The estimator over caller-provided shared parts (the onsets-grade STFT
+/// and its onset report) — `probe()` computes both exactly once and feeds
+/// every consumer, instead of this module recomputing an identical STFT
+/// and a full second onset-detection pass just to read `count`.
+pub(crate) fn estimate_from_parts(
+    stft: &Stft,
+    onset_report: &OnsetsReport,
+    duration_s: f64,
+    sample_rate: u32,
+    opts: &TempoOpts,
+) -> TempoReport {
+    if sample_rate == 0 || stft.magnitudes.len() < 3 {
         return degenerate_report();
     }
-
-    let stft = Stft::compute(mono, sample_rate, onsets::FFT_SIZE, onsets::HOP);
-    if stft.magnitudes.len() < 3 {
-        return degenerate_report();
-    }
-    let flux = onsets::spectral_flux(&stft);
+    let flux = onsets::spectral_flux(stft);
     let frame_rate = f64::from(sample_rate) / onsets::HOP as f64;
 
     // Reversed bounds are normalized by swapping — a caller writing
@@ -207,7 +218,11 @@ fn estimate_tempo_mono(mono: &[f32], sample_rate: u32, opts: &TempoOpts) -> Temp
         .map(|t| frame_center_ms(t, sample_rate))
         .collect();
 
-    let onset_rate = onset_rate_per_second(mono, sample_rate);
+    let onset_rate = if duration_s > 0.0 {
+        onset_report.count as f64 / duration_s
+    } else {
+        0.0
+    };
     let clear_rhythm = confidence >= CLEAR_RHYTHM_MIN_CONFIDENCE
         && onset_rate >= CLEAR_RHYTHM_MIN_ONSET_RATE_PER_S;
 
@@ -337,14 +352,4 @@ fn beat_grid(flux: &[f64], period_frames: usize, lambda: f64) -> Vec<usize> {
 fn frame_center_ms(frame: usize, sample_rate: u32) -> f64 {
     (frame as f64 * onsets::HOP as f64 + onsets::FFT_SIZE as f64 / 2.0) / f64::from(sample_rate)
         * 1000.0
-}
-
-fn onset_rate_per_second(mono: &[f32], sample_rate: u32) -> f64 {
-    let OnsetsReport { count, .. } = onsets::analyze(mono, sample_rate);
-    let duration_s = mono.len() as f64 / f64::from(sample_rate);
-    if duration_s > 0.0 {
-        count as f64 / duration_s
-    } else {
-        0.0
-    }
 }

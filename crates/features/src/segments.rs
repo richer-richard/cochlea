@@ -13,15 +13,6 @@ use crate::{onsets, pitch};
 /// Schema version of [`SegmentTimeline`]'s JSON form.
 pub const SEGMENTS_SCHEMA_VERSION: u32 = 1;
 
-/// FFT size for the band-energy STFT, samples. Reuses the onset detector's
-/// short-window tradeoff (good time resolution) since band energy is
-/// bucketed per display window, not read at FFT resolution — see
-/// [`segment_timeline`]'s docs.
-const BAND_FFT_SIZE: usize = 1024;
-/// Hop size for the band-energy STFT, samples (75% overlap at
-/// `BAND_FFT_SIZE`).
-const BAND_HOP: usize = 256;
-
 /// Band split, Hz: low is `< LOW_HIGH_HZ`, mid is `[LOW_HIGH_HZ,
 /// MID_HIGH_HZ]`, high is `> MID_HIGH_HZ`.
 const LOW_HIGH_HZ: f64 = 250.0;
@@ -184,16 +175,35 @@ pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
     let window_len = ((opts.window_ms / 1000.0 * f64::from(sample_rate)).round() as usize).max(1);
     let segment_count = mono.len().div_ceil(window_len);
 
-    let onsets_report = onsets::analyze(&mono, sample_rate);
+    // One onsets-grade STFT serves both the onset detector and band-energy
+    // bucketing (identical 1024/256 parameters — previously two separate,
+    // byte-identical transforms), and one whole-file YIN track replaces a
+    // fresh per-window pitch pass.
+    let stft = Stft::compute(&mono, sample_rate, onsets::FFT_SIZE, onsets::HOP);
+    let onsets_report = onsets::analyze_stft(&stft);
     let mut onset_counts = vec![0u32; segment_count];
     for &t_ms in &onsets_report.times_ms {
         onset_counts[bucket_index(t_ms, sample_rate, window_len, segment_count)] += 1;
     }
 
-    let stft = Stft::compute(&mono, sample_rate, BAND_FFT_SIZE, BAND_HOP);
+    // A hop contributes its f0 to a display window only when its analysis
+    // frame lies fully inside that window — the same containment the old
+    // per-slice YIN had, without re-analyzing audio the whole-file track
+    // already covers.
+    let mut window_f0s: Vec<Vec<f64>> = vec![Vec::new(); segment_count];
+    for (start, f0) in pitch::f0_track(&mono, sample_rate) {
+        if let Some(f0) = f0 {
+            let first = start / window_len;
+            let last = (start + pitch::window_len() - 1) / window_len;
+            if first == last && first < segment_count {
+                window_f0s[first].push(f0);
+            }
+        }
+    }
+
     let mut band_energy_acc = vec![[0.0f64; 3]; segment_count];
     for (t, frame) in stft.magnitudes.iter().enumerate() {
-        let center_ms = (t as f64 * BAND_HOP as f64 + BAND_FFT_SIZE as f64 / 2.0)
+        let center_ms = (t as f64 * onsets::HOP as f64 + onsets::FFT_SIZE as f64 / 2.0)
             / f64::from(sample_rate)
             * 1000.0;
         let idx = bucket_index(center_ms, sample_rate, window_len, segment_count);
@@ -235,7 +245,7 @@ pub fn segment_timeline(audio: &Audio, opts: &SegmentOpts) -> SegmentTimeline {
 
         let silent = rms_dbfs.unwrap_or(f64::NEG_INFINITY) <= floor_dbfs;
 
-        let f0_hz = pitch::analyze(slice, sample_rate).median_f0_hz;
+        let f0_hz = pitch::median(&mut window_f0s[i]);
         let (midi_nearest, cents_off) = match f0_hz {
             Some(f0) => {
                 let midi = pitch::nearest_midi(f0);

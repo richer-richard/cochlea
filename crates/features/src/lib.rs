@@ -62,13 +62,26 @@ pub const SCHEMA_VERSION: u32 = 2;
 pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
     let mono = audio.mono();
 
+    // One onsets-grade STFT feeds both the onset detector and the tempo
+    // estimator (which also reuses the onset report for its rate floor) —
+    // previously each consumer recomputed an identical 1024/256 transform,
+    // tripling the heaviest per-probe work for byte-identical results.
+    let onset_stft = stft::Stft::compute(&mono, audio.sample_rate, onsets::FFT_SIZE, onsets::HOP);
+
     let loudness = loudness::analyze(audio);
-    let onsets = onsets::analyze(&mono, audio.sample_rate);
+    let onsets = onsets::analyze_stft(&onset_stft);
     let pitch = pitch::analyze(&mono, audio.sample_rate);
     let key = key::analyze(&mono, audio.sample_rate);
     let silence = silence::analyze(&mono, audio.sample_rate, opts.silence_floor_dbfs);
     let clipping = clipping::analyze(audio, loudness.true_peak_dbtp);
-    let tempo = summarize_tempo(tempo::estimate_tempo(audio, &TempoOpts::default()));
+    let duration_s = mono.len() as f64 / f64::from(audio.sample_rate.max(1));
+    let tempo = summarize_tempo(tempo::estimate_from_parts(
+        &onset_stft,
+        &onsets,
+        duration_s,
+        audio.sample_rate,
+        &TempoOpts::default(),
+    ));
     let stereo = stereo::analyze_stereo(audio);
     let structure = structure::detect_structure(audio, &StructureOpts::default());
 

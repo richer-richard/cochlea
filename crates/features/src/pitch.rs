@@ -25,12 +25,11 @@ pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> PitchReport {
     }
 
     let frame_count = (mono.len() - WINDOW) / HOP + 1;
-    let f0s: Vec<Option<f64>> = (0..frame_count)
-        .map(|f| {
-            let start = f * HOP;
-            yin_f0(&mono[start..start + WINDOW], f64::from(sample_rate))
-        })
+    let f0s: Vec<Option<f64>> = f0_track(mono, sample_rate)
+        .into_iter()
+        .map(|(_, f0)| f0)
         .collect();
+    debug_assert_eq!(f0s.len(), frame_count);
 
     let voiced_count = f0s.iter().filter(|v| v.is_some()).count();
     let voiced_ratio = voiced_count as f64 / frame_count as f64;
@@ -45,6 +44,35 @@ pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> PitchReport {
         median_f0_hz,
         segments,
     }
+}
+
+/// The raw per-hop f0 track `analyze` summarizes: one
+/// `(window start sample, f0)` per `HOP`-spaced `WINDOW`-sample frame.
+/// `pub(crate)`: `segments` buckets these per display window (a hop
+/// contributes to a window only when its analysis frame lies fully inside
+/// it) instead of re-running a full YIN pass per window — for a 3-minute
+/// file at 1 s windows that was ~180 extra YIN passes over audio this
+/// track already covers.
+pub(crate) fn f0_track(mono: &[f32], sample_rate: u32) -> Vec<(usize, Option<f64>)> {
+    if mono.len() < WINDOW || sample_rate == 0 {
+        return Vec::new();
+    }
+    let frame_count = (mono.len() - WINDOW) / HOP + 1;
+    (0..frame_count)
+        .map(|f| {
+            let start = f * HOP;
+            (
+                start,
+                yin_f0(&mono[start..start + WINDOW], f64::from(sample_rate)),
+            )
+        })
+        .collect()
+}
+
+/// Analysis window length in samples — `pub(crate)` so `segments` can test
+/// whether a hop's frame lies fully inside a display window.
+pub(crate) const fn window_len() -> usize {
+    WINDOW
 }
 
 /// One frame of YIN: `Some(f0_hz)` if some period passed the absolute
