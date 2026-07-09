@@ -29,14 +29,14 @@ mod tempo;
 pub use audio::{Audio, AudioError};
 pub use compare::{
     Analysis, COMPARE_SCHEMA_VERSION, CompareReport, KeyDelta, KeySummary, LoudnessDelta,
-    OnsetMatch, PitchDelta, SegmentDelta, Verdict, compare, compare_text, compare_with_identity,
-    samples_identical,
+    OnsetMatch, PitchDelta, SegmentDelta, StereoDelta, StructureDelta, TempoDelta, Verdict,
+    compare, compare_text, compare_with_identity, samples_identical,
 };
 pub use digest::digest_text;
 pub use loudness::loudness_range;
 pub use report::{
     ClippingReport, KeyReport, LoudnessReport, Mode, OnsetsReport, PitchClass, PitchReport,
-    PitchSegment, ProbeOpts, Report, SilenceReport, SourceInfo,
+    PitchSegment, ProbeOpts, Report, SilenceReport, SourceInfo, TempoSummary,
 };
 pub use segments::{
     BandEnergy, SEGMENTS_SCHEMA_VERSION, Segment, SegmentOpts, SegmentTimeline, segment_timeline,
@@ -47,7 +47,13 @@ pub use tempo::{TempoOpts, TempoReport, estimate_tempo};
 
 /// Schema version of [`Report`]'s JSON form. Bump and document here on any
 /// breaking change to the report shape.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// - `1`: initial shape (`docs/plan.md`'s sketch) — loudness (integrated /
+///   momentary max / true peak / sample peak), onsets, pitch, key,
+///   silence, clipping.
+/// - `2`: added `loudness.lra`, `tempo`, `stereo`, `structure` (Wave 2's
+///   tempo/beat, stereo-image, and structure-detection analyzers).
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Run every extractor over `audio` and assemble the schema-versioned
 /// report. Infallible: undefined measurements (silence, no voiced frames,
@@ -62,6 +68,9 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
     let key = key::analyze(&mono, audio.sample_rate);
     let silence = silence::analyze(&mono, audio.sample_rate, opts.silence_floor_dbfs);
     let clipping = clipping::analyze(audio, loudness.true_peak_dbtp);
+    let tempo = summarize_tempo(tempo::estimate_tempo(audio, &TempoOpts::default()));
+    let stereo = stereo::analyze_stereo(audio);
+    let structure = structure::detect_structure(audio, &StructureOpts::default());
 
     Report {
         schema_version: SCHEMA_VERSION,
@@ -77,5 +86,27 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
         key,
         silence,
         clipping,
+        tempo,
+        stereo,
+        structure,
+    }
+}
+
+/// Reduce a full [`TempoReport`] to the compact [`TempoSummary`] embedded
+/// in [`Report`] — drops `beats_ms`, keeping only its length and mean
+/// interval (see [`TempoSummary`]'s docs on why).
+fn summarize_tempo(full: TempoReport) -> TempoSummary {
+    let beat_count = full.beats_ms.len();
+    let mean_beat_interval_ms = (beat_count >= 2).then(|| {
+        let span = full.beats_ms[beat_count - 1] - full.beats_ms[0];
+        span / (beat_count - 1) as f64
+    });
+
+    TempoSummary {
+        bpm: full.bpm,
+        confidence: full.confidence,
+        clear_rhythm: full.clear_rhythm,
+        beat_count,
+        mean_beat_interval_ms,
     }
 }

@@ -269,7 +269,26 @@ fn pure_silence_never_panics_and_reports_undefined_measurements() {
     assert_eq!(report.clipping.clipped_samples, 0);
     assert!(!report.clipping.true_peak_over_0dbtp);
 
-    // Round-trips through serde without emitting non-finite JSON floats.
+    // v2 fields: degenerate but defined, never panicking.
+    assert_eq!(report.tempo.bpm, None);
+    assert_eq!(report.tempo.confidence, 0.0);
+    assert!(!report.tempo.clear_rhythm);
+    assert_eq!(report.tempo.beat_count, 0);
+    assert_eq!(report.tempo.mean_beat_interval_ms, None);
+    assert!(
+        report.stereo.is_none(),
+        "mono input should have no stereo report"
+    );
+    assert_eq!(report.structure.section_count, 1);
+    assert!(report.structure.boundaries_ms.is_empty());
+    // Measured: ebur128's LRA reads a defined Some(0.0) even for pure
+    // silence (no range to speak of is still an answer, not an error —
+    // matches the `loudness_range` standalone fn's documented behavior).
+    assert_eq!(report.loudness.lra, Some(0.0));
+
+    // Round-trips through serde without emitting non-finite JSON floats —
+    // covers every v2 field too (tempo/stereo/structure/lra), not just the
+    // v1 ones asserted individually above.
     let json = serde_json::to_string(&report).expect("silent report should still serialize");
     assert!(
         !json.contains("inf"),
@@ -308,6 +327,6 @@ fn wav_round_trip_through_hound() {
     assert_eq!(audio.samples.len(), samples.len());
 
     let report = probe(&audio, &ProbeOpts::default());
-    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.schema_version, 2);
     assert_eq!(report.source.samples, audio.frames());
 }

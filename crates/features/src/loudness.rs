@@ -15,7 +15,7 @@ pub(crate) fn analyze(audio: &Audio) -> LoudnessReport {
     let Ok(mut ebu) = EbuR128::new(
         u32::from(audio.channels),
         audio.sample_rate,
-        Mode::I | Mode::TRUE_PEAK,
+        Mode::I | Mode::TRUE_PEAK | Mode::LRA,
     ) else {
         // Only fails on channels == 0 (guarded above) or allocation
         // failure; either way, loudness is simply unavailable.
@@ -59,11 +59,14 @@ pub(crate) fn analyze(audio: &Audio) -> LoudnessReport {
         }
     }
 
+    let lra = ebu.loudness_range().ok().filter(|v| v.is_finite());
+
     LoudnessReport {
         integrated_lufs,
         momentary_max_lufs: momentary_max,
         true_peak_dbtp: lin_to_db(true_peak_lin),
         sample_peak_dbfs: lin_to_db(sample_peak_lin),
+        lra,
     }
 }
 
@@ -78,11 +81,10 @@ fn lin_to_db(lin: f64) -> Option<f64> {
     }
 }
 
-/// EBU R128 loudness range (LRA), LU, per EBU 3342 — a second, independent
-/// `EbuR128` pass over `audio` alongside [`analyze`]'s (`Mode::LRA` tracks
-/// its own short-term block-energy history internally; there's no cheap
-/// way to bolt it onto the same instance after the fact without also
-/// computing integrated/true-peak state it doesn't need).
+/// EBU R128 loudness range (LRA), LU, per EBU 3342, standalone (see also
+/// [`crate::Report::loudness`]'s `lra` field, computed in the same pass as
+/// the rest of [`analyze`] since `schema_version: 2` — this function
+/// remains for callers who want just the LRA without a full probe).
 ///
 /// `None` when ebur128 can't produce a measurement: no audio, a
 /// construction failure, or too little audio for even one gated block

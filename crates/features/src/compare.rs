@@ -56,6 +56,16 @@ pub struct CompareReport {
     pub key: KeyDelta,
     /// Per-segment RMS deltas over the overlapping timeline range.
     pub segments: SegmentDelta,
+    /// Tempo/beat-tracking deltas. Informational — not part of `verdict`
+    /// (the workspace's Tier-2 contract, `docs/determinism.md`, doesn't
+    /// define a tempo tolerance).
+    pub tempo: TempoDelta,
+    /// Stereo-image deltas; `None` unless both sides are stereo.
+    /// Informational, same reasoning as `tempo`.
+    pub stereo: Option<StereoDelta>,
+    /// Structure-detection deltas. Informational, same reasoning as
+    /// `tempo`.
+    pub structure: StructureDelta,
     /// The overall verdict.
     pub verdict: Verdict,
 }
@@ -68,6 +78,38 @@ pub struct LoudnessDelta {
     pub integrated_lufs_delta: Option<f64>,
     /// True peak delta, dB.
     pub true_peak_dbtp_delta: Option<f64>,
+    /// EBU R128 loudness range (LRA) delta, LU.
+    pub lra_delta: Option<f64>,
+}
+
+/// Tempo/beat-tracking deltas, `b` relative to `a`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TempoDelta {
+    /// `b.bpm - a.bpm`. `None` unless both sides have a detected tempo.
+    pub bpm_delta: Option<f64>,
+    /// Whether `clear_rhythm` differs between `a` and `b`.
+    pub clear_rhythm_changed: bool,
+}
+
+/// Stereo-image deltas, `b - a`. Only produced when both sides are stereo
+/// (see [`CompareReport::stereo`]).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct StereoDelta {
+    /// `b.width - a.width`.
+    pub width_delta: f64,
+    /// `b.correlation - a.correlation`. `None` unless both sides have a
+    /// defined correlation.
+    pub correlation_delta: Option<f64>,
+    /// `b.balance - a.balance`. `None` unless both sides have a defined
+    /// balance.
+    pub balance_delta: Option<f64>,
+}
+
+/// Structure-detection deltas, `b` relative to `a`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct StructureDelta {
+    /// `b.section_count as i64 - a.section_count as i64`.
+    pub section_count_delta: i64,
 }
 
 /// Greedy nearest-neighbor onset matching within [`ONSET_MATCH_WINDOW_MS`],
@@ -181,6 +223,7 @@ pub fn compare_with_identity(a: Analysis, b: Analysis, byte_identical: bool) -> 
             a.report.loudness.true_peak_dbtp,
             b.report.loudness.true_peak_dbtp,
         ),
+        lra_delta: delta_opt(a.report.loudness.lra, b.report.loudness.lra),
     };
 
     let onset_match = match_onsets(
@@ -191,6 +234,12 @@ pub fn compare_with_identity(a: Analysis, b: Analysis, byte_identical: bool) -> 
     let pitch = pitch_delta(a.report, b.report);
     let key = key_delta(a.report, b.report);
     let segments = segment_rms_delta(a.timeline, b.timeline);
+    let tempo = tempo_delta(a.report, b.report);
+    let stereo = stereo_delta(a.report, b.report);
+    let structure = StructureDelta {
+        section_count_delta: b.report.structure.section_count as i64
+            - a.report.structure.section_count as i64,
+    };
 
     let verdict = if byte_identical {
         Verdict::ByteIdentical
@@ -206,6 +255,9 @@ pub fn compare_with_identity(a: Analysis, b: Analysis, byte_identical: bool) -> 
         pitch,
         key,
         segments,
+        tempo,
+        stereo,
+        structure,
         verdict,
     }
 }
@@ -248,6 +300,22 @@ fn key_delta(a: &Report, b: &Report) -> KeyDelta {
             confidence: b.key.confidence,
         },
     }
+}
+
+fn tempo_delta(a: &Report, b: &Report) -> TempoDelta {
+    TempoDelta {
+        bpm_delta: delta_opt(a.tempo.bpm, b.tempo.bpm),
+        clear_rhythm_changed: a.tempo.clear_rhythm != b.tempo.clear_rhythm,
+    }
+}
+
+fn stereo_delta(a: &Report, b: &Report) -> Option<StereoDelta> {
+    let (a_stereo, b_stereo) = (a.stereo.as_ref()?, b.stereo.as_ref()?);
+    Some(StereoDelta {
+        width_delta: b_stereo.width - a_stereo.width,
+        correlation_delta: delta_opt(a_stereo.correlation, b_stereo.correlation),
+        balance_delta: delta_opt(a_stereo.balance, b_stereo.balance),
+    })
 }
 
 fn segment_rms_delta(a: &SegmentTimeline, b: &SegmentTimeline) -> SegmentDelta {
@@ -399,9 +467,10 @@ pub fn compare_text(r: &CompareReport) -> String {
         .expect("String write is infallible");
     writeln!(
         out,
-        "loudness     integrated {}  true_peak {}",
+        "loudness     integrated {}  true_peak {}  lra {}",
         fmt_delta(r.loudness.integrated_lufs_delta, "LU"),
         fmt_delta(r.loudness.true_peak_dbtp_delta, "dB"),
+        fmt_delta(r.loudness.lra_delta, "LU"),
     )
     .expect("String write is infallible");
     writeln!(
@@ -443,6 +512,32 @@ pub fn compare_text(r: &CompareReport) -> String {
         .expect("String write is infallible"),
         _ => writeln!(out, "segments     max_abs_rms_delta -").expect("String write is infallible"),
     }
+    writeln!(
+        out,
+        "tempo        bpm {}  clear_rhythm_changed={}",
+        fmt_delta(r.tempo.bpm_delta, "bpm"),
+        r.tempo.clear_rhythm_changed,
+    )
+    .expect("String write is infallible");
+    match &r.stereo {
+        Some(s) => writeln!(
+            out,
+            "stereo       width {:+.2}  correlation {}  balance {}",
+            s.width_delta,
+            fmt_delta(s.correlation_delta, ""),
+            fmt_delta(s.balance_delta, ""),
+        )
+        .expect("String write is infallible"),
+        None => {
+            writeln!(out, "stereo       -  (not both stereo)").expect("String write is infallible")
+        }
+    }
+    writeln!(
+        out,
+        "structure    section_count {:+}",
+        r.structure.section_count_delta,
+    )
+    .expect("String write is infallible");
 
     out
 }

@@ -34,10 +34,11 @@ pub fn digest_text(report: &Report, timeline: &SegmentTimeline) -> String {
 
     writeln!(
         out,
-        "loudness: integrated={}  momentary_max={}  true_peak={}",
+        "loudness: integrated={}  momentary_max={}  true_peak={}  lra={}",
         fmt_lufs(report.loudness.integrated_lufs),
         fmt_lufs(report.loudness.momentary_max_lufs),
         fmt_dash(report.loudness.true_peak_dbtp, 2),
+        fmt_dash(report.loudness.lra, 2),
     )
     .expect("String write is infallible");
 
@@ -51,6 +52,23 @@ pub fn digest_text(report: &Report, timeline: &SegmentTimeline) -> String {
         fmt_median_pitch(report.pitch.median_f0_hz),
     )
     .expect("String write is infallible");
+
+    writeln!(out, "{}", fmt_tempo_line(&report.tempo)).expect("String write is infallible");
+
+    // Omitted entirely for mono input — a "stereo: mono" line would carry
+    // no information a reader doesn't already have from the header.
+    if let Some(stereo) = &report.stereo {
+        writeln!(
+            out,
+            "stereo: width={:.2} corr={} bal={}",
+            stereo.width,
+            fmt_dash(stereo.correlation, 2),
+            fmt_signed_dash(stereo.balance),
+        )
+        .expect("String write is infallible");
+    }
+
+    writeln!(out, "{}", fmt_structure_line(&report.structure)).expect("String write is infallible");
 
     let duration_s = report.source.duration_ms / 1000.0;
     let onset_rate = if duration_s > 0.0 {
@@ -245,6 +263,52 @@ fn fmt_dash(v: Option<f64>, decimals: usize) -> String {
     match v {
         Some(x) => format!("{x:.decimals$}"),
         None => "-".to_string(),
+    }
+}
+
+/// Generic "undefined" formatting with a forced sign on defined values:
+/// `None` prints as `"-"`, `Some(x)` always shows `+`/`-`.
+fn fmt_signed_dash(v: Option<f64>) -> String {
+    match v {
+        Some(x) => format!("{x:+.2}"),
+        None => "-".to_string(),
+    }
+}
+
+/// `"tempo: 120.0bpm (conf 0.11) clear_rhythm=true"`, or `"tempo: -"` when
+/// no tempo was detected at all.
+fn fmt_tempo_line(tempo: &crate::TempoSummary) -> String {
+    match tempo.bpm {
+        Some(bpm) => format!(
+            "tempo: {bpm:.1}bpm (conf {:.2}) clear_rhythm={}",
+            tempo.confidence, tempo.clear_rhythm
+        ),
+        None => "tempo: -".to_string(),
+    }
+}
+
+/// `"structure: 3 sections @ 8.0s, 16.0s"`, or `"structure: 1 section"`
+/// when no boundaries were found (singular/plural on the count itself, so
+/// a degenerate `0 sections` reads naturally too).
+fn fmt_structure_line(structure: &crate::StructureReport) -> String {
+    if structure.boundaries_ms.is_empty() {
+        let noun = if structure.section_count == 1 {
+            "section"
+        } else {
+            "sections"
+        };
+        format!("structure: {} {noun}", structure.section_count)
+    } else {
+        let times: Vec<String> = structure
+            .boundaries_ms
+            .iter()
+            .map(|ms| format!("{:.1}s", ms / 1000.0))
+            .collect();
+        format!(
+            "structure: {} sections @ {}",
+            structure.section_count,
+            times.join(", ")
+        )
     }
 }
 

@@ -190,8 +190,10 @@ fn digest_text_snapshot_with_silent_run_collapsing() {
     // into one row, per `MIN_SILENT_RUN`.
     let expected = [
         "cochlea digest: 8.000s  1ch  48000Hz",
-        "loudness: integrated=-10.05  momentary_max=-9.71  true_peak=-6.01",
+        "loudness: integrated=-10.05  momentary_max=-9.71  true_peak=-6.01  lra=3.01",
         "key: A minor (conf 0.68)  pitch: voiced=50%  median=440.0Hz (A4 +0.1c)",
+        "tempo: 126.4bpm (conf 0.00) clear_rhythm=false",
+        "structure: 1 section",
         "onsets: count=2  rate=0.25/s",
         "silence: leading=0ms  trailing=0ms",
         "clipping: clipped=0  over_0dbtp=false",
