@@ -23,6 +23,7 @@ mod segments;
 mod silence;
 mod stereo;
 mod stft;
+mod structure;
 mod tempo;
 
 pub use audio::{Audio, AudioError};
@@ -41,6 +42,7 @@ pub use segments::{
     BandEnergy, SEGMENTS_SCHEMA_VERSION, Segment, SegmentOpts, SegmentTimeline, segment_timeline,
 };
 pub use stereo::{StereoReport, analyze_stereo};
+pub use structure::{StructureOpts, StructureReport, detect_structure};
 pub use tempo::{TempoOpts, TempoReport, estimate_tempo};
 
 /// Schema version of [`Report`]'s JSON form. Bump and document here on any
