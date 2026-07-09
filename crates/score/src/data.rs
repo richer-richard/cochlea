@@ -186,6 +186,10 @@ enum VerifyDoc {
     TempoIs {
         bpm: f64,
         tol_bpm: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_bpm: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_bpm: Option<f64>,
     },
     HasClearRhythm {
         expected: bool,
@@ -381,7 +385,17 @@ fn verify_from_doc(v: VerifyDoc, score: &Score) -> Result<VerifySpec, ScoreError
         },
         VerifyDoc::NoDiscontinuity { track, db } => VerifySpec::NoDiscontinuity { track, db },
         VerifyDoc::SilentAfter { at } => VerifySpec::SilentAfter { at: resolve(at)? },
-        VerifyDoc::TempoIs { bpm, tol_bpm } => VerifySpec::TempoIs { bpm, tol_bpm },
+        VerifyDoc::TempoIs {
+            bpm,
+            tol_bpm,
+            min_bpm,
+            max_bpm,
+        } => VerifySpec::TempoIs {
+            bpm,
+            tol_bpm,
+            min_bpm,
+            max_bpm,
+        },
         VerifyDoc::HasClearRhythm { expected } => VerifySpec::HasClearRhythm { expected },
         VerifyDoc::StereoWidthWithin { min, max } => VerifySpec::StereoWidthWithin { min, max },
         VerifyDoc::LraBelow { lu } => VerifySpec::LraBelow { lu },
@@ -427,9 +441,16 @@ fn verify_doc(v: &VerifySpec, ppq: Ppq, ts: TimeSignature) -> VerifyDoc {
             db: *db,
         },
         VerifySpec::SilentAfter { at } => VerifyDoc::SilentAfter { at: unresolve(*at) },
-        VerifySpec::TempoIs { bpm, tol_bpm } => VerifyDoc::TempoIs {
+        VerifySpec::TempoIs {
+            bpm,
+            tol_bpm,
+            min_bpm,
+            max_bpm,
+        } => VerifyDoc::TempoIs {
             bpm: *bpm,
             tol_bpm: *tol_bpm,
+            min_bpm: *min_bpm,
+            max_bpm: *max_bpm,
         },
         VerifySpec::HasClearRhythm { expected } => VerifyDoc::HasClearRhythm {
             expected: *expected,

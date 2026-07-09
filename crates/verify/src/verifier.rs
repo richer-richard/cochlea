@@ -127,10 +127,23 @@ impl<'a> Verifier<'a> {
     }
 
     /// Asserts the mix's estimated tempo (`cochlea_features::estimate_tempo`)
-    /// is within `tol` of `bpm`.
+    /// is within `tol` of `bpm`, searching the detector's default 30–300
+    /// BPM range.
     #[must_use]
     pub fn tempo_is(mut self, bpm: f64, tol: BpmTol) -> Self {
-        let result = checks::tempo::tempo_is(self.rendered, bpm, tol.0);
+        let result = checks::tempo::tempo_is(self.rendered, bpm, tol.0, None, None);
+        self.checks.push(result);
+        self
+    }
+
+    /// [`Self::tempo_is`] with an explicit detector search range — the
+    /// escape hatch for fast material, where the octave-error prior would
+    /// otherwise favor the half-time subharmonic (structurally so above
+    /// ~170 BPM with the default range).
+    #[must_use]
+    pub fn tempo_is_in_range(mut self, bpm: f64, tol: BpmTol, min_bpm: f64, max_bpm: f64) -> Self {
+        let result =
+            checks::tempo::tempo_is(self.rendered, bpm, tol.0, Some(min_bpm), Some(max_bpm));
         self.checks.push(result);
         self
     }
@@ -234,7 +247,12 @@ fn eval_spec(rendered: &Rendered, score: &Score, spec: &VerifySpec) -> CheckResu
             checks::discontinuity::no_discontinuity(rendered, score, track, *db)
         }
         VerifySpec::SilentAfter { at } => checks::silence::silent_after(rendered, score, *at),
-        VerifySpec::TempoIs { bpm, tol_bpm } => checks::tempo::tempo_is(rendered, *bpm, *tol_bpm),
+        VerifySpec::TempoIs {
+            bpm,
+            tol_bpm,
+            min_bpm,
+            max_bpm,
+        } => checks::tempo::tempo_is(rendered, *bpm, *tol_bpm, *min_bpm, *max_bpm),
         VerifySpec::HasClearRhythm { expected } => {
             checks::tempo::has_clear_rhythm(rendered, *expected)
         }

@@ -45,8 +45,16 @@ pub enum VerifySpec {
     /// the render.
     SilentAfter { at: Ticks },
     /// The mix's estimated tempo (`cochlea_features::estimate_tempo`) is
-    /// within `tol_bpm` of `bpm`.
-    TempoIs { bpm: f64, tol_bpm: f64 },
+    /// within `tol_bpm` of `bpm`. `min_bpm`/`max_bpm` optionally override
+    /// the detector's search range (default 30–300 BPM) — the escape hatch
+    /// for material above ~170 BPM, where the octave-error prior otherwise
+    /// favors the half-time subharmonic.
+    TempoIs {
+        bpm: f64,
+        tol_bpm: f64,
+        min_bpm: Option<f64>,
+        max_bpm: Option<f64>,
+    },
     /// The mix's estimated tempo's trustworthiness
     /// (`cochlea_features::TempoReport::clear_rhythm`) equals `expected`
     /// — asserts a clear, steady pulse when `true`, or asserts the

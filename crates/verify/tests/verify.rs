@@ -574,6 +574,8 @@ fn wave2_specs_data_form_mirrors_typed_builder_results() {
 
     let specs = vec![
         VerifySpec::TempoIs {
+            min_bpm: None,
+            max_bpm: None,
             bpm: 120.0,
             tol_bpm: 2.0,
         },
@@ -649,4 +651,61 @@ fn verify_report_serializes_with_schema_version_and_stable_kinds() {
     // have non-empty expected/actual text.
     assert!(!json["checks"][1]["expected"].as_str().unwrap().is_empty());
     assert!(!json["checks"][1]["actual"].as_str().unwrap().is_empty());
+}
+
+/// The TempoIs search-range override must actually reach the detector:
+/// forcing 200..=300 BPM on a true-120 BPM metronome moves the estimate
+/// inside the forced window (measured first via the features API, then
+/// asserted through both the typed builder and the RON spec form). The
+/// default range keeps finding ~120, so the same assertion fails there.
+#[test]
+fn tempo_is_range_override_reaches_the_detector() {
+    use cochlea_features::{Audio, TempoOpts, estimate_tempo};
+
+    let score = metronome_score(120.0, 8);
+    let rendered = render(&score).unwrap();
+    let audio = Audio {
+        samples: rendered.mix().to_vec(),
+        channels: 2,
+        sample_rate: rendered.sample_rate().0,
+    };
+
+    let forced_report = estimate_tempo(
+        &audio,
+        &TempoOpts::default().with_min_bpm(200.0).with_max_bpm(300.0),
+    );
+    let forced_bpm = forced_report.bpm.expect("a metronome has periodicity");
+    assert!(
+        (200.0..=300.0).contains(&forced_bpm),
+        "the forced range must constrain the estimate: {forced_bpm}"
+    );
+
+    let via_builder = rendered
+        .verify(&score)
+        .tempo_is_in_range(forced_bpm, BpmTol(1.0), 200.0, 300.0)
+        .run();
+    assert!(via_builder.passed, "{via_builder:?}");
+
+    let default_range = rendered
+        .verify(&score)
+        .tempo_is(forced_bpm, BpmTol(1.0))
+        .run();
+    assert!(
+        !default_range.passed,
+        "the default range finds ~120 BPM, not {forced_bpm}: {default_range:?}"
+    );
+
+    let spec_form = rendered
+        .verify(&score)
+        .with_spec(&VerifySpec::TempoIs {
+            bpm: forced_bpm,
+            tol_bpm: 1.0,
+            min_bpm: Some(200.0),
+            max_bpm: Some(300.0),
+        })
+        .run();
+    assert!(
+        spec_form.passed,
+        "data form must thread the range: {spec_form:?}"
+    );
 }

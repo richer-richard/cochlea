@@ -36,6 +36,8 @@ fn build_score() -> Score {
         .with_verify(VerifySpec::TempoIs {
             bpm: 112.0,
             tol_bpm: 1.0,
+            min_bpm: Some(60.0),
+            max_bpm: None,
         })
         .with_verify(VerifySpec::HasClearRhythm { expected: true })
         .with_verify(VerifySpec::StereoWidthWithin { min: 0.0, max: 1.0 })

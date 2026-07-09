@@ -16,6 +16,10 @@ pub(crate) fn stereo_width_within(rendered: &Rendered, min: f64, max: f64) -> Ch
     let assertion = format!("mix stereo width is within [{min}, {max}]");
     let expected = format!("{min:.2}..={max:.2}");
 
+    // `stereo_audio` always builds a 2-channel Audio (v1 renders are
+    // stereo by construction), so analyze_stereo's None arm below is
+    // defensive-only through this path — it goes live if a future engine
+    // ever renders non-stereo mixes.
     let audio = stereo_audio(rendered.mix(), rendered.sample_rate().0);
     match analyze_stereo(&audio) {
         Some(report) => CheckResult {
