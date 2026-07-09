@@ -28,7 +28,9 @@ pub struct VerifyReport {
 pub struct CheckResult {
     /// Stable machine code: one of `"integrated_lufs"`, `"true_peak_below"`,
     /// `"onset_at"`, `"pitch_matches_score"`, `"monotone"`,
-    /// `"no_discontinuity"`, `"silent_after"`.
+    /// `"no_discontinuity"`, `"silent_after"`, `"tempo_is"`,
+    /// `"has_clear_rhythm"`, `"stereo_width_within"`, `"lra_below"`,
+    /// `"section_count"`.
     pub kind: &'static str,
     /// Human-readable statement of what was asserted.
     pub assertion: String,

@@ -8,4 +8,7 @@ pub(crate) mod monotone;
 pub(crate) mod onset;
 pub(crate) mod pitch;
 pub(crate) mod silence;
+pub(crate) mod stereo;
+pub(crate) mod structure;
+pub(crate) mod tempo;
 pub(crate) mod util;

@@ -8,7 +8,7 @@ use cochlea_score::{Param, Pos, Score, VerifySpec};
 use crate::checks;
 use crate::checks::util::resolve_pos;
 use crate::report::{CheckResult, SCHEMA_VERSION, VerifyReport};
-use crate::types::{Cents, Db, Ms, Tol};
+use crate::types::{BpmTol, Cents, Db, Ms, Tol};
 
 /// Extension trait: `rendered.verify(&score)` starts a chainable
 /// [`Verifier`] over a completed render.
@@ -126,6 +126,55 @@ impl<'a> Verifier<'a> {
         self
     }
 
+    /// Asserts the mix's estimated tempo (`cochlea_features::estimate_tempo`)
+    /// is within `tol` of `bpm`.
+    #[must_use]
+    pub fn tempo_is(mut self, bpm: f64, tol: BpmTol) -> Self {
+        let result = checks::tempo::tempo_is(self.rendered, bpm, tol.0);
+        self.checks.push(result);
+        self
+    }
+
+    /// Asserts the mix's estimated tempo's trustworthiness
+    /// (`cochlea_features::TempoReport::clear_rhythm`) equals `expected`
+    /// — pass `true` to assert a clear, steady pulse, or `false` to assert
+    /// its absence (a low-confidence or non-rhythmic mix).
+    #[must_use]
+    pub fn has_clear_rhythm(mut self, expected: bool) -> Self {
+        let result = checks::tempo::has_clear_rhythm(self.rendered, expected);
+        self.checks.push(result);
+        self
+    }
+
+    /// Asserts the mix's stereo width
+    /// (`cochlea_features::StereoReport::width`, `0.0..=1.0`) falls
+    /// within `[min, max]`.
+    #[must_use]
+    pub fn stereo_width_within(mut self, min: f64, max: f64) -> Self {
+        let result = checks::stereo::stereo_width_within(self.rendered, min, max);
+        self.checks.push(result);
+        self
+    }
+
+    /// Asserts the mix's EBU R128 loudness range (LRA) is at or below
+    /// `lu` LU.
+    #[must_use]
+    pub fn lra_below(mut self, lu: f64) -> Self {
+        let result = checks::loudness::lra_below(self.rendered, lu);
+        self.checks.push(result);
+        self
+    }
+
+    /// Asserts the mix's detected structural section count
+    /// (`cochlea_features::StructureReport::section_count`) falls within
+    /// `[min, max]`.
+    #[must_use]
+    pub fn section_count(mut self, min: usize, max: usize) -> Self {
+        let result = checks::structure::section_count(self.rendered, min, max);
+        self.checks.push(result);
+        self
+    }
+
     /// Queues the check a [`VerifySpec`] (the RON `verify:` data form)
     /// describes — the same checks the typed builder methods run, driven
     /// by data instead of code.
@@ -185,5 +234,16 @@ fn eval_spec(rendered: &Rendered, score: &Score, spec: &VerifySpec) -> CheckResu
             checks::discontinuity::no_discontinuity(rendered, score, track, *db)
         }
         VerifySpec::SilentAfter { at } => checks::silence::silent_after(rendered, score, *at),
+        VerifySpec::TempoIs { bpm, tol_bpm } => checks::tempo::tempo_is(rendered, *bpm, *tol_bpm),
+        VerifySpec::HasClearRhythm { expected } => {
+            checks::tempo::has_clear_rhythm(rendered, *expected)
+        }
+        VerifySpec::StereoWidthWithin { min, max } => {
+            checks::stereo::stereo_width_within(rendered, *min, *max)
+        }
+        VerifySpec::LraBelow { lu } => checks::loudness::lra_below(rendered, *lu),
+        VerifySpec::SectionCount { min, max } => {
+            checks::structure::section_count(rendered, *min, *max)
+        }
     }
 }

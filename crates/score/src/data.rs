@@ -183,6 +183,24 @@ enum VerifyDoc {
     SilentAfter {
         at: (u32, u32),
     },
+    TempoIs {
+        bpm: f64,
+        tol_bpm: f64,
+    },
+    HasClearRhythm {
+        expected: bool,
+    },
+    StereoWidthWithin {
+        min: f64,
+        max: f64,
+    },
+    LraBelow {
+        lu: f64,
+    },
+    SectionCount {
+        min: usize,
+        max: usize,
+    },
 }
 
 /// `(bar, beat)` + optional sub-beat offset → a [`Pos`].
@@ -363,6 +381,11 @@ fn verify_from_doc(v: VerifyDoc, score: &Score) -> Result<VerifySpec, ScoreError
         },
         VerifyDoc::NoDiscontinuity { track, db } => VerifySpec::NoDiscontinuity { track, db },
         VerifyDoc::SilentAfter { at } => VerifySpec::SilentAfter { at: resolve(at)? },
+        VerifyDoc::TempoIs { bpm, tol_bpm } => VerifySpec::TempoIs { bpm, tol_bpm },
+        VerifyDoc::HasClearRhythm { expected } => VerifySpec::HasClearRhythm { expected },
+        VerifyDoc::StereoWidthWithin { min, max } => VerifySpec::StereoWidthWithin { min, max },
+        VerifyDoc::LraBelow { lu } => VerifySpec::LraBelow { lu },
+        VerifyDoc::SectionCount { min, max } => VerifySpec::SectionCount { min, max },
     })
 }
 
@@ -404,5 +427,21 @@ fn verify_doc(v: &VerifySpec, ppq: Ppq, ts: TimeSignature) -> VerifyDoc {
             db: *db,
         },
         VerifySpec::SilentAfter { at } => VerifyDoc::SilentAfter { at: unresolve(*at) },
+        VerifySpec::TempoIs { bpm, tol_bpm } => VerifyDoc::TempoIs {
+            bpm: *bpm,
+            tol_bpm: *tol_bpm,
+        },
+        VerifySpec::HasClearRhythm { expected } => VerifyDoc::HasClearRhythm {
+            expected: *expected,
+        },
+        VerifySpec::StereoWidthWithin { min, max } => VerifyDoc::StereoWidthWithin {
+            min: *min,
+            max: *max,
+        },
+        VerifySpec::LraBelow { lu } => VerifyDoc::LraBelow { lu: *lu },
+        VerifySpec::SectionCount { min, max } => VerifyDoc::SectionCount {
+            min: *min,
+            max: *max,
+        },
     }
 }
