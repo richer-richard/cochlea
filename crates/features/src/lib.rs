@@ -22,6 +22,7 @@ mod report;
 mod segments;
 mod silence;
 mod stft;
+mod tempo;
 
 pub use audio::{Audio, AudioError};
 pub use compare::{
@@ -37,6 +38,7 @@ pub use report::{
 pub use segments::{
     BandEnergy, SEGMENTS_SCHEMA_VERSION, Segment, SegmentOpts, SegmentTimeline, segment_timeline,
 };
+pub use tempo::{TempoOpts, TempoReport, estimate_tempo};
 
 /// Schema version of [`Report`]'s JSON form. Bump and document here on any
 /// breaking change to the report shape.

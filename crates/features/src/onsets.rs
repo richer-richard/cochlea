@@ -21,10 +21,13 @@ use crate::report::OnsetsReport;
 use crate::stft::Stft;
 
 /// FFT size in samples. At 48 kHz this is ~21 ms — good time resolution
-/// for locating transients (`docs/plan.md`).
-const FFT_SIZE: usize = 1024;
-/// Hop size in samples (75% overlap at `FFT_SIZE = 1024`).
-const HOP: usize = 256;
+/// for locating transients (`docs/plan.md`). `pub(crate)`: `tempo` reuses
+/// this exact STFT so its autocorrelation lag-to-BPM math and this module's
+/// frame-center convention stay in lockstep.
+pub(crate) const FFT_SIZE: usize = 1024;
+/// Hop size in samples (75% overlap at `FFT_SIZE = 1024`). See `FFT_SIZE`
+/// on visibility.
+pub(crate) const HOP: usize = 256;
 /// Rolling-median window for the adaptive threshold, in STFT frames. Wide
 /// enough to average over a full cycle of the "picket fence" flux ripple a
 /// stationary, non-bin-aligned tone produces (see `DELTA_SCALE`).
@@ -86,7 +89,9 @@ pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> OnsetsReport {
 
 /// Half-wave-rectified spectral flux: `flux[t] = sum(max(0, mag[t][b] -
 /// mag[t-1][b]))` over bins `b`. `flux[0]` is always `0.0` (no predecessor).
-fn spectral_flux(stft: &Stft) -> Vec<f64> {
+/// `pub(crate)`: `tempo`'s autocorrelation runs over this same onset
+/// strength envelope rather than recomputing it.
+pub(crate) fn spectral_flux(stft: &Stft) -> Vec<f64> {
     let mut flux = vec![0.0];
     flux.extend(stft.magnitudes.windows(2).map(|pair| {
         let (prev, cur) = (&pair[0], &pair[1]);
