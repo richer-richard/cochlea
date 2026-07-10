@@ -1,5 +1,7 @@
 /target
 /book
+/crates/mcp/mcpb/server
+*.mcpb
 *.wav
 !tests/fixtures/**/*.wav
 !crates/*/tests/fixtures/**/*.wav

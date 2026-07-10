@@ -1,0 +1,67 @@
+{
+  "manifest_version": "0.3",
+  "name": "cochlea-mcp",
+  "display_name": "Cochlea",
+  "version": "0.1.0",
+  "description": "Render, analyze, and verify audio (WAV/FLAC) offline and deterministically, exposed as MCP tools.",
+  "long_description": "Cochlea is a headless, deterministic audio engine. This server exposes it as MCP tools: render a declarative score to byte-identical PCM, extract loudness/pitch/tempo/key/structure reports from any WAV or FLAC, generate spectrograms, and diff two renders against each other. No ffmpeg, no audio device, no realtime path.",
+  "author": {
+    "name": "richer-richard",
+    "url": "https://github.com/richer-richard"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/richer-richard/cochlea.git"
+  },
+  "homepage": "https://richer-richard.github.io/cochlea/",
+  "documentation": "https://richer-richard.github.io/cochlea/mcp.html",
+  "support": "https://github.com/richer-richard/cochlea/issues",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["audio", "dsp", "deterministic", "wav", "flac", "spectrogram"],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/bin/x86_64-unknown-linux-gnu/cochlea-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/bin/x86_64-unknown-linux-gnu/cochlea-mcp",
+      "args": [],
+      "env": {},
+      "platform_overrides": {
+        "darwin": {
+          "command": "${__dirname}/server/bin/aarch64-apple-darwin/cochlea-mcp"
+        },
+        "win32": {
+          "command": "${__dirname}/server/bin/x86_64-pc-windows-msvc/cochlea-mcp.exe"
+        }
+      }
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"]
+  },
+  "tools": [
+    {
+      "name": "render_score",
+      "description": "Render a cochlea RON score to a deterministic WAV mix, optionally running its embedded verify assertions."
+    },
+    {
+      "name": "probe_audio",
+      "description": "Extract the full feature report (loudness, onsets, pitch, key, tempo, stereo, structure) from a WAV or FLAC file."
+    },
+    {
+      "name": "spectrogram",
+      "description": "Render a mel spectrogram PNG, or a tiled contact sheet, from a WAV or FLAC file."
+    },
+    {
+      "name": "lint_score",
+      "description": "Statically validate a RON score against the instrument/preset catalog without rendering audio."
+    },
+    {
+      "name": "probe_digest",
+      "description": "A compact text digest of a WAV or FLAC file, sized for an LLM's context window."
+    },
+    {
+      "name": "audio_diff",
+      "description": "Compare two audio files in feature space and report byte-identical, tier-2 equivalent, or different."
+    }
+  ]
+}

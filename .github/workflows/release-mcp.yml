@@ -1,0 +1,110 @@
+name: Release cochlea-mcp
+
+on:
+  push:
+    tags:
+      - "cochlea-mcp-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Actions are pinned to full commit SHAs (tags are mutable and can be
+# repointed); the trailing comment records the human-readable version,
+# matching ci.yml's convention.
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # No explicit --target: each runner's native host triple is the
+          # one already exercised by ci.yml's test matrix, so this needs
+          # no cross-compilation toolchain at all.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: cochlea-mcp
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin: cochlea-mcp
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: cochlea-mcp.exe
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - run: cargo build --release -p cochlea-mcp
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cochlea-mcp-${{ matrix.target }}
+          path: target/release/${{ matrix.bin }}
+          if-no-files-found: error
+
+  package:
+    name: package MCPB bundle + GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+
+      - name: Assemble MCPB bundle
+        run: |
+          set -euo pipefail
+          BUNDLE=crates/mcp/mcpb
+          for target in x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            mkdir -p "$BUNDLE/server/bin/$target"
+          done
+          cp "artifacts/cochlea-mcp-x86_64-unknown-linux-gnu/cochlea-mcp" \
+            "$BUNDLE/server/bin/x86_64-unknown-linux-gnu/cochlea-mcp"
+          cp "artifacts/cochlea-mcp-aarch64-apple-darwin/cochlea-mcp" \
+            "$BUNDLE/server/bin/aarch64-apple-darwin/cochlea-mcp"
+          cp "artifacts/cochlea-mcp-x86_64-pc-windows-msvc/cochlea-mcp.exe" \
+            "$BUNDLE/server/bin/x86_64-pc-windows-msvc/cochlea-mcp.exe"
+          chmod +x "$BUNDLE/server/bin/x86_64-unknown-linux-gnu/cochlea-mcp"
+          chmod +x "$BUNDLE/server/bin/aarch64-apple-darwin/cochlea-mcp"
+
+      - name: Pin manifest.json version to the release tag
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#cochlea-mcp-v}"
+          python3 -c "
+          import json
+          p = 'crates/mcp/mcpb/manifest.json'
+          m = json.load(open(p))
+          m['version'] = '$version'
+          json.dump(m, open(p, 'w'), indent=2)
+          open(p, 'a').write('\n')
+          "
+
+      - name: Validate + pack the bundle
+        run: |
+          npx --yes @anthropic-ai/mcpb validate crates/mcp/mcpb/manifest.json
+          npx --yes @anthropic-ai/mcpb pack crates/mcp/mcpb cochlea-mcp.mcpb
+
+      - name: Compute checksum
+        run: openssl dgst -sha256 cochlea-mcp.mcpb | tee cochlea-mcp.mcpb.sha256.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            cochlea-mcp.mcpb \
+            cochlea-mcp.mcpb.sha256.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "cochlea-mcp $GITHUB_REF_NAME" \
+            --notes "MCPB bundle for the cochlea-mcp MCP server (linux/macOS/Windows, native binaries, no runtime required). See CHANGELOG.md for what's in this release."
