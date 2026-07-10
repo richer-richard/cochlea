@@ -121,34 +121,11 @@ Steps:
 
 ## 3. Ecosystem listings
 
-Each entry below is the actual repo URL plus a one-line blurb ready to
-paste into that listing's PR/submission — adjust only for each project's
-specific required format.
-
-- [ ] **awesome-rust** — PR adding a line under the Audio/Music (or
-      Text-to-Speech-adjacent Audio) section, matching the existing
-      entries' format:
-      ```
-      * [cochlea](https://github.com/richer-richard/cochlea) — A headless, deterministic audio engine for AI agents: compose scores as data, render byte-reproducible PCM offline, then listen through feature reports, spectrograms, and assertions.
-      ```
-- [ ] **awesome-mcp-servers** — PR adding `cochlea-mcp`, format depends
-      on the specific list's convention (check current `README.md`
-      there first), blurb:
-      ```
-      **[Cochlea](https://github.com/richer-richard/cochlea)** - Render, analyze, and verify audio (WAV/FLAC) through a deterministic offline engine — compose scores, extract loudness/pitch/onset/key reports, generate spectrograms, and diff renders, all as MCP tools.
-      ```
-- [ ] **MCP community registry** (modelcontextprotocol.io's official
-      servers list, if one exists at launch time — check current state,
-      this ecosystem moves fast) — submit `cochlea-mcp` per their
-      current submission process, same blurb as above.
-- [ ] **This Week in Rust** — submit via their normal PR-to-content-repo
-      process (check the `this-week-in-rust` repo's `CONTRIBUTING.md` for
-      the current mechanism — historically a PR adding a line to the next
-      unpublished issue under "Crate of the Week" nominations or the
-      general "News" section):
-      ```
-      [cochlea](https://github.com/richer-richard/cochlea) — a headless, deterministic audio engine for AI agents, with an MCP server so agents can render, probe, and diff audio as tool calls.
-      ```
+Superseded by `ecosystem-listings.md` (researched against each target's
+*actual* current submission process 2026-07-10 — awesome-rust has an
+unmet popularity bar, the MCP registry is a CLI publish not a PR, and
+This Week in Rust rejects bare repo links). Use that file, not the
+blurbs originally sketched here.
 
 ## 4. Launch posts
 
