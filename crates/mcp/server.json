@@ -10,9 +10,10 @@
   "version": "0.1.0",
   "packages": [
     {
-      "registryType": "cargo",
-      "identifier": "cochlea-mcp",
+      "registryType": "mcpb",
+      "identifier": "https://github.com/richer-richard/cochlea/releases/download/cochlea-mcp-v0.1.0/cochlea-mcp.mcpb",
       "version": "0.1.0",
+      "fileSha256": "e75196e09eebfd312e652e17918e62e0ce1dae6799338dc7d8bc1105a10fd73b",
       "transport": {
         "type": "stdio"
       }

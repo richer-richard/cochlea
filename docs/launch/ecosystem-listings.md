@@ -60,7 +60,7 @@ form at mcpservers.org/submit. Checked both `CONTRIBUTING.md` files
   ```
   - [richer-richard/cochlea](https://github.com/richer-richard/cochlea) 🦀 🏠 🍎 🪟 🐧 - Render, analyze, and verify audio (WAV or FLAC) through a fully offline, deterministic engine. Compose scores as data, render byte-identical PCM, pull loudness, pitch, tempo, key, and structure reports, generate spectrograms, and diff two renders against each other. No ffmpeg, no audio device, just numbers an agent can actually reason about. `cargo install cochlea-mcp`
   ```
-- **Submitted 2026-07-10**: PR opened, see status below.
+- **Submitted 2026-07-10**: https://github.com/punkpeye/awesome-mcp-servers/pull/9787
 
 ---
 
@@ -72,28 +72,44 @@ The official registry publishes via a CLI tool (`mcp-publisher`) against
 `CONTRIBUTING.md`: *"Do NOT open a pull request to add your server to
 `data/seed.json`... it will not publish your server to the registry"*).
 
-Good news: it natively supports Cargo/crates.io as a package source
-(`registryType: cargo`), so no npm/PyPI repackaging needed.
+**Update 2026-07-10, `registryType: cargo` doesn't actually work yet**:
+the registry's own schema and docs describe Cargo/crates.io support, and
+`mcp-publisher validate` passes against it, but the production server
+rejects it: `registry validation failed for package 0 (cochlea-mcp):
+unsupported registry type: cargo`. Turns out the work is merged upstream
+(`modelcontextprotocol/registry` #1055, #1207, #1330) but not yet
+released to production — tracked in an open, unanswered issue:
+[#1423](https://github.com/modelcontextprotocol/registry/issues/1423),
+where I left a confirming comment (second real-world report, deliberately
+didn't mention the MCPB workaround below to keep the ask focused).
 
-**Already done, ahead of this**: `crates/mcp/server.json` is written (this
-session) with `cochlea-mcp`'s metadata, and `crates/mcp/README.md` now
-carries the required ownership-verification marker (`mcp-name:
-io.github.richer-richard/cochlea-mcp`) as *visible* markdown text —
-crates.io strips HTML comments from its rendered README, so the
-`<!-- mcp-name: ... -->` hidden-comment form other registries accept
-silently fails for Cargo packages. Both are committed
-(`crates/mcp/README.md`, `crates/mcp/server.json`).
+**Switched to MCPB instead** (Richard approved 2026-07-10): the registry
+does support `registryType: mcpb` today — a prebuilt binary bundle
+hosted as a GitHub Release asset. Built:
 
-**Remaining steps require Richard** (interactive GitHub device-flow auth
-— not something I can complete non-interactively):
+- `crates/mcp/mcpb/manifest.json` — the MCPB manifest (binary server
+  type, `platform_overrides` picking the right native binary per OS),
+  validated against the official schema.
+- `.github/workflows/release-mcp.yml` — tag-triggered
+  (`cochlea-mcp-v*`): builds `cochlea-mcp` natively on
+  ubuntu/macos/windows-latest (same runners as `ci.yml`, no
+  cross-compilation needed), assembles the three binaries into the
+  bundle, packs it with the official `@anthropic-ai/mcpb` CLI, and
+  publishes it as a GitHub Release with a sha256 checksum.
+- Tagged and released: [`cochlea-mcp-v0.1.0`](https://github.com/richer-richard/cochlea/releases/tag/cochlea-mcp-v0.1.0)
+  — build, package, and release all succeeded on the first run.
+- `crates/mcp/server.json` now points its one `packages` entry at that
+  release asset (`registryType: mcpb`) with the real download URL and
+  sha256. The dormant `cargo` entry was removed for now — keeping both
+  would fail the whole publish, since the registry rejects the entire
+  `server.json` if any one package entry is invalid, not just that
+  entry. Re-add `cargo` once #1423 ships.
 
-```sh
-# once cochlea-mcp is live on crates.io (publishing now, see status):
-brew install mcp-publisher   # or the curl one-liner in their quickstart
-cd crates/mcp
-mcp-publisher login github    # opens a device-flow prompt: visit a URL, enter a code
-mcp-publisher publish         # reads ./server.json, publishes to registry.modelcontextprotocol.io
-```
+**Publish attempt**: `mcp-publisher validate` passes. `mcp-publisher
+publish` first caught a real bug (description exceeded the registry's
+100-char limit — fixed), then hit an expired JWT from Richard's earlier
+login. Re-triggered `mcp-publisher login github` — waiting on Richard to
+complete the device-flow prompt, then will re-run `publish`.
 
 Verify after: `curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.richer-richard/cochlea-mcp"`
 
