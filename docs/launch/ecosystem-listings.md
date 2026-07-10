@@ -62,6 +62,33 @@ form at mcpservers.org/submit. Checked both `CONTRIBUTING.md` files
   ```
 - **Submitted 2026-07-10**: https://github.com/punkpeye/awesome-mcp-servers/pull/9787
 
+**Update 2026-07-10/11**: the repo's automation commented on the PR requiring
+a Glama listing (glama.ai/mcp/servers) that passes their automated
+build+introspection check, with the resulting score badge added to the
+entry. Done:
+
+- Submitted `richer-richard/cochlea` via the Glama "Add Server" form
+  (already-authenticated session, no separate signup needed).
+- Claimed the server (auto-claimed on submission, matching GitHub
+  ownership) and configured its Dockerfile via the server's own admin
+  page — **not** committed to our repo; Glama runs its own Dockerfile
+  against the source for their checks.
+- First build attempt failed: `rustup --profile minimal` has no C
+  linker, and `debian:trixie-slim` ships neither `gcc` nor
+  `build-essential` — `error: linker `cc` not found`. Fixed by adding
+  `apt-get install -y gcc libc6-dev` ahead of the rustup install in the
+  build step.
+- Second attempt (a real cold compile of the full workspace: rustup
+  install + `cargo build --release -p cochlea-mcp` + the
+  build→introspection test phase) took **8m45s** end to end and passed.
+- Added the score badge to the actual README entry (matching the file's
+  real convention: link → badge → icons → description, not just prose
+  in the PR body):
+  ```
+  [![richer-richard/cochlea MCP server](https://glama.ai/mcp/servers/richer-richard/cochlea/badges/score.svg)](https://glama.ai/mcp/servers/richer-richard/cochlea)
+  ```
+- Replied on the PR confirming completion, linking the live Glama page.
+
 ---
 
 ## 3. MCP community registry (modelcontextprotocol/registry)
