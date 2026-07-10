@@ -4,6 +4,15 @@ Draft only — do not post without Richard's explicit go (`checklist.md`).
 Post as a text post (not a link post) so the technical framing shows in
 the feed; put the repo link in the body.
 
+**Updated 2026-07-10**: repo is now public, all 9 crates are published
+(or publishing — see the note at the bottom on crates.io's new-crate
+rate limit) to crates.io. Re-ran the FLAC probe command in the body
+today against a freshly rendered copy of the same demo score — every
+number below (loudness, key, tempo, stereo, structure, onsets) came
+back byte-for-byte identical to the 2026-07-09 run, which is itself a
+small in-the-wild confirmation of the determinism claim this post
+makes.
+
 ## Title
 
 ```
@@ -84,6 +93,9 @@ hand-rolled JSON-RPC over stdin/stdout, no tokio, because offline batch
 tools don't need an async runtime). `features` and `spectro` depend on
 neither `score` nor `synth` — checked via `cargo tree` in CI — so
 `cochlea probe` works on any WAV or FLAC you hand it, no score in sight.
+All 9 crates are on crates.io now (`cargo install cochlea` for the CLI,
+`cargo install cochlea-mcp` for the MCP server, or `cargo add
+cochlea-features` etc. as a library dependency).
 
 Small taste of the API:
 
@@ -124,14 +136,22 @@ on the workspace split.
 
 Notes for whoever posts this:
 
-- The FLAC CLI output block is real (`cochlea probe` against one of the
-  crate's own test fixtures, run 2026-07-09) — re-run before posting if
-  it's been a while, both to confirm it's still accurate and because a
-  slightly different real number is more credible than a stale one.
+- The FLAC CLI output block is real (`cochlea probe` against a freshly
+  rendered copy of `demos/drum_groove/score.ron`, re-confirmed
+  2026-07-10 — byte-identical to the original 2026-07-09 run) — re-run
+  once more before posting if it's been a while, both to confirm it's
+  still accurate and because a slightly different real number is more
+  credible than a stale one.
 - r/rust in particular will push on "banned via clippy config" claims —
-  make sure `clippy.toml` and the CI workflow are both actually public
-  and linkable by the time this posts, since someone will go check.
+  `clippy.toml` and the CI workflow are now public (repo flipped public
+  2026-07-10) and linkable, so this claim is checkable — link directly
+  to `clippy.toml` in a reply if anyone asks rather than restating it.
 - The war story is the strongest hook for this specific audience —
   Rust programmers love "I trusted the types, tested anyway, and the
   test caught something real" stories more than feature lists. Don't
   cut it for length if this needs trimming; cut something else first.
+- The `cargo install` line only works once all 9 crates are actually
+  live — crates.io rate-limits new-crate publishes, so
+  decode/verify/cochlea/cochlea-mcp may still be trailing
+  score/synth/render/features/spectro. Confirm `cargo install cochlea`
+  actually resolves before posting.

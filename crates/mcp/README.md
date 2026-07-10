@@ -29,4 +29,9 @@ Full tool table, schemas, and a request/response example live in
 
 [`docs/mcp.md`]: https://github.com/richer-richard/cochlea/blob/main/docs/mcp.md
 
+## Links
+
+- Repo: <https://github.com/richer-richard/cochlea>
+- MCP Registry name: `mcp-name: io.github.richer-richard/cochlea-mcp`
+
 License: MIT OR Apache-2.0, at your option.
