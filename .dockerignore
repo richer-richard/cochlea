@@ -1,0 +1,7 @@
+/target
+/book
+*.mcpb
+.git
+.github
+docs/launch
+docs/superpowers
