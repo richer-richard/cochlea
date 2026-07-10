@@ -132,17 +132,11 @@ target than a changelog: it's the actual determinism-contract writeup
 and design doc, not just a version diff list. Points at the site's
 introduction page, which itself links onward to the deeper pages.
 
-- **Target file**: `draft/2026-07-15-this-week-in-rust.md` (their next
-  open, unpublished issue as of 2026-07-10 — **re-check this filename
-  before opening the PR**, it rolls to a new date every week the
-  `draft/` folder is checked)
 - **Section**: `### Project/Tooling Updates`
-- **Line to add**:
+- **Line added** (colon instead of em dash, per house style):
   ```
-  * [cochlea 0.1.0 — a headless, deterministic audio engine for AI agents](https://richer-richard.github.io/cochlea/)
+  * [cochlea 0.1.0: a headless, deterministic audio engine for AI agents](https://richer-richard.github.io/cochlea/)
   ```
-- **How to submit**: fork → edit the draft file → PR against
-  `rust-lang/this-week-in-rust`, per their README's "PRs for next issue
-  are now being accepted" section. One submission per contributor per
-  week is their stated limit for this section, so this uses Richard's
-  one slot for that week if he's submitting anything else too.
+- **Submitted 2026-07-10**: https://github.com/rust-lang/this-week-in-rust/pull/8370
+  (draft `2026-07-15-this-week-in-rust.md`). Uses Richard's one
+  submission slot for that section this week.
