@@ -1,6 +1,7 @@
 # cochlea
 
 [![CI](https://github.com/richer-richard/cochlea/actions/workflows/ci.yml/badge.svg)](https://github.com/richer-richard/cochlea/actions/workflows/ci.yml)
+[![docs](https://img.shields.io/badge/docs-book-blue)](https://richer-richard.github.io/cochlea/)
 
 **A headless audio engine for agents.** Write a score as data, render it
 offline to deterministic PCM, then *listen through numbers* — loudness,

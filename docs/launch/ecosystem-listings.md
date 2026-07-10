@@ -58,13 +58,9 @@ form at mcpservers.org/submit. Checked both `CONTRIBUTING.md` files
   vendor implementations, e.g. a company's own API server).
 - **Line to add**:
   ```
-  - [richer-richard/cochlea](https://github.com/richer-richard/cochlea) 🦀 🏠 🍎 🪟 🐧 - Render, analyze, and verify audio (WAV/FLAC) through a deterministic offline engine: compose scores as data, render byte-identical PCM, extract loudness/pitch/tempo/key/structure reports, generate spectrograms, and diff renders — no ffmpeg, no audio device. `cargo install cochlea-mcp`
+  - [richer-richard/cochlea](https://github.com/richer-richard/cochlea) 🦀 🏠 🍎 🪟 🐧 - Render, analyze, and verify audio (WAV or FLAC) through a fully offline, deterministic engine. Compose scores as data, render byte-identical PCM, pull loudness, pitch, tempo, key, and structure reports, generate spectrograms, and diff two renders against each other. No ffmpeg, no audio device, just numbers an agent can actually reason about. `cargo install cochlea-mcp`
   ```
-- **How to submit**: fork → branch → edit `README.md` → PR, per their
-  `CONTRIBUTING.md`. One notable note in that file: they fast-track PRs
-  from automated agents if the PR title ends in `🤖🤖🤖` — Richard should
-  decide whether that opt-in applies here (I'm not opening the PR
-  myself either way, per the "drafts only" scope of this task).
+- **Submitted 2026-07-10**: PR opened, see status below.
 
 ---
 
@@ -112,9 +108,13 @@ the "Project/Tooling Updates" section need a version/description hook
 and should link to something with actual release detail (a blog post,
 release notes, or changelog), not a bare repo root.
 
-`CHANGELOG.md` exists in the repo and has real per-version detail, so
-that's the compliant link target here (no blog post exists to link
-instead).
+**Update 2026-07-10**: rather than lean on `CHANGELOG.md` alone, there's
+now a real docs site — `mdBook`, built from `docs/{plan,determinism,
+mcp}.md`, deployed via GitHub Actions to
+<https://richer-richard.github.io/cochlea/>. That's a stronger link
+target than a changelog: it's the actual determinism-contract writeup
+and design doc, not just a version diff list. Points at the site's
+introduction page, which itself links onward to the deeper pages.
 
 - **Target file**: `draft/2026-07-15-this-week-in-rust.md` (their next
   open, unpublished issue as of 2026-07-10 — **re-check this filename
@@ -123,7 +123,7 @@ instead).
 - **Section**: `### Project/Tooling Updates`
 - **Line to add**:
   ```
-  * [cochlea 0.1.0 — a headless, deterministic audio engine for AI agents](https://github.com/richer-richard/cochlea/blob/main/CHANGELOG.md)
+  * [cochlea 0.1.0 — a headless, deterministic audio engine for AI agents](https://richer-richard.github.io/cochlea/)
   ```
 - **How to submit**: fork → edit the draft file → PR against
   `rust-lang/this-week-in-rust`, per their README's "PRs for next issue

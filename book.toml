@@ -1,0 +1,16 @@
+[book]
+title = "cochlea"
+description = "A headless, deterministic audio engine for AI agents."
+authors = ["richer-richard"]
+language = "en"
+src = "docs"
+
+[output.html]
+git-repository-url = "https://github.com/richer-richard/cochlea"
+edit-url-template = "https://github.com/richer-richard/cochlea/edit/main/{path}"
+site-url = "/cochlea/"
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[output.html.fold]
+enable = true
