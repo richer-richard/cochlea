@@ -132,6 +132,18 @@ hosted as a GitHub Release asset. Built:
   `server.json` if any one package entry is invalid, not just that
   entry. Re-add `cargo` once #1423 ships.
 
+**Published 2026-07-11**: `mcp-publisher publish` succeeded after fixing
+a real bug it caught (`description` exceeded the registry's 100-char
+limit) and one re-login (the first device-flow token expired before
+Richard completed the browser step). Confirmed live via the registry's
+own search API:
+
+```
+curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.richer-richard/cochlea-mcp"
+```
+
+Returns `io.github.richer-richard/cochlea-mcp` v0.1.0, status `active`.
+
 **Publish attempt**: `mcp-publisher validate` passes. `mcp-publisher
 publish` first caught a real bug (description exceeded the registry's
 100-char limit — fixed), then hit an expired JWT from Richard's earlier
