@@ -3,9 +3,11 @@
 The score IR for [cochlea](https://github.com/richer-richard/cochlea), a
 headless deterministic audio engine for AI agents: integer ticks at 960
 PPQ, a tempo map of step changes, bar/beat math, tracks, notes,
-per-parameter automation, embeddable verify assertions, and a RON data
-form (round-trip tested both ways). Anything off the tick grid is an
-error, never a rounding.
+per-parameter automation, an optional master bus (gain + brick-wall
+limiter), embeddable verify assertions, a RON data form (round-trip
+tested both ways), and Standard MIDI File import (`import_midi` — SMF
+ticks land on the grid verbatim; instrument mapping is a labeled guess).
+Anything off the tick grid is an error, never a rounding.
 
 ```rust
 use cochlea_score::*;

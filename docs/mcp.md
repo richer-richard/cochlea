@@ -2,10 +2,10 @@
 
 An MCP (Model Context Protocol) stdio server over the cochlea libraries.
 Any MCP client — Claude Code, another agent, a script — gets `render` /
-`probe` / `spectro` / `lint` / `digest` / `diff` / `reference` as tool
-calls, so it can
-compose, render, and "listen" to audio through numbers and images without
-shelling out to the `cochlea` binary or reading raw PCM.
+`probe` / `spectro` / `lint` / `digest` / `diff` / `import` / `reference`
+as tool calls, so it can compose, render, and "listen" to audio through
+numbers and images without shelling out to the `cochlea` binary or
+reading raw PCM.
 
 The protocol is hand-rolled JSON-RPC 2.0 over newline-delimited stdio: one
 JSON object per line in, at most one JSON object per line out. No async
@@ -22,12 +22,13 @@ second front end onto the same offline pipeline, not a reimplementation.
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `render_score` | `score_path` (string, required), `out_path` (string, required), `stems_dir` (string, optional), `verify` (bool, default `false`) | Text summary: frame count, duration, sample rate, peak dBFS, stems written; if `verify` is set, the full verify-report JSON is appended and the call reports `isError: true` on a failed verification. |
-| `probe_audio` | `audio_path` (string, required) | The full feature report, schema v3 (loudness/LUFS/true peak/LRA, onsets, YIN pitch, chroma/key, tempo with candidates + stability, rhythm with grid alignment + `clear_rhythm`, stereo image, structural sections, silence, clipping) as pretty JSON. Works on any WAV or FLAC — no score required. |
-| `spectrogram` | `audio_path` (string, required), `out_path` (string, optional), `sheet` (bool, default `false`), `bars_per_tile` (integer, default `8`) | The image itself, inline, as an MCP image content block (base64 PNG) whenever it fits the ~700 KB cap — a client with no filesystem access still gets to look at the audio — plus a text summary with pixel dimensions. `out_path` additionally (or, over the cap, instead) writes the PNG to disk. Plain spectrogram or, with `sheet: true`, a tiled contact sheet — no score-aware bar markers yet (those need score context via `render_score`). |
+| `probe_audio` | `audio_path` (string, required), `from_s`/`to_s` (numbers, optional) | The full feature report, schema v4 (loudness/LUFS/true peak/LRA, onsets, YIN pitch + quantized melody notes, MFCC timbre digest, chroma/key, tempo with candidates + stability, rhythm with grid alignment + straight-vs-triplet grid + `clear_rhythm`, stereo image, structural sections, silence, clipping) as pretty JSON. Works on any WAV, FLAC, mp3, or ogg — no score required. `from_s`/`to_s` zoom into a time window: report times become relative to the cut, `source.start_ms` anchors them. |
+| `spectrogram` | `audio_path` (string, required), `out_path` (string, optional), `sheet` (bool, default `false`), `bars_per_tile` (integer, default `8`), `annotate` (bool, default `false`), `from_s`/`to_s` (numbers, optional) | The image itself, inline, as an MCP image content block (base64 PNG) whenever it fits the ~700 KB cap — a client with no filesystem access still gets to look at the audio — plus a text summary with pixel dimensions. `out_path` additionally (or, over the cap, instead) writes the PNG to disk. `annotate: true` draws the detected beat grid (orange, top), onsets (cyan, bottom), and pitch segments (magenta) on the image; `sheet: true` tiles a contact sheet instead (the two are mutually exclusive). |
 | `lint_score` | `score_path` (string, required) | Text: `"ok: no lint findings"`, or the JSON list of findings. `isError: true` iff any finding is `Severity::Error`, matching `cochlea lint`'s exit-1 threshold. |
-| `probe_digest` | `audio_path` (string, required), `window_ms` (number, default `1000`) | A ~40-line deterministic text digest (`cochlea_features::digest_text`) instead of a full JSON report — the token-cheap way to "listen" to a WAV or FLAC. Prefer this over `probe_audio` unless the caller needs exact numbers to assert against. |
-| `score_reference` | *(none)* | The complete score-authoring reference as Markdown: the RON grammar, the live instrument-preset catalog (names, polyphony, every automatable param with unit/range/default — generated from the same registry that validates scores, so it cannot go stale), all embeddable `verify:` assertions, and a worked example that the test suite itself parses and renders. An agent should call this before its first `render_score`. |
-| `audio_diff` | `audio_path_a` (string, required), `audio_path_b` (string, required), `window_ms` (number, default `1000`), `json` (bool, default `false`) | Feature-space comparison text (`cochlea_features::compare_text`): a verdict (`byte-identical` / `tier2-equivalent` / `different (dimensions...)`) plus per-dimension deltas. `json: true` appends the full `CompareReport` as pretty JSON. A `different` verdict is a normal, successful answer — not `isError`. |
+| `probe_digest` | `audio_path` (string, required), `window_ms` (number, default `1000`) | A ~40-line deterministic text digest (`cochlea_features::digest_text`) instead of a full JSON report — the token-cheap way to "listen" to an audio file. Prefer this over `probe_audio` unless the caller needs exact numbers to assert against. |
+| `score_reference` | *(none)* | The complete score-authoring reference as Markdown: the RON grammar (including the `master:` gain/limiter section), the live instrument-preset catalog (names, polyphony, every automatable param with unit/range/default — generated from the same registry that validates scores, so it cannot go stale), all embeddable `verify:` assertions, and a worked example that the test suite itself parses and renders. An agent should call this before its first `render_score`. |
+| `audio_diff` | `audio_path_a` (string, required), `audio_path_b` (string, required), `window_ms` (number, default `1000`), `json` (bool, default `false`), `spectrogram` (bool, default `false`) | Feature-space comparison text (`cochlea_features::compare_text`): a verdict (`byte-identical` / `tier2-equivalent` / `different (dimensions...)`) plus per-dimension deltas, now including a timbre (MFCC) distance. `json: true` appends the full `CompareReport`; `spectrogram: true` also returns the signed A→B difference heat map inline (red = louder in B, blue = quieter, black = unchanged). A `different` verdict is a normal, successful answer — not `isError`. |
+| `import_midi` | `midi_path` (string, required), `out_path` (string, required), `sample_rate` (integer, default `48000`) | Converts a Standard MIDI File (format 0/1, metrical division) to a RON score at `out_path`. Timing imports exactly; GM programs map to rough preset families and channel-10 percussion to kick/snare/hat tracks, with every mapping guess listed in the response for re-voicing. |
 
 Tool-level failures (a bad path, a render error, a failed verify or lint)
 come back as a normal `tools/call` success response with `isError: true`
@@ -84,7 +85,7 @@ Response (one line back; the pretty-printed report is escaped into the
 `text` field, shown here unescaped for readability):
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\n  \"schema_version\": 3,\n  \"source\": {\n    \"sample_rate\": 48000,\n    \"channels\": 2,\n    ...\n  },\n  ...\n}"}],"isError":false}}
+{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\n  \"schema_version\": 4,\n  \"source\": {\n    \"sample_rate\": 48000,\n    \"channels\": 2,\n    ...\n  },\n  ...\n}"}],"isError":false}}
 ```
 
 ## Testing this crate

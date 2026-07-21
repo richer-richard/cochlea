@@ -5,7 +5,9 @@ The offline block engine of
 `cochlea-score` to deterministic PCM — 64-sample blocks split at event
 boundaries (note timing is sample-accurate; automation is control-rate),
 pure voice allocation and oldest-note stealing, per-track stems, an f64
-master sum in fixed track order, and WAV out. Byte-identical output for
+master sum in fixed track order, an optional master stage (output gain
+plus a brick-wall lookahead limiter whose sample-peak ceiling holds
+exactly; byte-inert when the score has no master section), and WAV out. Byte-identical output for
 identical inputs on the pinned CI target, enforced by golden PCM hashes.
 
 ```rust
