@@ -42,11 +42,7 @@ fn report_tempo_matches_the_standalone_estimator_on_a_click_track() {
         .expect("a regular click track should have a detected tempo");
     assert!((bpm - 120.0).abs() <= 1.0, "bpm = {bpm}");
     assert!(report.rhythm.clear_rhythm, "{:?}", report.rhythm);
-    assert!(
-        !report.tempo.candidates.is_empty(),
-        "{:?}",
-        report.tempo
-    );
+    assert!(!report.tempo.candidates.is_empty(), "{:?}", report.tempo);
 }
 
 #[test]

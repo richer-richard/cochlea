@@ -196,8 +196,7 @@ pub fn detect_structure(audio: &Audio, opts: &StructureOpts) -> StructureReport 
     }
 
     let sample_rate = audio.sample_rate;
-    let requested_len =
-        ((opts.frame_ms / 1000.0 * f64::from(sample_rate)).round() as usize).max(1);
+    let requested_len = ((opts.frame_ms / 1000.0 * f64::from(sample_rate)).round() as usize).max(1);
     // Cap the frame count: even with the banded similarity below (linear in
     // frame count), millions of 1 ms frames of a long file would still cost
     // minutes of compute for no analytical benefit at song-section scale.
@@ -383,8 +382,7 @@ impl BandedSimilarity {
                         .zip(features[j].iter())
                         .map(|(a, b)| a * b)
                         .sum();
-                    values[i * (band + 1) + d] =
-                        (dot / (norms[i] * norms[j])).clamp(-1.0, 1.0);
+                    values[i * (band + 1) + d] = (dot / (norms[i] * norms[j])).clamp(-1.0, 1.0);
                 }
             }
         }

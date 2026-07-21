@@ -87,8 +87,12 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
     let silence = silence::analyze(&mono, audio.sample_rate, opts.silence_floor_dbfs);
     let clipping = clipping::analyze(audio, loudness.true_peak_dbtp);
     let duration_s = mono.len() as f64 / f64::from(audio.sample_rate.max(1));
-    let full_tempo =
-        tempo::estimate_from_parts(&onset_stft, &onsets, audio.sample_rate, &TempoOpts::default());
+    let full_tempo = tempo::estimate_from_parts(
+        &onset_stft,
+        &onsets,
+        audio.sample_rate,
+        &TempoOpts::default(),
+    );
     let rhythm = rhythm::analyze_rhythm(&onsets, &full_tempo, duration_s);
     let tempo = summarize_tempo(full_tempo);
     let stereo = stereo::analyze_stereo(audio);
@@ -125,7 +129,14 @@ pub fn estimate_tempo_and_rhythm(audio: &Audio, opts: &TempoOpts) -> (TempoRepor
     let mono = audio.mono();
     if audio.sample_rate == 0 || mono.len() < onsets::FFT_SIZE {
         let tempo = tempo::degenerate_report();
-        let rhythm = analyze_rhythm(&OnsetsReport { count: 0, times_ms: Vec::new() }, &tempo, 0.0);
+        let rhythm = analyze_rhythm(
+            &OnsetsReport {
+                count: 0,
+                times_ms: Vec::new(),
+            },
+            &tempo,
+            0.0,
+        );
         return (tempo, rhythm);
     }
     let stft = stft::Stft::compute(&mono, audio.sample_rate, onsets::FFT_SIZE, onsets::HOP);

@@ -41,8 +41,8 @@ pub fn spectral_centroid_curve(mono: &[f32], sample_rate: u32) -> Vec<CentroidPo
         .iter()
         .enumerate()
         .map(|(t, frame)| {
-            let t_ms = (t as f64 * HOP as f64 + FFT_SIZE as f64 / 2.0) / f64::from(sample_rate)
-                * 1000.0;
+            let t_ms =
+                (t as f64 * HOP as f64 + FFT_SIZE as f64 / 2.0) / f64::from(sample_rate) * 1000.0;
             let mut mag_sum = 0.0f64;
             let mut weighted = 0.0f64;
             for (bin, &mag) in frame.iter().enumerate() {

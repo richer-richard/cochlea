@@ -32,10 +32,10 @@ mod validate;
 mod verify_spec;
 
 pub use data::DATA_VERSION;
-pub use reference::authoring_reference;
 pub use error::ScoreError;
 pub use param::Param;
 pub use pitch::Pitch;
+pub use reference::authoring_reference;
 pub use score::{AutoKey, Automation, EaseSpec, Insert, Instrument, KeyDef, Note, Score, Track};
 pub use tempo::TempoMap;
 pub use time::{Bpm, Dur, Pos, Ppq, SampleRate, Ticks, TimeSignature, Vel, bar};

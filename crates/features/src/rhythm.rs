@@ -106,11 +106,7 @@ fn degenerate_report(onset_rate_per_s: f64) -> RhythmReport {
 /// Degenerate input (no tempo, a beat grid with fewer than two beats, no
 /// onsets, or a zero/negative duration) never panics — grid fields come
 /// back `None` and `clear_rhythm` is `false`.
-pub fn analyze_rhythm(
-    onsets: &OnsetsReport,
-    tempo: &TempoReport,
-    duration_s: f64,
-) -> RhythmReport {
+pub fn analyze_rhythm(onsets: &OnsetsReport, tempo: &TempoReport, duration_s: f64) -> RhythmReport {
     let onset_rate_per_s = if duration_s > 0.0 {
         onsets.count as f64 / duration_s
     } else {

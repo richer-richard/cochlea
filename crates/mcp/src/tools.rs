@@ -46,9 +46,9 @@ impl ToolCtx {
     /// Resolve a path that will be read: it must exist (canonicalization
     /// requires that) and, under `--root`, sit inside the root.
     fn resolve_read(&self, raw: &str, what: &str) -> Result<PathBuf, ToolOutcome> {
-        let canonical = Path::new(raw).canonicalize().map_err(|err| {
-            ToolOutcome::Failed(format!("reading {raw}: {err}"))
-        })?;
+        let canonical = Path::new(raw)
+            .canonicalize()
+            .map_err(|err| ToolOutcome::Failed(format!("reading {raw}: {err}")))?;
         self.check_root(&canonical, raw, what)?;
         Ok(canonical)
     }
@@ -68,9 +68,9 @@ impl ToolCtx {
             Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
             _ => PathBuf::from("."),
         };
-        let canonical_parent = parent.canonicalize().map_err(|err| {
-            ToolOutcome::Failed(format!("resolving {what} {raw}: {err}"))
-        })?;
+        let canonical_parent = parent
+            .canonicalize()
+            .map_err(|err| ToolOutcome::Failed(format!("resolving {what} {raw}: {err}")))?;
         let canonical = canonical_parent.join(name);
         self.check_root(&canonical, raw, what)?;
         Ok(canonical)
@@ -101,7 +101,11 @@ fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         out.push(ALPHABET[(n >> 18) as usize & 63] as char);
         out.push(ALPHABET[(n >> 12) as usize & 63] as char);
@@ -696,7 +700,8 @@ mod tests {
     /// any filesystem work; aliased spellings of an inside path pass.
     #[test]
     fn tool_ctx_root_confinement() {
-        let dir = std::env::temp_dir().join(format!("cochlea-mcp-root-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("cochlea-mcp-root-test-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("inside")).unwrap();
         std::fs::write(dir.join("inside/a.wav"), b"x").unwrap();
         std::fs::write(dir.join("outside.wav"), b"x").unwrap();
@@ -735,7 +740,8 @@ mod tests {
     /// `./x` and `x` count as the same file.
     #[test]
     fn alias_detection_is_canonical_not_string_equality() {
-        let dir = std::env::temp_dir().join(format!("cochlea-mcp-alias-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("cochlea-mcp-alias-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("s.ron");
         std::fs::write(&f, b"x").unwrap();

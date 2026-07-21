@@ -255,12 +255,8 @@ fn lint_fails_on_a_broken_score() {
 /// spectrogram sentinels).
 #[test]
 fn book_score_format_page_matches_the_generated_reference() {
-    let path = format!(
-        "{}/../../docs/score-format.md",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let generated =
-        cochlea_score::authoring_reference(&cochlea_synth::PatchBank::presets());
+    let path = format!("{}/../../docs/score-format.md", env!("CARGO_MANIFEST_DIR"));
+    let generated = cochlea_score::authoring_reference(&cochlea_synth::PatchBank::presets());
     if std::env::var("COCHLEA_BLESS").is_ok() {
         std::fs::write(&path, &generated).unwrap();
         return;

@@ -307,9 +307,7 @@ impl Patch for ChordPad {
         let note_len = ctx.note_len_secs();
         let level = 0.10 * ctx.amp();
         let side = |freq: f32, pan: f32| {
-            ((fd::saw_hz(freq) * adsr_node(adsr, note_len, level))
-                | fd::var(&cutoff)
-                | fd::dc(0.5))
+            ((fd::saw_hz(freq) * adsr_node(adsr, note_len, level)) | fd::var(&cutoff) | fd::dc(0.5))
                 >> fd::lowpass()
                 >> fd::pan(pan)
         };

@@ -175,12 +175,7 @@ impl<'a> Verifier<'a> {
     /// companion to [`Verifier::monotone`], which validates the authored
     /// automation curve — this one listens to the render.
     #[must_use]
-    pub fn brightness_rises(
-        mut self,
-        track: &str,
-        range: Range<Pos>,
-        min_ratio: f64,
-    ) -> Self {
+    pub fn brightness_rises(mut self, track: &str, range: Range<Pos>, min_ratio: f64) -> Self {
         let from = resolve_pos(self.score, range.start);
         let to = resolve_pos(self.score, range.end);
         let result = checks::brightness::brightness(
@@ -199,12 +194,7 @@ impl<'a> Verifier<'a> {
     /// [`Verifier::brightness_rises`] mirrored: the range's start must be
     /// brighter than its end by `min_ratio`.
     #[must_use]
-    pub fn brightness_falls(
-        mut self,
-        track: &str,
-        range: Range<Pos>,
-        min_ratio: f64,
-    ) -> Self {
+    pub fn brightness_falls(mut self, track: &str, range: Range<Pos>, min_ratio: f64) -> Self {
         let from = resolve_pos(self.score, range.start);
         let to = resolve_pos(self.score, range.end);
         let result = checks::brightness::brightness(

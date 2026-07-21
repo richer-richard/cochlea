@@ -47,16 +47,16 @@ fn humanized_click_track(jitter_ms: f64, seconds: f64, seed: u64) -> Vec<f32> {
     click_track(&times, seconds, SR)
 }
 
-fn rhythm_of(samples: Vec<f32>) -> (cochlea_features::TempoReport, cochlea_features::RhythmReport)
-{
+fn rhythm_of(
+    samples: Vec<f32>,
+) -> (
+    cochlea_features::TempoReport,
+    cochlea_features::RhythmReport,
+) {
     let audio = mono_audio(samples, SR);
     let report = probe(&audio, &ProbeOpts::default());
     let tempo = estimate_tempo(&audio, &TempoOpts::default());
-    let rhythm = analyze_rhythm(
-        &report.onsets,
-        &tempo,
-        report.source.duration_ms / 1000.0,
-    );
+    let rhythm = analyze_rhythm(&report.onsets, &tempo, report.source.duration_ms / 1000.0);
     (tempo, rhythm)
 }
 
@@ -67,12 +67,27 @@ fn rhythm_of(samples: Vec<f32>) -> (cochlea_features::TempoReport, cochlea_featu
 #[test]
 fn calibration_readings() {
     let fixtures: Vec<(&str, Vec<f32>)> = vec![
-        ("click 120", click_track(&straight_times(0.5, 12.0), 12.0, SR)),
+        (
+            "click 120",
+            click_track(&straight_times(0.5, 12.0), 12.0, SR),
+        ),
         ("click 120 jitter ±5ms", humanized_click_track(5.0, 12.0, 7)),
-        ("click 120 jitter ±10ms", humanized_click_track(10.0, 12.0, 7)),
-        ("click 120 jitter ±20ms", humanized_click_track(20.0, 12.0, 7)),
-        ("click 120 jitter ±30ms", humanized_click_track(30.0, 12.0, 7)),
-        ("eighths at 120", click_track(&straight_times(0.25, 12.0), 12.0, SR)),
+        (
+            "click 120 jitter ±10ms",
+            humanized_click_track(10.0, 12.0, 7),
+        ),
+        (
+            "click 120 jitter ±20ms",
+            humanized_click_track(20.0, 12.0, 7),
+        ),
+        (
+            "click 120 jitter ±30ms",
+            humanized_click_track(30.0, 12.0, 7),
+        ),
+        (
+            "eighths at 120",
+            click_track(&straight_times(0.25, 12.0), 12.0, SR),
+        ),
         ("sustained tone", sine_wave(440.0, 0.5, 12.0, SR)),
         (
             "random onsets",
@@ -108,7 +123,10 @@ fn click_track_is_clear_aligned_and_on_beat() {
     let align = rhythm.grid_alignment.expect("grid exists");
     assert!(align >= 0.9, "alignment = {align}");
     let offbeat = rhythm.offbeat_ratio.expect("aligned onsets exist");
-    assert!(offbeat <= 0.1, "clicks sit on the beat: offbeat = {offbeat}");
+    assert!(
+        offbeat <= 0.1,
+        "clicks sit on the beat: offbeat = {offbeat}"
+    );
 }
 
 /// Straight eighth notes against a 120 BPM grid: every other hit is an
@@ -126,7 +144,10 @@ fn eighth_notes_read_as_aligned_but_offbeat() {
     // half the hits are off-beats. Either reading is musically defensible;
     // what matters is internal consistency between bpm and offbeat_ratio.
     if (bpm - 120.0).abs() <= 2.0 {
-        assert!(offbeat >= 0.4, "at 120 BPM half the hits are offbeat: {offbeat}");
+        assert!(
+            offbeat >= 0.4,
+            "at 120 BPM half the hits are offbeat: {offbeat}"
+        );
     } else {
         assert!((bpm - 240.0).abs() <= 4.0, "unexpected bpm {bpm}");
         assert!(offbeat <= 0.1, "at 240 BPM every hit is a beat: {offbeat}");
@@ -151,7 +172,10 @@ fn random_onsets_do_not_align() {
     let times: Vec<f64> = (0..24).map(|i| 0.3 + (noise(11, i) + 1.0) * 5.7).collect();
     let (tempo, rhythm) = rhythm_of(click_track(&times, 12.0, SR));
     if let Some(align) = rhythm.grid_alignment {
-        assert!(align < 0.7, "random onsets aligned {align} — tolerance too loose");
+        assert!(
+            align < 0.7,
+            "random onsets aligned {align} — tolerance too loose"
+        );
     }
     assert!(!rhythm.clear_rhythm, "{rhythm:?} tempo={tempo:?}");
 }

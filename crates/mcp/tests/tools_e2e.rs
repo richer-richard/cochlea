@@ -259,8 +259,8 @@ fn score_reference_example_actually_renders() {
     let start = text.rfind("```ron").expect("a worked example block") + "```ron".len();
     let end = start + text[start..].find("```").expect("closing fence");
     let example = text[start..end].trim();
-    let score = cochlea_score::Score::from_ron(example)
-        .expect("the reference's worked example must parse");
+    let score =
+        cochlea_score::Score::from_ron(example).expect("the reference's worked example must parse");
     let errors: Vec<_> = score
         .validate(&cochlea_synth::PatchBank::presets())
         .into_iter()
