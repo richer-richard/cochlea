@@ -40,6 +40,10 @@ pub struct MelSpec {
     pub sample_rate: u32,
     pub hop: usize,
     pub floor_db: f32,
+    /// Lowest frequency covered by the filterbank, Hz (band 0's low edge).
+    pub fmin: f32,
+    /// Highest frequency covered, Hz (the resolved, Nyquist-capped value).
+    pub fmax: f32,
 }
 
 impl MelSpec {
@@ -64,6 +68,35 @@ impl MelSpec {
     /// Sample offset of the start of `frame` (see the module doc on framing).
     pub fn frame_sample(&self, frame: usize) -> u64 {
         frame as u64 * self.hop as u64
+    }
+
+    /// The mel band whose center is nearest `hz` on this spectrogram's
+    /// axis, `None` when `hz` falls outside `[fmin, fmax]` (or isn't
+    /// finite). Backs the pitch-track overlay in
+    /// [`render_annotated`](crate::render_annotated) — the same HTK mel
+    /// mapping the filterbank uses, so an overlaid f0 lands on the band
+    /// that actually holds its energy.
+    pub fn hz_band(&self, hz: f64) -> Option<usize> {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "audio-range Hz fits f32 exactly enough for a pixel-row lookup"
+        )]
+        let hz = hz as f32;
+        if !hz.is_finite() || hz < self.fmin || hz > self.fmax || self.mels == 0 {
+            return None;
+        }
+        let mel_min = hz_to_mel(self.fmin);
+        let mel_max = hz_to_mel(self.fmax);
+        if mel_max <= mel_min {
+            return None;
+        }
+        let pos = (hz_to_mel(hz) - mel_min) / (mel_max - mel_min) * self.mels as f32;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "pos is in [0, mels] by the range checks above"
+        )]
+        Some((pos as usize).min(self.mels - 1))
     }
 
     /// Nearest frame index to a given sample offset, clamped to the last
@@ -95,6 +128,8 @@ impl MelSpec {
             sample_rate: self.sample_rate,
             hop: self.hop,
             floor_db: self.floor_db,
+            fmin: self.fmin,
+            fmax: self.fmax,
         }
     }
 }
@@ -199,6 +234,8 @@ pub fn mel_spectrogram(
         sample_rate,
         hop,
         floor_db: opts.floor_db,
+        fmin: opts.fmin,
+        fmax,
     }
 }
 

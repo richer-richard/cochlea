@@ -64,6 +64,14 @@ enum Cmd {
         /// Window length for `--digest`/`--segments`, milliseconds.
         #[arg(long, default_value_t = 1000.0, value_parser = parse_window_ms)]
         window_ms: f64,
+        /// Analyze only from this time (seconds into the file) — the zoom
+        /// lens: report times are then relative to the cut, with the
+        /// offset recorded as `source.start_ms`.
+        #[arg(long, value_parser = parse_seconds)]
+        from: Option<f64>,
+        /// Analyze only up to this time (seconds into the file).
+        #[arg(long, value_parser = parse_seconds)]
+        to: Option<f64>,
     },
     /// Feature-space diff of two audio files (WAV or FLAC) — "did my change do what I meant":
     /// loudness/onset/pitch/key deltas plus an equivalence verdict, printed
@@ -83,6 +91,16 @@ enum Cmd {
         /// Window length for the underlying segment timelines, milliseconds.
         #[arg(long, default_value_t = 1000.0, value_parser = parse_window_ms)]
         window_ms: f64,
+        /// Also render a signed A→B difference spectrogram PNG here (red =
+        /// louder in B, blue = quieter, black = unchanged).
+        #[arg(long)]
+        spectro: Option<PathBuf>,
+        /// Compare only from this time (seconds), applied to both files.
+        #[arg(long, value_parser = parse_seconds)]
+        from: Option<f64>,
+        /// Compare only up to this time (seconds), applied to both files.
+        #[arg(long, value_parser = parse_seconds)]
+        to: Option<f64>,
     },
     /// Statically validate a score against the preset catalog.
     Lint {
@@ -103,6 +121,17 @@ enum Cmd {
         /// tiling uses markers, which need score context via `render`).
         #[arg(long, default_value_t = 8)]
         bars_per_tile: usize,
+        /// Draw analysis overlays on the image: detected beats (orange
+        /// ticks, top), onsets (cyan ticks, bottom), and pitch segments
+        /// (magenta lines on the frequency axis).
+        #[arg(long, conflicts_with = "sheet")]
+        annotate: bool,
+        /// Render only from this time (seconds into the file).
+        #[arg(long, value_parser = parse_seconds)]
+        from: Option<f64>,
+        /// Render only up to this time (seconds into the file).
+        #[arg(long, value_parser = parse_seconds)]
+        to: Option<f64>,
     },
     /// Print the score-authoring reference (RON grammar, instrument
     /// catalog, verify assertions, worked example) — the same text the
@@ -132,6 +161,39 @@ fn load_score(path: &Path) -> anyhow::Result<Score> {
 fn parse_window_ms(s: &str) -> Result<f64, String> {
     let v: f64 = s.parse().map_err(|err| format!("not a number: {err}"))?;
     cochlea_features::validate_window_ms(v)
+}
+
+/// `--from`/`--to` validation: a finite, non-negative number of seconds.
+fn parse_seconds(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|err| format!("not a number: {err}"))?;
+    if !v.is_finite() || v < 0.0 {
+        return Err(format!("must be a non-negative number of seconds: {v}"));
+    }
+    Ok(v)
+}
+
+/// Apply a `--from`/`--to` window to loaded audio: no-op (offset 0) when
+/// neither flag is set; an inverted or empty result is a usage error, not
+/// a silent empty analysis.
+fn apply_window(
+    audio: cochlea_features::Audio,
+    from: Option<f64>,
+    to: Option<f64>,
+) -> anyhow::Result<(cochlea_features::Audio, f64)> {
+    if from.is_none() && to.is_none() {
+        return Ok((audio, 0.0));
+    }
+    let from = from.unwrap_or(0.0);
+    if let Some(to) = to
+        && to <= from
+    {
+        anyhow::bail!("--to ({to}s) must be greater than --from ({from}s)");
+    }
+    let (cut, start_ms) = audio.window(from, to);
+    if cut.frames() == 0 {
+        anyhow::bail!("--from {from}s is past the end of the file");
+    }
+    Ok((cut, start_ms))
 }
 
 fn run() -> anyhow::Result<std::process::ExitCode> {
@@ -185,6 +247,8 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             digest,
             segments,
             window_ms,
+            from,
+            to,
         } => {
             // Distinct output flags writing to one path would silently
             // last-write-win; make the collision a usage error instead.
@@ -214,7 +278,11 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
 
             let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
-            let report = cochlea_features::probe(&audio, &cochlea_features::ProbeOpts::default());
+            let (audio, start_ms) = apply_window(audio, from, to)?;
+            let report = cochlea_features::probe(
+                &audio,
+                &cochlea_features::ProbeOpts::default().with_start_ms(start_ms),
+            );
 
             // Only pay for the segment timeline when a flag actually needs
             // it (docs/plan.md: probe stays cheap otherwise).
@@ -259,25 +327,36 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             json,
             tier2,
             window_ms,
+            spectro,
+            from,
+            to,
         } => {
             // Same input-protection rule as probe: writing the comparison
             // JSON over either input would destroy a file being compared.
-            if let Some(path) = &json
-                && (path == &a || path == &b)
+            for (flag, path) in [("--json", &json), ("--spectro", &spectro)] {
+                if let Some(path) = path
+                    && (path == &a || path == &b)
+                {
+                    anyhow::bail!("{flag} would overwrite the input file {path:?}");
+                }
+            }
+            if let (Some(pa), Some(pb)) = (&json, &spectro)
+                && pa == pb
             {
-                anyhow::bail!("--json would overwrite the input file {path:?}");
+                anyhow::bail!("--json and --spectro point at the same path {pa:?}");
             }
 
             let audio_a =
                 cochlea_decode::load(&a).with_context(|| format!("reading {}", a.display()))?;
             let audio_b =
                 cochlea_decode::load(&b).with_context(|| format!("reading {}", b.display()))?;
+            let (audio_a, start_ms) = apply_window(audio_a, from, to)?;
+            let (audio_b, _) = apply_window(audio_b, from, to)?;
 
             let opts = cochlea_features::SegmentOpts::default().with_window_ms(window_ms);
-            let report_a =
-                cochlea_features::probe(&audio_a, &cochlea_features::ProbeOpts::default());
-            let report_b =
-                cochlea_features::probe(&audio_b, &cochlea_features::ProbeOpts::default());
+            let probe_opts = cochlea_features::ProbeOpts::default().with_start_ms(start_ms);
+            let report_a = cochlea_features::probe(&audio_a, &probe_opts);
+            let report_b = cochlea_features::probe(&audio_b, &probe_opts);
             let timeline_a = cochlea_features::segment_timeline(&audio_a, &opts);
             let timeline_b = cochlea_features::segment_timeline(&audio_b, &opts);
 
@@ -300,6 +379,22 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                 let text = serde_json::to_string_pretty(&result)?;
                 std::fs::write(path, text)
                     .with_context(|| format!("writing {}", path.display()))?;
+            }
+
+            if let Some(path) = &spectro {
+                let mel = |audio: &cochlea_features::Audio| {
+                    cochlea_spectro::mel_spectrogram(
+                        &audio.samples,
+                        audio.channels,
+                        audio.sample_rate,
+                        &cochlea_spectro::SpectroOpts::new(),
+                    )
+                };
+                let img = cochlea_spectro::render_diff_png(&mel(&audio_a), &mel(&audio_b))
+                    .context("rendering the difference spectrogram")?;
+                cochlea_spectro::write_png(&img, path)
+                    .with_context(|| format!("writing {}", path.display()))?;
+                eprintln!("diff spectrogram -> {}", path.display());
             }
 
             if tier2 {
@@ -335,10 +430,18 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             out,
             sheet,
             bars_per_tile,
+            annotate,
+            from,
+            to,
         } => {
             let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
-            write_spectro(&audio, &out, sheet, bars_per_tile)?;
+            let (audio, _) = apply_window(audio, from, to)?;
+            if annotate {
+                write_annotated_spectro(&audio, &out)?;
+            } else {
+                write_spectro(&audio, &out, sheet, bars_per_tile)?;
+            }
             Ok(std::process::ExitCode::SUCCESS)
         }
 
@@ -372,5 +475,60 @@ fn write_spectro(
     cochlea_spectro::write_png(&img, path)
         .with_context(|| format!("writing {}", path.display()))?;
     eprintln!("spectrogram -> {}", path.display());
+    Ok(())
+}
+
+/// `spectro --annotate`: run the analyzers over the (possibly windowed)
+/// audio and draw what they heard — beat grid, onsets, pitch segments —
+/// onto the spectrogram. The overlay is built here, as plain sample/Hz
+/// data, because `cochlea-spectro` never sees feature-report types
+/// (dependency-direction law).
+fn write_annotated_spectro(audio: &cochlea_features::Audio, path: &Path) -> anyhow::Result<()> {
+    let report = cochlea_features::probe(audio, &cochlea_features::ProbeOpts::default());
+    let tempo = cochlea_features::estimate_tempo(audio, &cochlea_features::TempoOpts::default());
+
+    let sr = f64::from(audio.sample_rate);
+    let ms_to_sample = |ms: f64| -> u64 {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "report times are non-negative and within the buffer"
+        )]
+        {
+            (ms / 1000.0 * sr).round().max(0.0) as u64
+        }
+    };
+    let overlay = cochlea_spectro::Overlay {
+        beats: tempo.beats_ms.iter().map(|&ms| ms_to_sample(ms)).collect(),
+        onsets: report
+            .onsets
+            .times_ms
+            .iter()
+            .map(|&ms| ms_to_sample(ms))
+            .collect(),
+        pitch: report
+            .pitch
+            .segments
+            .iter()
+            .map(|s| (ms_to_sample(s.start_ms), ms_to_sample(s.end_ms), s.f0_hz))
+            .collect(),
+    };
+
+    let spec = cochlea_spectro::mel_spectrogram(
+        &audio.samples,
+        audio.channels,
+        audio.sample_rate,
+        &cochlea_spectro::SpectroOpts::new(),
+    );
+    let img = cochlea_spectro::render_annotated(&spec, &[], &overlay);
+    cochlea_spectro::write_png(&img, path)
+        .with_context(|| format!("writing {}", path.display()))?;
+    eprintln!(
+        "annotated spectrogram ({} beats, {} onsets, {} pitch segments) -> {}",
+        overlay.beats.len(),
+        overlay.onsets.len(),
+        overlay.pitch.len(),
+        path.display()
+    );
     Ok(())
 }

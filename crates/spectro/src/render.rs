@@ -5,6 +5,7 @@ use crate::SpectroError;
 use crate::font::{DIGIT_HEIGHT, DIGIT_WIDTH, digit_pixel};
 use crate::marker::Marker;
 use crate::mel::MelSpec;
+use crate::overlay::Overlay;
 use crate::viridis::viridis_color;
 use image::{Rgb, RgbImage};
 use std::path::Path;
@@ -20,6 +21,17 @@ const TICK_LABEL_GAP_PX: u32 = 1;
 const TICK_COLOR: Rgb<u8> = Rgb([200, 200, 200]);
 const MARKER_COLOR: Rgb<u8> = Rgb([255, 255, 255]);
 
+/// Overlay geometry/colors — high-contrast against viridis (which never
+/// produces saturated red, cyan, or magenta).
+const BEAT_TICK_HEIGHT_PX: u32 = 10;
+const BEAT_COLOR: Rgb<u8> = Rgb([255, 96, 64]);
+const ONSET_TICK_HEIGHT_PX: u32 = 7;
+const ONSET_COLOR: Rgb<u8> = Rgb([64, 224, 255]);
+const PITCH_COLOR: Rgb<u8> = Rgb([255, 64, 255]);
+
+/// Full-intensity |delta| for [`render_diff_png`]'s color scale, dB.
+const DIFF_RANGE_DB: f32 = 24.0;
+
 /// Render a [`MelSpec`] to an RGB image: one column per frame, viridis LUT
 /// for magnitude, low frequencies at the **bottom** of the spectrogram
 /// region, a time ruler (tick marks + `0`-`9` digit labels, see
@@ -33,6 +45,16 @@ const MARKER_COLOR: Rgb<u8> = Rgb([255, 255, 255]);
 /// Pure function of `spec` and `markers` — deterministic and safe to call
 /// repeatedly for byte-identical output (no filesystem, no clock, no RNG).
 pub fn render_png(spec: &MelSpec, markers: &[Marker]) -> RgbImage {
+    render_annotated(spec, markers, &Overlay::new())
+}
+
+/// [`render_png`] plus analysis overlays: beat ticks (orange, from the top
+/// edge), onset ticks (cyan, from the bottom of the spectrogram region),
+/// and detected-pitch segments (magenta lines on the mel axis) — see
+/// [`Overlay`]. One vision call then reads the audio *and* what the
+/// analyzers heard in it, aligned on the same time axis. Same purity
+/// contract as [`render_png`].
+pub fn render_annotated(spec: &MelSpec, markers: &[Marker], overlay: &Overlay) -> RgbImage {
     let width = spec.frames.max(1) as u32;
     let height = spec.mels as u32 + RULER_HEIGHT_PX;
     let mut img = RgbImage::new(width, height);
@@ -57,9 +79,105 @@ pub fn render_png(spec: &MelSpec, markers: &[Marker]) -> RgbImage {
         }
     }
 
+    let mels = spec.mels as u32;
+    for &sample in &overlay.beats {
+        let frame = spec.sample_frame(sample);
+        if frame < spec.frames {
+            for y in 0..BEAT_TICK_HEIGHT_PX.min(mels) {
+                img.put_pixel(frame as u32, y, BEAT_COLOR);
+            }
+        }
+    }
+    for &sample in &overlay.onsets {
+        let frame = spec.sample_frame(sample);
+        if frame < spec.frames {
+            for dy in 0..ONSET_TICK_HEIGHT_PX.min(mels) {
+                img.put_pixel(frame as u32, mels - 1 - dy, ONSET_COLOR);
+            }
+        }
+    }
+    for &(start, end, hz) in &overlay.pitch {
+        let Some(band) = spec.hz_band(hz) else {
+            continue;
+        };
+        let y = (spec.mels - 1 - band) as u32;
+        let first = spec.sample_frame(start);
+        let last = spec.sample_frame(end.max(start));
+        for frame in first..=last.min(spec.frames.saturating_sub(1)) {
+            img.put_pixel(frame as u32, y, PITCH_COLOR);
+            // Two pixels tall so the line survives image downscaling.
+            if y > 0 {
+                img.put_pixel(frame as u32, y - 1, PITCH_COLOR);
+            }
+        }
+    }
+
     draw_ruler(&mut img, spec, spec.mels as u32);
 
     img
+}
+
+/// Signed A→B difference heat map: per (band, frame), `b - a` in dB, drawn
+/// red where `b` is louder, blue where `b` is quieter, black where they
+/// match, saturating at ±[`DIFF_RANGE_DB`]. "What changed" becomes visible
+/// structure — a moved onset is a blue/red vertical pair, a brightened
+/// filter sweep a red wedge — where the numeric diff only says "different".
+/// The time axis covers the shorter input; the extra frames of the longer
+/// one are outside the comparison (the caller's diff report already states
+/// the duration delta).
+///
+/// Errors if the two spectrograms weren't computed with the same analysis
+/// parameters (band count, hop, sample rate, frequency range) — a
+/// per-band subtraction between different axes would be meaningless.
+pub fn render_diff_png(a: &MelSpec, b: &MelSpec) -> Result<RgbImage, SpectroError> {
+    if a.mels != b.mels
+        || a.hop != b.hop
+        || a.sample_rate != b.sample_rate
+        || a.fmin != b.fmin
+        || a.fmax != b.fmax
+    {
+        return Err(SpectroError::AxisMismatch);
+    }
+    let frames = a.frames.min(b.frames);
+    let width = frames.max(1) as u32;
+    let height = a.mels as u32 + RULER_HEIGHT_PX;
+    let mut img = RgbImage::new(width, height);
+
+    for frame in 0..frames {
+        for mel in 0..a.mels {
+            let delta = b.get(mel, frame) - a.get(mel, frame);
+            let t = (delta.abs() / DIFF_RANGE_DB).min(1.0);
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "t is in [0, 1] so t * 255 fits u8"
+            )]
+            let level = (t * 255.0) as u8;
+            let color = if delta >= 0.0 {
+                Rgb([level, level / 8, 0])
+            } else {
+                Rgb([0, level / 8, level])
+            };
+            let y = (a.mels - 1 - mel) as u32;
+            img.put_pixel(frame as u32, y, color);
+        }
+    }
+
+    // Ruler geometry comes from `a`; the loop above already proved the two
+    // share hop and sample rate, so either would draw the same ruler.
+    let ruler_spec = MelSpec {
+        mel_db: Vec::new(),
+        mels: a.mels,
+        frames,
+        sample_rate: a.sample_rate,
+        hop: a.hop,
+        floor_db: a.floor_db,
+        fmin: a.fmin,
+        fmax: a.fmax,
+    };
+    draw_ruler(&mut img, &ruler_spec, a.mels as u32);
+
+    Ok(img)
 }
 
 /// Split the time axis into tiles and stack them vertically (with a

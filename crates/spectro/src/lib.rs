@@ -44,6 +44,7 @@ mod font;
 mod marker;
 mod mel;
 mod opts;
+mod overlay;
 mod render;
 mod viridis;
 
@@ -52,6 +53,8 @@ pub use error::SpectroError;
 pub use marker::Marker;
 pub use mel::{MelSpec, mel_spectrogram};
 pub use opts::SpectroOpts;
+pub use overlay::Overlay;
 pub use render::{
-    CONTACT_SHEET_GUTTER_PX, RULER_HEIGHT_PX, contact_sheet, encode_png, render_png, write_png,
+    CONTACT_SHEET_GUTTER_PX, RULER_HEIGHT_PX, contact_sheet, encode_png, render_annotated,
+    render_diff_png, render_png, write_png,
 };
