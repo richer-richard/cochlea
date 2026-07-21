@@ -172,7 +172,7 @@ pub struct TempoReport {
     pub beats_ms: Vec<f64>,
 }
 
-fn degenerate_report() -> TempoReport {
+pub(crate) fn degenerate_report() -> TempoReport {
     TempoReport {
         bpm: None,
         confidence: 0.0,

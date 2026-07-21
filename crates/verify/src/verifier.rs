@@ -148,13 +148,74 @@ impl<'a> Verifier<'a> {
         self
     }
 
-    /// Asserts the mix's estimated tempo's trustworthiness
-    /// (`cochlea_features::TempoReport::clear_rhythm`) equals `expected`
-    /// — pass `true` to assert a clear, steady pulse, or `false` to assert
-    /// its absence (a low-confidence or non-rhythmic mix).
+    /// Asserts the mix's rhythm trustworthiness
+    /// (`cochlea_features::RhythmReport::clear_rhythm` — the grid-based
+    /// rule) equals `expected` — pass `true` to assert a clear,
+    /// articulated rhythm, or `false` to assert its absence.
     #[must_use]
     pub fn has_clear_rhythm(mut self, expected: bool) -> Self {
-        let result = checks::tempo::has_clear_rhythm(self.rendered, expected);
+        let result = checks::rhythm::has_clear_rhythm(self.rendered, expected);
+        self.checks.push(result);
+        self
+    }
+
+    /// Asserts the mix's rhythm grid alignment
+    /// (`cochlea_features::RhythmReport::grid_alignment` — the fraction of
+    /// detected onsets on the beat-subdivision grid) is at least `min`.
+    #[must_use]
+    pub fn grid_alignment_at_least(mut self, min: f64) -> Self {
+        let result = checks::rhythm::grid_alignment_at_least(self.rendered, min);
+        self.checks.push(result);
+        self
+    }
+
+    /// Asserts `track`'s rendered stem audibly brightens across `range`:
+    /// the median spectral centroid over the range's last quarter is at
+    /// least `min_ratio` times the first quarter's. The output-side
+    /// companion to [`Verifier::monotone`], which validates the authored
+    /// automation curve — this one listens to the render.
+    #[must_use]
+    pub fn brightness_rises(
+        mut self,
+        track: &str,
+        range: Range<Pos>,
+        min_ratio: f64,
+    ) -> Self {
+        let from = resolve_pos(self.score, range.start);
+        let to = resolve_pos(self.score, range.end);
+        let result = checks::brightness::brightness(
+            self.rendered,
+            self.score,
+            track,
+            from,
+            to,
+            min_ratio,
+            checks::brightness::BrightnessDir::Rising,
+        );
+        self.checks.push(result);
+        self
+    }
+
+    /// [`Verifier::brightness_rises`] mirrored: the range's start must be
+    /// brighter than its end by `min_ratio`.
+    #[must_use]
+    pub fn brightness_falls(
+        mut self,
+        track: &str,
+        range: Range<Pos>,
+        min_ratio: f64,
+    ) -> Self {
+        let from = resolve_pos(self.score, range.start);
+        let to = resolve_pos(self.score, range.end);
+        let result = checks::brightness::brightness(
+            self.rendered,
+            self.score,
+            track,
+            from,
+            to,
+            min_ratio,
+            checks::brightness::BrightnessDir::Falling,
+        );
         self.checks.push(result);
         self
     }
@@ -254,8 +315,39 @@ fn eval_spec(rendered: &Rendered, score: &Score, spec: &VerifySpec) -> CheckResu
             max_bpm,
         } => checks::tempo::tempo_is(rendered, *bpm, *tol_bpm, *min_bpm, *max_bpm),
         VerifySpec::HasClearRhythm { expected } => {
-            checks::tempo::has_clear_rhythm(rendered, *expected)
+            checks::rhythm::has_clear_rhythm(rendered, *expected)
         }
+        VerifySpec::GridAlignmentAtLeast { min } => {
+            checks::rhythm::grid_alignment_at_least(rendered, *min)
+        }
+        VerifySpec::BrightnessRises {
+            track,
+            from,
+            to,
+            min_ratio,
+        } => checks::brightness::brightness(
+            rendered,
+            score,
+            track,
+            *from,
+            *to,
+            *min_ratio,
+            checks::brightness::BrightnessDir::Rising,
+        ),
+        VerifySpec::BrightnessFalls {
+            track,
+            from,
+            to,
+            min_ratio,
+        } => checks::brightness::brightness(
+            rendered,
+            score,
+            track,
+            *from,
+            *to,
+            *min_ratio,
+            checks::brightness::BrightnessDir::Falling,
+        ),
         VerifySpec::StereoWidthWithin { min, max } => {
             checks::stereo::stereo_width_within(rendered, *min, *max)
         }

@@ -115,6 +115,27 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
     }
 }
 
+/// Tempo *and* rhythm over one shared analysis pass: one onsets-grade
+/// STFT feeds the onset detector, the tempo estimator, and the grid
+/// classifier — the entry point for callers (like `cochlea-verify`) that
+/// need both reports without paying for a full [`probe`] or computing the
+/// transform twice. Degenerate input degrades exactly like
+/// [`estimate_tempo`] and [`analyze_rhythm`] individually.
+pub fn estimate_tempo_and_rhythm(audio: &Audio, opts: &TempoOpts) -> (TempoReport, RhythmReport) {
+    let mono = audio.mono();
+    if audio.sample_rate == 0 || mono.len() < onsets::FFT_SIZE {
+        let tempo = tempo::degenerate_report();
+        let rhythm = analyze_rhythm(&OnsetsReport { count: 0, times_ms: Vec::new() }, &tempo, 0.0);
+        return (tempo, rhythm);
+    }
+    let stft = stft::Stft::compute(&mono, audio.sample_rate, onsets::FFT_SIZE, onsets::HOP);
+    let onset_report = onsets::analyze_stft(&stft);
+    let tempo = tempo::estimate_from_parts(&stft, &onset_report, audio.sample_rate, opts);
+    let duration_s = mono.len() as f64 / f64::from(audio.sample_rate);
+    let rhythm = analyze_rhythm(&onset_report, &tempo, duration_s);
+    (tempo, rhythm)
+}
+
 /// Reduce a full [`TempoReport`] to the compact [`TempoSummary`] embedded
 /// in [`Report`] — drops `beats_ms`, keeping only its length and mean
 /// interval (see [`TempoSummary`]'s docs on why).

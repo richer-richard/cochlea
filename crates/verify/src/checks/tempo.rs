@@ -1,5 +1,7 @@
-//! `tempo_is` and `has_clear_rhythm`: whole-mix tempo/beat checks via
-//! `cochlea_features::estimate_tempo`.
+//! `tempo_is`: the whole-mix tempo (speed) check via
+//! `cochlea_features::estimate_tempo`. Rhythm (pattern) checks —
+//! `has_clear_rhythm`, `grid_alignment_at_least` — live in
+//! `checks::rhythm`, mirroring the features crate's tempo/rhythm split.
 
 use cochlea_features::{TempoOpts, estimate_tempo};
 use cochlea_render::Rendered;
@@ -66,31 +68,3 @@ pub(crate) fn tempo_is(
     }
 }
 
-/// The mix's estimated tempo's trustworthiness
-/// (`cochlea_features::TempoReport::clear_rhythm`) equals `expected` —
-/// asserts a clear, steady pulse when `true`, or asserts the *absence* of
-/// one (a low-confidence or non-rhythmic mix) when `false`. See
-/// `estimate_tempo`'s docs for the exact confidence/onset-rate rule.
-pub(crate) fn has_clear_rhythm(rendered: &Rendered, expected: bool) -> CheckResult {
-    let kind = "has_clear_rhythm";
-    let assertion = format!("mix's clear_rhythm flag is {expected}");
-    let expected_text = format!("clear_rhythm = {expected}");
-
-    let audio = stereo_audio(rendered.mix(), rendered.sample_rate().0);
-    let report = estimate_tempo(&audio, &TempoOpts::default());
-
-    let bpm_text = report
-        .bpm
-        .map_or_else(|| "none".to_string(), |b| format!("{b:.1}"));
-    CheckResult {
-        kind,
-        assertion,
-        passed: report.clear_rhythm == expected,
-        expected: expected_text,
-        actual: format!(
-            "clear_rhythm = {} (confidence {:.2}, bpm {bpm_text})",
-            report.clear_rhythm, report.confidence
-        ),
-        detail: None,
-    }
-}
