@@ -20,3 +20,12 @@ pub(crate) fn mode_name(mode: Mode) -> &'static str {
         Mode::Minor => "minor",
     }
 }
+
+/// Note name + octave for a MIDI note number (`60` -> `"C4"`, MIDI's
+/// standard octave numbering where middle C is C4). Shared by the digest
+/// renderer and the melody extractor.
+pub(crate) fn note_name(midi: i32) -> String {
+    let pc = crate::report::PitchClass::ALL[midi.rem_euclid(12) as usize];
+    let octave = midi.div_euclid(12) - 1;
+    format!("{}{octave}", pc.name())
+}

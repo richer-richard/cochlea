@@ -10,15 +10,21 @@
 //! times + beat grid) — no new signal pass, so it's effectively free once
 //! `probe()` has run tempo and onsets.
 //!
-//! Method: each consecutive beat-grid interval is split into
-//! [`SUBDIVISIONS_PER_BEAT`] equal subdivisions (16ths at the beat level —
-//! fine enough for hats/ghost notes, coarse enough that random onsets don't
-//! accidentally align; a triplet feel reads a little lower rather than
-//! being force-fit). An onset is *aligned* when it falls within
-//! [`ALIGN_TOL_FRACTION`] of a subdivision interval from the nearest grid
-//! point (floored at [`ALIGN_TOL_MIN_MS`] — the onset detector itself is
-//! only accurate to a few ms, and human timing jitter under ~10 ms reads as
-//! tight, not off-grid). `grid_alignment` is the aligned fraction;
+//! Method: each consecutive beat-grid interval is split into equal
+//! subdivisions and every onset is classified against the resulting grid —
+//! *aligned* when it falls within [`ALIGN_TOL_FRACTION`] of a subdivision
+//! interval from the nearest grid point (floored at [`ALIGN_TOL_MIN_MS`] —
+//! the onset detector itself is only accurate to a few ms, and human timing
+//! jitter under ~10 ms reads as tight, not off-grid). Two subdivision
+//! hypotheses are tested: **straight** (4 per beat — sixteenths) and
+//! **triplet** (3 per beat — an eighth-note-triplet / shuffle feel), and
+//! the report carries whichever grid more of the onsets land on
+//! ([`RhythmReport::grid`]), so swung playing reads as an aligned triplet
+//! rhythm instead of being force-fit to sixteenths and scored sloppy. The
+//! two grids genuinely separate: straight eighths sit at 1/2 beat, which is
+//! not a triplet point, and a shuffled upbeat at 2/3 beat is ~1/12 beat
+//! from the nearest sixteenth — outside tolerance at ordinary tempos.
+//! `grid_alignment` is the winning grid's aligned fraction;
 //! `offbeat_ratio` is, among aligned onsets, the fraction whose nearest
 //! grid point is *not* an integer beat — a syncopation signal, not a
 //! judgment.
@@ -28,13 +34,17 @@ use serde::{Deserialize, Serialize};
 use crate::report::OnsetsReport;
 use crate::tempo::TempoReport;
 
-/// Subdivisions per beat for the alignment grid (4 = sixteenth notes at
-/// the detected-beat level).
-const SUBDIVISIONS_PER_BEAT: usize = 4;
+/// Subdivisions per beat for the straight-feel grid (4 = sixteenth notes
+/// at the detected-beat level).
+const SUBDIVISIONS_STRAIGHT: usize = 4;
+/// Subdivisions per beat for the triplet-feel grid (3 = eighth-note
+/// triplets at the detected-beat level — the shuffle/swing hypothesis).
+const SUBDIVISIONS_TRIPLET: usize = 3;
 /// An onset counts as on-grid within this fraction of one subdivision
-/// interval of the nearest grid point. With 4 subdivisions per beat, a
-/// uniformly random onset would align ~30% of the time at this tolerance —
-/// the [`CLEAR_RHYTHM_MIN_ALIGNMENT`] threshold sits far above that floor.
+/// interval of the nearest grid point. Because the tolerance scales with
+/// the subdivision length, a uniformly random onset aligns ~30% of the
+/// time on *either* grid — the hypotheses stay comparable, and the
+/// [`CLEAR_RHYTHM_MIN_ALIGNMENT`] threshold sits far above that floor.
 const ALIGN_TOL_FRACTION: f64 = 0.15;
 /// Alignment tolerance floor, ms — onset detection is frame-quantized
 /// (~5.3 ms at 48 kHz) and human "tight" playing jitters several ms, so
@@ -59,14 +69,41 @@ const CLEAR_RHYTHM_MIN_CONFIDENCE: f64 = 0.1;
 /// can align perfectly without being a rhythm an agent should trust.
 const CLEAR_RHYTHM_MIN_ONSET_RATE_PER_S: f64 = 0.5;
 
+/// Which subdivision hypothesis the onsets fit better — see the module
+/// docs. Ties go to `Straight` (the less surprising claim: every grid
+/// point both hypotheses share is a straight point too).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GridKind {
+    /// Four subdivisions per beat — sixteenth notes.
+    Straight,
+    /// Three subdivisions per beat — eighth-note triplets (swing/shuffle).
+    Triplet,
+}
+
+impl GridKind {
+    /// Lowercase name, matching the JSON form (`"straight"`/`"triplet"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GridKind::Straight => "straight",
+            GridKind::Triplet => "triplet",
+        }
+    }
+}
+
 /// Rhythm (pattern) analysis result — the onsets' relationship to the
-/// detected beat grid. See the module docs for the tempo/rhythm split.
+/// detected beat grid. See the module docs for the tempo/rhythm split and
+/// the two-grid (straight vs triplet) hypothesis test.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RhythmReport {
-    /// Fraction of detected onsets that land on the beat-subdivision grid,
-    /// `0.0..=1.0`. `None` when there is no usable grid (no detected
+    /// Fraction of detected onsets that land on the winning subdivision
+    /// grid, `0.0..=1.0`. `None` when there is no usable grid (no detected
     /// tempo, or fewer than two placed beats) or no onsets to classify.
     pub grid_alignment: Option<f64>,
+    /// The subdivision hypothesis behind `grid_alignment`: whichever of
+    /// straight sixteenths and eighth-note triplets more onsets landed on
+    /// (ties read as `Straight`). `None` whenever `grid_alignment` is.
+    pub grid: Option<GridKind>,
     /// Among *aligned* onsets, the fraction whose nearest grid point is not
     /// an integer beat — high values mean the hits live on the off-beats
     /// and subdivisions (syncopation, hat-driven grooves), low values mean
@@ -85,6 +122,7 @@ pub struct RhythmReport {
 fn degenerate_report(onset_rate_per_s: f64) -> RhythmReport {
     RhythmReport {
         grid_alignment: None,
+        grid: None,
         offbeat_ratio: None,
         onset_rate_per_s,
         clear_rhythm: false,
@@ -92,16 +130,17 @@ fn degenerate_report(onset_rate_per_s: f64) -> RhythmReport {
 }
 
 /// Analyze the onsets' relationship to the beat grid (see the module docs
-/// for the method).
+/// for the method, including the straight-vs-triplet hypothesis test).
 ///
 /// **`clear_rhythm`**: `true` iff a tempo was detected with
 /// `tempo.confidence >= 0.1`, the onset rate is at least `0.5`/s, and
-/// `grid_alignment >= 0.7`. This replaces the pre-0.2.0 rule (which
-/// thresholded a mass-fraction confidence that structurally punished
-/// multi-level periodicity — real grooves always carry several metrical
-/// levels, so it flagged everything but bare click tracks as unclear).
-/// Alignment asks the right question: not "is the envelope's energy
-/// concentrated at one lag" but "do the hits land where the pulse says".
+/// `grid_alignment >= 0.7` (on the winning grid). This replaces the
+/// pre-0.2.0 rule (which thresholded a mass-fraction confidence that
+/// structurally punished multi-level periodicity — real grooves always
+/// carry several metrical levels, so it flagged everything but bare click
+/// tracks as unclear). Alignment asks the right question: not "is the
+/// envelope's energy concentrated at one lag" but "do the hits land where
+/// the pulse says".
 ///
 /// Degenerate input (no tempo, a beat grid with fewer than two beats, no
 /// onsets, or a zero/negative duration) never panics — grid fields come
@@ -117,7 +156,16 @@ pub fn analyze_rhythm(onsets: &OnsetsReport, tempo: &TempoReport, duration_s: f6
         return degenerate_report(onset_rate_per_s);
     }
 
-    let (aligned, offbeat) = classify_onsets(&onsets.times_ms, &tempo.beats_ms);
+    let straight = classify_onsets(&onsets.times_ms, &tempo.beats_ms, SUBDIVISIONS_STRAIGHT);
+    let triplet = classify_onsets(&onsets.times_ms, &tempo.beats_ms, SUBDIVISIONS_TRIPLET);
+    // Ties go to straight: shared grid points (the integer beats) belong to
+    // both hypotheses, and "straight" is the weaker, safer claim.
+    let (grid, (aligned, offbeat)) = if triplet.0 > straight.0 {
+        (GridKind::Triplet, triplet)
+    } else {
+        (GridKind::Straight, straight)
+    };
+
     let grid_alignment = aligned as f64 / onsets.times_ms.len() as f64;
     let offbeat_ratio = (aligned > 0).then(|| offbeat as f64 / aligned as f64);
 
@@ -127,25 +175,31 @@ pub fn analyze_rhythm(onsets: &OnsetsReport, tempo: &TempoReport, duration_s: f6
 
     RhythmReport {
         grid_alignment: Some(grid_alignment),
+        grid: Some(grid),
         offbeat_ratio,
         onset_rate_per_s,
         clear_rhythm,
     }
 }
 
-/// Count `(aligned, aligned_and_offbeat)` onsets against the subdivision
-/// grid built over `beats_ms`. Onsets before the first beat or after the
-/// last are classified against the nearest edge interval's grid, extended
-/// by up to one beat on each side (the DP grid starts at the first strong
-/// onset, so pickup hits just before it shouldn't all read as off-grid).
-fn classify_onsets(onset_times_ms: &[f64], beats_ms: &[f64]) -> (usize, usize) {
+/// Count `(aligned, aligned_and_offbeat)` onsets against the grid built
+/// over `beats_ms` with `subdivisions` points per beat. Onsets before the
+/// first beat or after the last are classified against the nearest edge
+/// interval's grid, extended by up to one beat on each side (the DP grid
+/// starts at the first strong onset, so pickup hits just before it
+/// shouldn't all read as off-grid).
+fn classify_onsets(
+    onset_times_ms: &[f64],
+    beats_ms: &[f64],
+    subdivisions: usize,
+) -> (usize, usize) {
     let mut aligned = 0usize;
     let mut offbeat = 0usize;
 
     for &t in onset_times_ms {
-        if let Some(sub_index) = nearest_grid_point(t, beats_ms) {
+        if let Some(sub_index) = nearest_grid_point(t, beats_ms, subdivisions) {
             aligned += 1;
-            if sub_index % SUBDIVISIONS_PER_BEAT != 0 {
+            if sub_index % subdivisions != 0 {
                 offbeat += 1;
             }
         }
@@ -159,7 +213,7 @@ fn classify_onsets(onset_times_ms: &[f64], beats_ms: &[f64]) -> (usize, usize) {
 /// real beat-to-beat interval subdivided individually (so a DP grid that
 /// flexes with the music keeps its subdivisions faithful), and the two
 /// extension intervals reusing their adjacent interval's length.
-fn nearest_grid_point(t_ms: f64, beats_ms: &[f64]) -> Option<usize> {
+fn nearest_grid_point(t_ms: f64, beats_ms: &[f64], subdivisions: usize) -> Option<usize> {
     let first = beats_ms[0];
     let last = beats_ms[beats_ms.len() - 1];
     let first_interval = beats_ms[1] - first;
@@ -189,7 +243,7 @@ fn nearest_grid_point(t_ms: f64, beats_ms: &[f64]) -> Option<usize> {
         return None;
     }
 
-    let sub_len = interval_len / SUBDIVISIONS_PER_BEAT as f64;
+    let sub_len = interval_len / subdivisions as f64;
     let pos = (t_ms - interval_start) / sub_len;
     let nearest = libm::round(pos);
     let dist_ms = (pos - nearest).abs() * sub_len;
@@ -203,5 +257,5 @@ fn nearest_grid_point(t_ms: f64, beats_ms: &[f64]) -> Option<usize> {
         clippy::cast_sign_loss,
         reason = "nearest is a small non-negative subdivision index by construction"
     )]
-    Some(nearest as usize % SUBDIVISIONS_PER_BEAT)
+    Some(nearest as usize % subdivisions)
 }

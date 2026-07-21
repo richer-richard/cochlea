@@ -13,12 +13,18 @@ pub struct ProbeOpts {
     /// RMS level, in dBFS, below which a silence-detector window counts as
     /// silent. Default `-60.0`.
     pub silence_floor_dbfs: f64,
+    /// Where the probed buffer starts within the file it was cut from,
+    /// milliseconds — metadata only (recorded as `source.start_ms`), set
+    /// by callers that windowed the audio first ([`crate::Audio::window`]).
+    /// Default `0.0` (a whole file).
+    pub start_ms: f64,
 }
 
 impl Default for ProbeOpts {
     fn default() -> Self {
         Self {
             silence_floor_dbfs: -60.0,
+            start_ms: 0.0,
         }
     }
 }
@@ -28,6 +34,14 @@ impl ProbeOpts {
     #[must_use]
     pub fn with_silence_floor_dbfs(mut self, floor_dbfs: f64) -> Self {
         self.silence_floor_dbfs = floor_dbfs;
+        self
+    }
+
+    /// Record where the probed buffer starts within its file, milliseconds
+    /// (see [`Self::start_ms`]).
+    #[must_use]
+    pub fn with_start_ms(mut self, start_ms: f64) -> Self {
+        self.start_ms = start_ms;
         self
     }
 }
@@ -47,8 +61,12 @@ pub struct Report {
     pub loudness: LoudnessReport,
     /// Spectral-flux onset times.
     pub onsets: OnsetsReport,
-    /// YIN pitch track, segmented into voiced runs.
+    /// YIN pitch track, segmented into voiced runs, plus the quantized
+    /// melody note events. Added `melody` in `schema_version: 4`.
     pub pitch: PitchReport,
+    /// MFCC timbre digest; `None` for buffers shorter than one analysis
+    /// window. Added in `schema_version: 4`.
+    pub timbre: Option<crate::TimbreReport>,
     /// Krumhansl-Schmuckler key estimate.
     pub key: KeyReport,
     /// Leading/trailing silence and last audible sample.
@@ -109,6 +127,13 @@ pub struct SourceInfo {
     pub samples: usize,
     /// Duration in milliseconds.
     pub duration_ms: f64,
+    /// Where this buffer starts within the file it was cut from,
+    /// milliseconds — nonzero when the probe covered a `--from/--to`
+    /// window rather than the whole file. Every time in the report is
+    /// relative to the buffer (add `start_ms` to place it in the file).
+    /// Added in `schema_version: 4`.
+    #[serde(default)]
+    pub start_ms: f64,
 }
 
 /// EBU R128 loudness/true-peak. Fields are `None` where ebur128 reports
@@ -154,6 +179,10 @@ pub struct PitchReport {
     pub median_f0_hz: Option<f64>,
     /// Contiguous voiced runs, each with its own median f0.
     pub segments: Vec<PitchSegment>,
+    /// Melody note events: the f0 track quantized to equal-tempered notes
+    /// and segmented (see [`crate::MelodyNote`]). Monophonic by
+    /// construction. Added in `schema_version: 4`.
+    pub melody: Vec<crate::MelodyNote>,
 }
 
 /// One contiguous voiced run.

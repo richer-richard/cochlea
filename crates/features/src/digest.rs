@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 
-use crate::report::{PitchClass, Report};
+use crate::report::Report;
 use crate::segments::{Segment, SegmentTimeline};
 use crate::util::{max_of, mode_name};
 
@@ -53,6 +53,13 @@ pub fn digest_text(report: &Report, timeline: &SegmentTimeline) -> String {
         fmt_median_pitch(report.pitch.median_f0_hz),
     )
     .expect("String write is infallible");
+
+    // Omitted when no notes were extracted — an empty melody line would
+    // just restate voiced=0%.
+    if !report.pitch.melody.is_empty() {
+        writeln!(out, "{}", fmt_melody_line(&report.pitch.melody))
+            .expect("String write is infallible");
+    }
 
     writeln!(out, "{}", fmt_tempo_line(&report.tempo)).expect("String write is infallible");
     writeln!(out, "{}", fmt_rhythm_line(&report.rhythm)).expect("String write is infallible");
@@ -299,15 +306,40 @@ fn fmt_tempo_line(tempo: &crate::TempoSummary) -> String {
     line
 }
 
-/// `"rhythm: clear=true  grid_align=0.94  offbeat=0.31"` — grid fields
-/// print `-` when there is no usable beat grid to classify against.
+/// `"rhythm: clear=true  grid_align=0.94 (straight)  offbeat=0.31"` — the
+/// parenthetical names the winning subdivision hypothesis (straight
+/// sixteenths vs eighth-note triplets); grid fields print `-` when there
+/// is no usable beat grid to classify against.
 fn fmt_rhythm_line(rhythm: &crate::RhythmReport) -> String {
+    let align = match (rhythm.grid_alignment, rhythm.grid) {
+        (Some(a), Some(g)) => format!("{a:.2} ({})", g.as_str()),
+        _ => "-".to_string(),
+    };
     format!(
-        "rhythm: clear={}  grid_align={}  offbeat={}",
+        "rhythm: clear={}  grid_align={align}  offbeat={}",
         rhythm.clear_rhythm,
-        fmt_dash(rhythm.grid_alignment, 2),
         fmt_dash(rhythm.offbeat_ratio, 2),
     )
+}
+
+/// Display cap for [`fmt_melody_line`]'s note-name list.
+const MAX_MELODY_NAMES: usize = 16;
+
+/// `"melody: 6 notes  A4 C5 E5 G5 E5 C5"` — the extracted note sequence in
+/// order, capped at [`MAX_MELODY_NAMES`] names with a `(+N more)` tail so
+/// a long piece can't flood the digest.
+fn fmt_melody_line(melody: &[crate::MelodyNote]) -> String {
+    let names: Vec<&str> = melody
+        .iter()
+        .take(MAX_MELODY_NAMES)
+        .map(|n| n.name.as_str())
+        .collect();
+    let noun = if melody.len() == 1 { "note" } else { "notes" };
+    let mut line = format!("melody: {} {noun}  {}", melody.len(), names.join(" "));
+    if melody.len() > MAX_MELODY_NAMES {
+        let _ = write!(line, " (+{} more)", melody.len() - MAX_MELODY_NAMES);
+    }
+    line
 }
 
 /// `"structure: 3 sections @ 8.0s, 16.0s"`, or `"structure: 1 section"`
@@ -340,16 +372,8 @@ fn fmt_median_pitch(v: Option<f64>) -> String {
         Some(f0) => {
             let midi = crate::pitch::nearest_midi(f0);
             let cents = crate::pitch::cents_off(f0, midi);
-            format!("{f0:.1}Hz ({} {cents:+.1}c)", note_name(midi))
+            format!("{f0:.1}Hz ({} {cents:+.1}c)", crate::util::note_name(midi))
         }
         None => "-".to_string(),
     }
-}
-
-/// Note name + octave for a MIDI note number (`60` -> `"C4"`, MIDI's
-/// standard octave numbering where middle C is C4).
-fn note_name(midi: i32) -> String {
-    let pc = PitchClass::ALL[midi.rem_euclid(12) as usize];
-    let octave = midi.div_euclid(12) - 1;
-    format!("{}{octave}", pc.name())
 }

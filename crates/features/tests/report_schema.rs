@@ -24,10 +24,10 @@ fn stereo_audio(left: Vec<f32>, right: Vec<f32>, sample_rate: u32) -> Audio {
 }
 
 #[test]
-fn schema_version_is_3() {
+fn schema_version_is_4() {
     let audio = mono_audio(sine_wave(440.0, 0.5, 1.0, SR), SR);
     let report = probe(&audio, &ProbeOpts::default());
-    assert_eq!(report.schema_version, 3);
+    assert_eq!(report.schema_version, 4);
 }
 
 #[test]
@@ -119,4 +119,11 @@ fn compare_surfaces_tempo_stereo_structure_deltas() {
     let _ = result.tempo.bpm_delta;
     let _ = result.rhythm.grid_alignment_delta;
     let _ = result.loudness.lra_delta;
+    // b's added 3 kHz section shifts the spectral envelope: the timbre
+    // delta must be present and nonzero.
+    let d = result
+        .timbre
+        .mfcc_distance
+        .expect("both sides are long enough for a timbre digest");
+    assert!(d > 0.0, "mfcc_distance = {d}");
 }
