@@ -133,6 +133,20 @@ pub fn write_png(img: &RgbImage, path: impl AsRef<Path>) -> Result<(), SpectroEr
     })
 }
 
+/// Encode `img` as PNG bytes in memory — for callers that transport the
+/// image instead of writing a file (the MCP server returns spectrograms
+/// as base64 image content). Same encoder as [`write_png`], so bytes here
+/// and the file on disk are the identical PNG.
+pub fn encode_png(img: &RgbImage) -> Result<Vec<u8>, SpectroError> {
+    let mut bytes: Vec<u8> = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )
+    .map_err(|source| SpectroError::Encode { source })?;
+    Ok(bytes)
+}
+
 fn tile_frame_ranges(spec: &MelSpec, markers: &[Marker], per_tile: usize) -> Vec<(usize, usize)> {
     let per_tile = per_tile.max(1);
     let total = spec.frames;

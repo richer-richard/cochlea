@@ -48,6 +48,7 @@ cochlea probe input.wav --digest --window-ms 500
 cochlea diff a.wav b.wav --tier2
 cochlea lint score.ron
 cochlea spectro input.wav --out spec.png --sheet --bars-per-tile 8
+cochlea reference    # the full score-authoring reference, generated from the live preset bank
 ```
 
 `cochlea probe` works on **any** WAV — and FLAC, decoded bit-exact, still
@@ -82,13 +83,16 @@ piece where they light up):
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "source": { "sample_rate": 48000, "channels": 2, "duration_ms": 7035.708333333333 },
-  "loudness": { "integrated_lufs": -22.70045487928478, "true_peak_dbtp": -15.910817022082783, "lra": 10.607660373688798 },
+  "loudness": { "integrated_lufs": -22.700454879284784, "true_peak_dbtp": -15.910817022082783, "lra": 10.607660373688798 },
   "onsets": { "count": 6, "times_ms": [1077.33, 2149.33, 2346.67, 3221.33, 4538.67, 5034.67] },
   "pitch": { "voiced_ratio": 0.9847560975609756, "median_f0_hz": 110.00194603797897 },
   "key": { "tonic": "E", "mode": "major", "confidence": 0.8093960265638273 },
-  "tempo": { "bpm": 55.97014925373134, "confidence": 0.003937017247067399, "clear_rhythm": false },
+  "tempo": { "bpm": 55.97014925373134, "confidence": 0.6633739386089712, "stability": 0.3333333333333333,
+             "candidates": [ { "bpm": 55.97014925373134, "salience": 0.6633739386089712 },
+                             { "bpm": 112.5, "salience": 0.21588204941945222 } ] },
+  "rhythm": { "grid_alignment": 0.8333333333333334, "offbeat_ratio": 0.4, "clear_rhythm": true },
   "stereo": { "width": 0.02967719705208343, "correlation": 0.9981362354107913, "balance": -0.0016380539212361243 },
   "structure": { "section_count": 1, "confidence": 0.0 },
   "silence": { "trailing_ms": 2485.708333333333 },
@@ -121,33 +125,38 @@ the wave-2 rhythm/stereo/structure dimensions in one screenful):
 
 ```
 cochlea digest: 20.755s  2ch  48000Hz
-loudness: integrated=-19.91  momentary_max=-17.54  true_peak=-4.78  lra=1.73
-key: G major (conf 0.28)  pitch: voiced=26%  median=55.0Hz (A1 +0.5c)
-tempo: 110.3bpm (conf 0.01) clear_rhythm=false
-stereo: width=0.01 corr=1.00 bal=-0.00
+loudness: integrated=-24.06  momentary_max=-22.42  true_peak=-5.95  lra=1.61
+key: A# minor (conf 0.54)  pitch: voiced=23%  median=63.8Hz (C2 -42.8c)
+tempo: 110.3bpm (conf 0.79, stability 1.00)  alts: 54.9bpm(0.89), 36.6bpm(0.79)
+rhythm: clear=true  grid_align=0.98  offbeat=0.56
+stereo: width=0.07 corr=0.99 bal=-0.01
 structure: 1 section
-onsets: count=32  rate=1.54/s
+onsets: count=58  rate=2.79/s
 silence: leading=0ms  trailing=2545ms
 clipping: clipped=0  over_0dbtp=false
 timeline: window=1000ms  bucket=1x  rows=21
    idx        t(s)     rms   peak  ons     f0  flags
-     0   0.000-1.000   -25.71  -7.38    2    55.0  -
-     1   1.000-2.000   -25.60  -7.87    2    55.0  -
+     0   0.000-1.000   -25.55  -7.36    4    64.0  -
+     1   1.000-2.000   -25.61  -8.37    3    63.4  -
      ...
-    17  17.000-18.000  -34.66  -16.80    1    54.7  -
-    18  18.000-19.000  -58.77  -41.61    0       -  -
-    19  19.000-20.000  -118.98 -103.16    0    54.7  S
-    20  20.000-20.755  -161.14 -144.94    0    54.8  S
 ```
 
-The tempo reads 110.3 BPM — matching the score's authored 110 BPM almost
-exactly — but `clear_rhythm` is `false`: a groove layering three
-simultaneous periodicities (sixteenth-note hats, quarter-note kick/snare,
-bar-level pad) dilutes autocorrelation confidence to 0.01, well under the
-0.05 threshold calibrated on single-instrument click tracks (which measure
-0.11–0.15). That's an honest reading, not a bug — `demos/drum_groove`
-asserts `HasClearRhythm(expected: false)` outright rather than tuning the
-detector to this one fixture.
+Tempo and rhythm are reported as *separate axes*, because they change
+independently — a drum solo can hold a rock-steady pulse while its
+pattern turns unrecognizable, and that difference is exactly what an
+agent needs to see. Here the tempo reads 110.3 BPM (matching the
+authored 110), `stability 1.00` says the speed never moves across the
+piece, and the `alts` list surfaces the genuine half-tempo reading (54.9
+BPM, salience 0.89 — actually the stronger raw peak; the octave prior
+breaks the tie toward the beat). Metrical ambiguity is data an agent can
+weigh, not a coin flip hidden inside the detector. The `rhythm` line
+then reports how the *hits* relate to that pulse: 98% of onsets sit on
+the beat-subdivision grid, 56% of them on off-beat subdivisions (an
+eighth-note hat groove — syncopation as a number), so `clear=true`.
+(Under the pre-0.2.0 metric this same groove read `clear_rhythm=false`
+at confidence 0.01 — layering hats, kick, snare, and pad across three
+metrical levels diluted every lag's share of a mass-fraction score. The
+grid-based rule asks the right question instead.)
 
 `cochlea diff` compares two files in feature space instead of byte-for-byte
 — "did my change do what I meant," not "is the file bitwise equal." Real
@@ -156,13 +165,14 @@ output diffing `first_light.wav` against `title_cue.wav`:
 ```
 verdict: different (duration, loudness, onsets, key)
 duration     a->b +1264.3 ms
-loudness     integrated -6.22 LU  true_peak +6.02 dB  lra -8.91 LU
-onsets       matched=0  mean_offset=-  max_offset=-  unmatched_a=6  unmatched_b=4
-pitch        delta +1.0 cents
+loudness     integrated -5.95 LU  true_peak +5.70 dB  lra -8.88 LU
+onsets       matched=0  mean_offset=-  max_offset=-  unmatched_a=6  unmatched_b=5
+pitch        delta +0.5 cents
 key          a=E major (conf 0.81)  b=A minor (conf 0.86)  changed=true
-segments     max_abs_rms_delta 121.71 dB at idx=7
-tempo        bpm +38.57 bpm  clear_rhythm_changed=false
-stereo       width +0.00  correlation -0.00  balance +0.00
+segments     max_abs_rms_delta 120.99 dB at idx=7
+tempo        bpm -24.01 bpm  stability -0.33
+rhythm       clear_rhythm_changed=true  grid_align -0.43
+stereo       width +0.14  correlation -0.08  balance -0.01
 structure    section_count +0
 ```
 
@@ -175,28 +185,48 @@ or an agent can catch a regression without ever reading a raw sample.
 ## Agents as MCP clients
 
 `cochlea-mcp` is a stdio MCP server over the same libraries the CLI uses —
-six tools (`render_score`, `probe_audio`, `spectrogram`, `lint_score`,
-`probe_digest`, `audio_diff`), each a thin wrapper over the matching
-library call, so any MCP client gets the same render → probe → spectrogram
-→ verify loop as tool calls instead of shelled-out subprocesses:
+seven tools (`render_score`, `probe_audio`, `spectrogram`, `lint_score`,
+`probe_digest`, `audio_diff`, `score_reference`), each a thin wrapper over
+the matching library call, so any MCP client gets the same render → probe
+→ spectrogram → verify loop as tool calls instead of shelled-out
+subprocesses:
 
 ```
-cargo install --path crates/mcp
+cargo install cochlea-mcp
 claude mcp add cochlea -- cochlea-mcp
 ```
+
+Three things make it agent-native rather than a CLI in a trenchcoat:
+
+- **It teaches itself.** `score_reference` returns the complete authoring
+  reference — the RON grammar, the live preset catalog with every
+  automatable parameter (generated from the same registry that validates
+  scores, so it can't go stale), all `verify:` assertions, and a worked
+  example the test suite itself renders. An agent connected cold can
+  compose without ever seeing this repo.
+- **It shows, not points.** `spectrogram` returns the image *inline* as
+  MCP image content (base64 PNG, size-capped), so a client with no
+  filesystem access still gets the one-vision-call review; `out_path`
+  is optional.
+- **It can be confined.** `cochlea-mcp --root DIR` refuses any read or
+  write that resolves (canonically — symlinks and `..` included) outside
+  `DIR`, before touching the filesystem.
 
 Full tool schemas, arguments, and the JSON-RPC framing are in
 [`docs/mcp.md`](docs/mcp.md).
 
 ## Install
 
-Not on crates.io yet — build the `cochlea` binary from source:
+All nine crates are on [crates.io](https://crates.io/crates/cochlea):
 
 ```
-git clone https://github.com/richer-richard/cochlea
-cd cochlea
-cargo install --path crates/cli
+cargo install cochlea        # the CLI: render / probe / diff / lint / spectro / reference
+cargo install cochlea-mcp    # the MCP stdio server
+cargo add cochlea-features   # or any crate as a library dependency
 ```
+
+Or from source: `git clone https://github.com/richer-richard/cochlea &&
+cd cochlea && cargo install --path crates/cli`.
 
 ## Concepts
 
@@ -211,10 +241,12 @@ cargo install --path crates/cli
   arithmetic (via `fenestra-anim`'s `mul_div`) applied once at
   event-schedule time. No accumulated floating-point seconds, no wall
   clock, property-tested drift-free over 10⁹ ticks.
-- **Synth** (`cochlea-synth`): six presets over [fundsp] — `sine`,
-  `saw_lead`, `square_bass`, `chord_pad`, `noise_hat`, `pluck` — plus a
+- **Synth** (`cochlea-synth`): eight presets over [fundsp] — `sine`,
+  `saw_lead`, `square_bass`, `chord_pad` (genuinely stereo: its detuned
+  saws pan apart), `noise_hat`, `pluck`, `kick`, `snare` — plus a
   `reverb` insert. Instruments declare typed automatable params (name,
-  unit, range, default); scores are validated against that registry.
+  unit, range, default); scores are validated against that registry, and
+  the same registry generates the self-describing authoring reference.
   All noise is a counter-based RNG keyed `(seed, sample_index)` — random
   access, no stateful generator anywhere.
 - **Renderer** (`cochlea-render`): 64-sample blocks split at event
@@ -227,11 +259,12 @@ cargo install --path crates/cli
 - **Features** (`cochlea-features`): one schema-versioned JSON report —
   integrated LUFS / momentary max / true peak / LRA (via [ebur128]),
   spectral-flux onsets, YIN pitch with cents deviation, chroma +
-  Krumhansl-Schmuckler key, tempo/beat tracking with a calibrated
-  `clear_rhythm` flag, stereo width/correlation/balance, Foote novelty
-  structure boundaries, silence/tail, clipping — plus a windowed segment
-  timeline, an LLM-sized text digest, and a feature-space diff between
-  two files.
+  Krumhansl-Schmuckler key, tempo (pulse clarity, octave-alternative
+  candidates, windowed stability) and rhythm (grid alignment, offbeat
+  ratio, a calibrated `clear_rhythm`) as separate axes, stereo
+  width/correlation/balance, Foote novelty structure boundaries,
+  silence/tail, clipping — plus a windowed segment timeline, an
+  LLM-sized text digest, and a feature-space diff between two files.
 - **Spectro** (`cochlea-spectro`): mel spectrogram PNGs (HTK filterbank,
   viridis, time ruler, bar markers) and tiled contact sheets so an agent
   reviews a whole piece in one vision call.
@@ -272,8 +305,15 @@ fundsp node family, ebur128 internals, rustfft dispatch — lives in
 | Loudness | −18 dBFS-peak 997 Hz sine | −21.0 LUFS (≈ −3 LU sine crest factor — physics, not error) |
 | Silence/tail | 1 s tone + 1 s silence | trailing 960 ms, last-audible within one RMS window |
 | Clipping | driven square, clamped | counted; true-peak-over-0 flagged |
-| Tempo | 120/90 BPM click track | ±1 BPM, `clear_rhythm=true`, confidence 0.11–0.15 (threshold is 0.05) |
-| Tempo | `drum_groove` demo (110 BPM groove) | 110.29 BPM (Δ 0.01), `clear_rhythm=false` — three layered periodicities dilute confidence to 0.01 even with the BPM itself spot-on |
+| Tempo | 120/90 BPM click track | ±1 BPM, pulse clarity 0.96, `clear_rhythm=true` |
+| Tempo | `drum_groove` demo (110 BPM groove) | 110.29 BPM (Δ 0.01), pulse clarity 0.79, stability 1.0; the 55 BPM half-tempo surfaces as a candidate (salience 0.89) instead of a hidden coin flip |
+| Rhythm | quarter-note clicks vs straight eighths | grid alignment 1.0 for both; offbeat ratio 0.0 vs 0.49 — syncopation as a number |
+| Rhythm robustness | click track, ±5/±10 ms human timing jitter | BPM exact, alignment 1.0, `clear_rhythm` holds (clarity 0.77 / 0.51) |
+| Rhythm robustness | click track, ±20/±30 ms jitter | BPM octave-folds to the half tempo (smeared beats make the two-beat lag as clear as one) — but alignment stays 1.0 and `clear_rhythm` holds |
+| Rhythm robustness | one dropped + one extra hit in 22 | BPM and `clear_rhythm` unaffected |
+| Rhythm honesty | uniformly random onset times | alignment 0.57 (vs the 0.7 clear-rhythm bar), pulse clarity 0.10 — rejected on two independent gates |
+| Tempo vs rhythm | pattern change at constant speed (quarters → dense eighths) | stability stays ≥ 0.75 — the drum-solo case: the *rhythm* changed, the *speed* didn't |
+| Tempo vs rhythm | real speed change (100 → 140 BPM mid-buffer) | stability drops ≤ 0.75 — the axis that separates the two |
 | Structure | two 8 s segments, distinct timbre | boundary within 1.5 s of the true 8.0 s cut |
 | Structure | three 8 s segments (A/B/A) | boundaries within 1.5 s of the true 8.0 s and 16.0 s cuts |
 
@@ -301,8 +341,12 @@ rendered.verify(&score)
     .onset_at("drums", bar(17).beat(1), Ms(5.0))
     // Intonation: does every note read as written? (monophonic tracks)
     .pitch_matches_score("lead", Cents(10.0))
-    // Did the filter sweep actually sweep? (authored curve, block-rate)
+    // Was the sweep *written*? (authored curve, block-rate — a score lint)
     .monotone("lead", Param::CUTOFF_HZ, bar(1)..bar(3))
+    // ...and did it audibly *happen*? (rendered stem's spectral centroid)
+    .brightness_rises("lead", bar(1)..bar(3), 1.3)
+    // Do the hits land on the detected beat grid?
+    .grid_alignment_at_least(0.9)
     // Click detection away from note boundaries:
     .no_discontinuity("lead", Db(40.0))
     // Does the piece actually end?
@@ -319,8 +363,12 @@ verify: [
     OnsetAt(track: "drums", at: (17, 1), tol_ms: 5.0),
     PitchMatchesScore(track: "lead", tol_cents: 10.0),
     Monotone(track: "pad", param: "cutoff_hz", from: (1, 1), to: (3, 1), direction: Rising),
+    BrightnessRises(track: "pad", from: (1, 1), to: (3, 1), min_ratio: 1.3),
     NoDiscontinuity(track: "lead", db: 40.0),
     SilentAfter(at: (64, 1)),
+    TempoIs(bpm: 110.0, tol_bpm: 2.0),
+    HasClearRhythm(expected: true),
+    GridAlignmentAtLeast(min: 0.9),
 ]
 ```
 
@@ -331,11 +379,12 @@ Four worked demos live in [`demos/`](demos/): `metronome` (sample-exact
 scheduling, onset tolerances), `chord_pad` (harmony reads as written),
 `title_cue` (a four-bar cinematic sting asserting a LUFS target, a
 monotone filter sweep, click-freedom, and silence after the fade), and
-`drum_groove` (a 110 BPM, eight-bar drum groove asserting detected tempo,
-stereo width, loudness range, and section count — and an honest
-`HasClearRhythm(false)`, since a layered real-instrument groove dilutes
-the tempo detector's confidence below its click-track-calibrated
-threshold even though the BPM itself lands almost exactly on target).
+`drum_groove` (a 110 BPM eight-bar groove on the real `kick` and `snare`
+patches, hats panned right and snare left, asserting detected tempo,
+`HasClearRhythm(true)` with grid alignment ≥ 0.9, stereo width, loudness
+range, and section count — the fixture that motivated the tempo/rhythm
+split, since the old confidence metric read it as rhythm-less at 0.01
+despite a spot-on BPM).
 
 ## Workspace
 

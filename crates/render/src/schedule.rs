@@ -69,7 +69,7 @@ pub(crate) fn compile(score: &Score, bank: &PatchBank) -> Result<Schedule, Rende
             .ok_or_else(|| RenderError::UnknownInstrument {
                 track: track.name.clone(),
                 name: track.instrument.name().to_owned(),
-                available: "sine, saw_lead, square_bass, chord_pad, noise_hat, pluck".to_owned(),
+                available: bank.patch_names().join(", "),
             })?
             .clone();
         let inserts = track

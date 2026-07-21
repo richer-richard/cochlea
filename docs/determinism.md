@@ -301,3 +301,33 @@ existing rules — but each addition deserves its line in this ledger:
   only, stable field order, no wall clock, no hash-map iteration — byte-
   deterministic per platform for identical input; the numbers inside stay
   Tier-2 across platforms like every other analysis float.
+
+## 0.2.0 additions (2026-07-21)
+
+- **Tempo/rhythm split.** Pulse clarity (mean-removed, length-unbiased
+  autocovariance), tempo candidates, windowed stability, and the
+  grid-alignment rhythm analyzer are all pure arithmetic + `libm` over
+  the same shared STFT, fixed summation order throughout. The Ellis
+  beat-DP envelope is normalized by its own standard deviation —
+  a pure function of the buffer, so normalization changes nothing about
+  determinism, only the penalty calibration.
+- **`kick`/`snare` presets, stereo `chord_pad`.** Drum envelopes are
+  rational `1/(1+t/tau)` decays — pure arithmetic per sample, no new
+  transcendental call sites; the pad's two saws pan through the same
+  constant-power `fd::pan` used everywhere. **Golden re-bless:** the
+  drum-groove golden moved to `0xE613_FEF7_9664_B529` (deliberate DSP +
+  score change: real kit, per-track pans, stereo pad); first-light was
+  untouched (it uses none of the changed patches) and its hash did not
+  move — an incidental cross-check that the preset work leaked into
+  nothing it shouldn't have.
+- **Banded structure similarity.** Computes exactly the entries the
+  checkerboard kernel reads, in the same order, same arithmetic —
+  byte-identical novelty curves to the full matrix, minus the O(n²)
+  waste. The frame-count cap changes the effective frame length only as
+  a deterministic function of input length.
+- **Spectral centroid (`centroid.rs`).** Weighted mean over the shared
+  scalar-FFT magnitudes; a silent frame's centroid is `None`, never a
+  ratio of float-noise sums.
+- **MCP base64/PNG.** `encode_png` runs the identical `image` encoder as
+  the file path; base64 is a pure byte mapping — the inline spectrogram
+  and the PNG on disk are the same bytes.

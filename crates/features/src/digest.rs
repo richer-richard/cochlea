@@ -55,6 +55,7 @@ pub fn digest_text(report: &Report, timeline: &SegmentTimeline) -> String {
     .expect("String write is infallible");
 
     writeln!(out, "{}", fmt_tempo_line(&report.tempo)).expect("String write is infallible");
+    writeln!(out, "{}", fmt_rhythm_line(&report.rhythm)).expect("String write is infallible");
 
     // Omitted entirely for mono input — a "stereo: mono" line would carry
     // no information a reader doesn't already have from the header.
@@ -272,16 +273,41 @@ fn fmt_signed_dash(v: Option<f64>) -> String {
     }
 }
 
-/// `"tempo: 120.0bpm (conf 0.11) clear_rhythm=true"`, or `"tempo: -"` when
-/// no tempo was detected at all.
+/// `"tempo: 120.0bpm (conf 0.61, stability 1.00)  alts: 60.0bpm(0.55)"` —
+/// the alternatives clause lists candidates past the winner, and is
+/// omitted when there are none; stability prints `-` when unmeasurable
+/// (buffer too short to window). `"tempo: -"` when no tempo was detected.
 fn fmt_tempo_line(tempo: &crate::TempoSummary) -> String {
-    match tempo.bpm {
-        Some(bpm) => format!(
-            "tempo: {bpm:.1}bpm (conf {:.2}) clear_rhythm={}",
-            tempo.confidence, tempo.clear_rhythm
-        ),
-        None => "tempo: -".to_string(),
+    let Some(bpm) = tempo.bpm else {
+        return "tempo: -".to_string();
+    };
+    let mut line = format!(
+        "tempo: {bpm:.1}bpm (conf {:.2}, stability {})",
+        tempo.confidence,
+        fmt_dash(tempo.stability, 2),
+    );
+    let alts: Vec<String> = tempo
+        .candidates
+        .iter()
+        .skip(1)
+        .map(|c| format!("{:.1}bpm({:.2})", c.bpm, c.salience))
+        .collect();
+    if !alts.is_empty() {
+        line.push_str("  alts: ");
+        line.push_str(&alts.join(", "));
     }
+    line
+}
+
+/// `"rhythm: clear=true  grid_align=0.94  offbeat=0.31"` — grid fields
+/// print `-` when there is no usable beat grid to classify against.
+fn fmt_rhythm_line(rhythm: &crate::RhythmReport) -> String {
+    format!(
+        "rhythm: clear={}  grid_align={}  offbeat={}",
+        rhythm.clear_rhythm,
+        fmt_dash(rhythm.grid_alignment, 2),
+        fmt_dash(rhythm.offbeat_ratio, 2),
+    )
 }
 
 /// `"structure: 3 sections @ 8.0s, 16.0s"`, or `"structure: 1 section"`

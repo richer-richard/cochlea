@@ -2,7 +2,8 @@
 
 An MCP (Model Context Protocol) stdio server over the cochlea libraries.
 Any MCP client — Claude Code, another agent, a script — gets `render` /
-`probe` / `spectro` / `lint` / `digest` / `diff` as tool calls, so it can
+`probe` / `spectro` / `lint` / `digest` / `diff` / `reference` as tool
+calls, so it can
 compose, render, and "listen" to audio through numbers and images without
 shelling out to the `cochlea` binary or reading raw PCM.
 
@@ -21,10 +22,11 @@ second front end onto the same offline pipeline, not a reimplementation.
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `render_score` | `score_path` (string, required), `out_path` (string, required), `stems_dir` (string, optional), `verify` (bool, default `false`) | Text summary: frame count, duration, sample rate, peak dBFS, stems written; if `verify` is set, the full verify-report JSON is appended and the call reports `isError: true` on a failed verification. |
-| `probe_audio` | `audio_path` (string, required) | The full feature report, schema v2 (loudness/LUFS/true peak/LRA, onsets, YIN pitch, chroma/key, tempo + `clear_rhythm`, stereo image, structural sections, silence, clipping) as pretty JSON. Works on any WAV or FLAC — no score required. |
-| `spectrogram` | `audio_path` (string, required), `out_path` (string, required), `sheet` (bool, default `false`), `bars_per_tile` (integer, default `8`) | Text: the written PNG path and its pixel dimensions. Plain spectrogram or, with `sheet: true`, a tiled contact sheet — no score-aware bar markers yet (those need score context via `render_score`). |
+| `probe_audio` | `audio_path` (string, required) | The full feature report, schema v3 (loudness/LUFS/true peak/LRA, onsets, YIN pitch, chroma/key, tempo with candidates + stability, rhythm with grid alignment + `clear_rhythm`, stereo image, structural sections, silence, clipping) as pretty JSON. Works on any WAV or FLAC — no score required. |
+| `spectrogram` | `audio_path` (string, required), `out_path` (string, optional), `sheet` (bool, default `false`), `bars_per_tile` (integer, default `8`) | The image itself, inline, as an MCP image content block (base64 PNG) whenever it fits the ~700 KB cap — a client with no filesystem access still gets to look at the audio — plus a text summary with pixel dimensions. `out_path` additionally (or, over the cap, instead) writes the PNG to disk. Plain spectrogram or, with `sheet: true`, a tiled contact sheet — no score-aware bar markers yet (those need score context via `render_score`). |
 | `lint_score` | `score_path` (string, required) | Text: `"ok: no lint findings"`, or the JSON list of findings. `isError: true` iff any finding is `Severity::Error`, matching `cochlea lint`'s exit-1 threshold. |
 | `probe_digest` | `audio_path` (string, required), `window_ms` (number, default `1000`) | A ~40-line deterministic text digest (`cochlea_features::digest_text`) instead of a full JSON report — the token-cheap way to "listen" to a WAV or FLAC. Prefer this over `probe_audio` unless the caller needs exact numbers to assert against. |
+| `score_reference` | *(none)* | The complete score-authoring reference as Markdown: the RON grammar, the live instrument-preset catalog (names, polyphony, every automatable param with unit/range/default — generated from the same registry that validates scores, so it cannot go stale), all embeddable `verify:` assertions, and a worked example that the test suite itself parses and renders. An agent should call this before its first `render_score`. |
 | `audio_diff` | `audio_path_a` (string, required), `audio_path_b` (string, required), `window_ms` (number, default `1000`), `json` (bool, default `false`) | Feature-space comparison text (`cochlea_features::compare_text`): a verdict (`byte-identical` / `tier2-equivalent` / `different (dimensions...)`) plus per-dimension deltas. `json: true` appends the full `CompareReport` as pretty JSON. A `different` verdict is a normal, successful answer — not `isError`. |
 
 Tool-level failures (a bad path, a render error, a failed verify or lint)
@@ -34,6 +36,21 @@ errors (`-32700`/`-32601`/`-32602`) are reserved for protocol problems:
 malformed JSON, an unknown method, or missing/malformed arguments on a
 known tool. `audio_diff`'s `different` verdict is *not* one of these
 failures — see its row above.
+
+## Confinement (`--root`)
+
+By default the server reads and writes wherever the caller points it —
+appropriate for a personal, local loop. For anything less trusted, launch
+with `--root DIR`: every path argument on every tool, reads and writes
+alike, must then resolve (canonically — symlinks and `..` are resolved
+first) inside `DIR`, and anything else is refused as an Invalid Params
+error before the filesystem is touched. This is defense against a
+confused or prompt-injected *client*, not a sandbox against hostile local
+processes.
+
+```
+claude mcp add cochlea -- cochlea-mcp --root ~/music-workspace
+```
 
 ## Client setup
 
@@ -67,7 +84,7 @@ Response (one line back; the pretty-printed report is escaped into the
 `text` field, shown here unescaped for readability):
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\n  \"schema_version\": 2,\n  \"source\": {\n    \"sample_rate\": 48000,\n    \"channels\": 2,\n    ...\n  },\n  ...\n}"}],"isError":false}}
+{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\n  \"schema_version\": 3,\n  \"source\": {\n    \"sample_rate\": 48000,\n    \"channels\": 2,\n    ...\n  },\n  ...\n}"}],"isError":false}}
 ```
 
 ## Testing this crate

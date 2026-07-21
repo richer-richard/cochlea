@@ -55,12 +55,35 @@ pub enum VerifySpec {
         min_bpm: Option<f64>,
         max_bpm: Option<f64>,
     },
-    /// The mix's estimated tempo's trustworthiness
-    /// (`cochlea_features::TempoReport::clear_rhythm`) equals `expected`
-    /// — asserts a clear, steady pulse when `true`, or asserts the
-    /// *absence* of one (a low-confidence or non-rhythmic mix) when
-    /// `false`.
+    /// The mix's rhythm trustworthiness
+    /// (`cochlea_features::RhythmReport::clear_rhythm` — the grid-based
+    /// rule) equals `expected` — asserts a clear, articulated rhythm when
+    /// `true`, or asserts the *absence* of one when `false`.
     HasClearRhythm { expected: bool },
+    /// The mix's rhythm grid alignment
+    /// (`cochlea_features::RhythmReport::grid_alignment`, the fraction of
+    /// detected onsets on the beat-subdivision grid, `0.0..=1.0`) is at
+    /// least `min`.
+    GridAlignmentAtLeast { min: f64 },
+    /// `track`'s spectral centroid (brightness) audibly rises across
+    /// `from..to` on the *rendered stem*: the median centroid over the
+    /// range's last quarter must be at least `min_ratio` times the median
+    /// over its first quarter. The output-side companion to
+    /// [`VerifySpec::Monotone`], which validates only the authored curve.
+    BrightnessRises {
+        track: String,
+        from: Ticks,
+        to: Ticks,
+        min_ratio: f64,
+    },
+    /// [`VerifySpec::BrightnessRises`] mirrored: the first quarter's
+    /// median centroid must be at least `min_ratio` times the last's.
+    BrightnessFalls {
+        track: String,
+        from: Ticks,
+        to: Ticks,
+        min_ratio: f64,
+    },
     /// The mix's stereo width (`cochlea_features::StereoReport::width`,
     /// `0.0..=1.0`) falls within `[min, max]`.
     StereoWidthWithin { min: f64, max: f64 },

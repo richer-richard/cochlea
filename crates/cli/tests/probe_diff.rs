@@ -110,7 +110,7 @@ fn probe_digest_and_json_together_write_both() {
     // ...full JSON report to the file, both present, no conflict.
     let report: Value =
         serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], 2);
+    assert_eq!(report["schema_version"], 3);
 }
 
 #[test]

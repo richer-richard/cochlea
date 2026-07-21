@@ -654,10 +654,15 @@ fn verify_report_serializes_with_schema_version_and_stable_kinds() {
 }
 
 /// The TempoIs search-range override must actually reach the detector:
-/// forcing 200..=300 BPM on a true-120 BPM metronome moves the estimate
-/// inside the forced window (measured first via the features API, then
-/// asserted through both the typed builder and the RON spec form). The
-/// default range keeps finding ~120, so the same assertion fails there.
+/// forcing 30..=70 BPM on a true-120 BPM metronome locks onto the genuine
+/// 60 BPM subharmonic (clicks align at every two-beat lag) — measured
+/// first via the features API, then asserted through both the typed
+/// builder and the RON spec form. The default range keeps finding ~120,
+/// so the same assertion fails there. (A range with *no* genuine
+/// periodicity in it — e.g. 200..=300 on this metronome — now honestly
+/// reports no measurable tempo at all: mean-removed autocovariance is
+/// negative at unarticulated lags, where the old raw autocorrelation
+/// manufactured a tiny positive peak.)
 #[test]
 fn tempo_is_range_override_reaches_the_detector() {
     use cochlea_features::{Audio, TempoOpts, estimate_tempo};
@@ -672,17 +677,28 @@ fn tempo_is_range_override_reaches_the_detector() {
 
     let forced_report = estimate_tempo(
         &audio,
+        &TempoOpts::default().with_min_bpm(30.0).with_max_bpm(70.0),
+    );
+    let forced_bpm = forced_report
+        .bpm
+        .expect("the two-beat subharmonic is genuine periodicity");
+    assert!(
+        (55.0..=65.0).contains(&forced_bpm),
+        "the forced range must lock the estimate onto the subharmonic: {forced_bpm}"
+    );
+
+    let no_periodicity = estimate_tempo(
+        &audio,
         &TempoOpts::default().with_min_bpm(200.0).with_max_bpm(300.0),
     );
-    let forced_bpm = forced_report.bpm.expect("a metronome has periodicity");
-    assert!(
-        (200.0..=300.0).contains(&forced_bpm),
-        "the forced range must constrain the estimate: {forced_bpm}"
+    assert_eq!(
+        no_periodicity.bpm, None,
+        "a range with no articulated periodicity should read as no tempo: {no_periodicity:?}"
     );
 
     let via_builder = rendered
         .verify(&score)
-        .tempo_is_in_range(forced_bpm, BpmTol(1.0), 200.0, 300.0)
+        .tempo_is_in_range(forced_bpm, BpmTol(1.0), 30.0, 70.0)
         .run();
     assert!(via_builder.passed, "{via_builder:?}");
 
@@ -700,12 +716,139 @@ fn tempo_is_range_override_reaches_the_detector() {
         .with_spec(&VerifySpec::TempoIs {
             bpm: forced_bpm,
             tol_bpm: 1.0,
-            min_bpm: Some(200.0),
-            max_bpm: Some(300.0),
+            min_bpm: Some(30.0),
+            max_bpm: Some(70.0),
         })
         .run();
     assert!(
         spec_form.passed,
         "data form must thread the range: {spec_form:?}"
+    );
+}
+
+// --- rhythm: grid_alignment_at_least ------------------------------------
+
+/// A metronome's clicks sit exactly on the beat grid — alignment reads at
+/// (or extremely near) 1.0 — while an empty render has no grid at all,
+/// which per the undefined-metric policy fails a value assertion. (Note a
+/// mere sustained-note score is NOT gridless: its note attacks are onsets
+/// and get a grid of their own.)
+#[test]
+fn grid_alignment_passes_a_metronome_and_fails_gridless_material() {
+    let score = metronome_score(120.0, 8);
+    let rendered = render(&score).unwrap();
+    let pass = rendered.verify(&score).grid_alignment_at_least(0.9).run();
+    assert!(pass.passed, "{:?}", pass.checks);
+    assert_eq!(pass.checks[0].kind, "grid_alignment_at_least");
+
+    let empty = Score::new(SampleRate(48_000), Ppq(960)).track("lead", Instrument::preset("sine"));
+    let rendered_empty = render(&empty).unwrap();
+    let fail = rendered_empty
+        .verify(&empty)
+        .grid_alignment_at_least(0.5)
+        .run();
+    assert!(!fail.passed, "{:?}", fail.checks);
+    assert!(
+        fail.checks[0].actual.contains("no usable beat grid"),
+        "{:?}",
+        fail.checks
+    );
+}
+
+// --- brightness: the output-side sweep check ----------------------------
+
+/// A two-bar saw pad under a rising cutoff sweep must *audibly* brighten:
+/// the same fixture with a flat cutoff must not pass the same assertion.
+/// This is the render-side half of the sweep story — `monotone` validates
+/// the authored curve, this listens to the stem.
+#[test]
+fn brightness_rises_hears_a_real_sweep_and_rejects_a_flat_patch() {
+    let swept = Score::new(SampleRate(48_000), Ppq(960))
+        .track("lead", Instrument::preset("saw_lead"))
+        .note("lead", bar(1), Dur::whole(), Pitch::A3, Vel(100))
+        .note("lead", bar(2), Dur::whole(), Pitch::A3, Vel(100))
+        .automate(
+            "lead",
+            Param::CUTOFF_HZ,
+            keys![(bar(1), 300.0), (bar(3), 6_000.0)],
+        );
+    let rendered = render(&swept).unwrap();
+    let pass = rendered
+        .verify(&swept)
+        .brightness_rises("lead", bar(1)..bar(3), 1.3)
+        .run();
+    assert!(pass.passed, "{:?}", pass.checks);
+    assert_eq!(pass.checks[0].kind, "brightness_rises");
+    // And the mirrored direction must fail on the same render.
+    let wrong_way = rendered
+        .verify(&swept)
+        .brightness_falls("lead", bar(1)..bar(3), 1.3)
+        .run();
+    assert!(!wrong_way.passed, "{:?}", wrong_way.checks);
+
+    let flat = Score::new(SampleRate(48_000), Ppq(960))
+        .track("lead", Instrument::preset("saw_lead"))
+        .note("lead", bar(1), Dur::whole(), Pitch::A3, Vel(100))
+        .note("lead", bar(2), Dur::whole(), Pitch::A3, Vel(100))
+        .automate(
+            "lead",
+            Param::CUTOFF_HZ,
+            keys![(bar(1), 1_200.0), (bar(3), 1_200.0)],
+        );
+    let rendered_flat = render(&flat).unwrap();
+    let fail = rendered_flat
+        .verify(&flat)
+        .brightness_rises("lead", bar(1)..bar(3), 1.3)
+        .run();
+    assert!(!fail.passed, "{:?}", fail.checks);
+}
+
+/// An unknown track fails gracefully (never panics) and a falling sweep
+/// passes the falling form through the RON spec path — proving the new
+/// specs survive the full text -> Score -> Verifier pipeline.
+#[test]
+fn brightness_and_grid_alignment_specs_round_trip_through_ron() {
+    let text = r#"Score(
+        version: 1,
+        sample_rate: 48000,
+        ppq: 960,
+        tempo: [(tick: 0, bpm: 120.0)],
+        tracks: [
+            Track(
+                name: "lead",
+                instrument: Preset("saw_lead"),
+                notes: [
+                    Note(at: (1, 1), dur: "1/1", pitch: "A3", vel: 100),
+                    Note(at: (2, 1), dur: "1/1", pitch: "A3", vel: 100),
+                ],
+                automation: [
+                    Auto(param: "cutoff_hz", keys: [
+                        Key(at: (1, 1), value: 6000.0),
+                        Key(at: (3, 1), value: 300.0),
+                    ]),
+                ],
+            ),
+        ],
+        verify: [
+            BrightnessFalls(track: "lead", from: (1, 1), to: (3, 1), min_ratio: 1.3),
+        ],
+    )"#;
+    let score = Score::from_ron(text).expect("valid RON with a BrightnessFalls spec");
+    let rendered = render(&score).unwrap();
+    let report = rendered
+        .verify(&score)
+        .with_specs(score.verify_specs())
+        .run();
+    assert!(report.passed, "{report:?}");
+
+    let unknown = rendered
+        .verify(&score)
+        .brightness_rises("nope", bar(1)..bar(3), 1.2)
+        .run();
+    assert!(!unknown.passed);
+    assert!(
+        unknown.checks[0].actual.contains("unknown track") || unknown.checks[0].detail.is_some(),
+        "{:?}",
+        unknown.checks
     );
 }

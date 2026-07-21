@@ -14,14 +14,49 @@
 
 use cochlea_mcp::server::{Server, serve};
 
+/// The only flag: `--root <dir>` confines every tool's file access to
+/// `dir`. No clap — one optional flag doesn't justify the dependency in a
+/// binary whose whole interface is JSON-RPC on stdio.
+fn parse_args() -> Result<Option<std::path::PathBuf>, String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.as_slice() {
+        [] => Ok(None),
+        [flag, dir] if flag == "--root" => Ok(Some(std::path::PathBuf::from(dir))),
+        _ => Err(format!(
+            "usage: cochlea-mcp [--root DIR]   (got: {})",
+            args.join(" ")
+        )),
+    }
+}
+
 fn main() -> std::process::ExitCode {
+    let root = match parse_args() {
+        Ok(root) => root,
+        Err(usage) => {
+            eprintln!("cochlea-mcp: {usage}");
+            return std::process::ExitCode::from(2);
+        }
+    };
+    let server = match &root {
+        Some(dir) => match Server::with_root(dir) {
+            Ok(server) => server,
+            Err(err) => {
+                eprintln!("cochlea-mcp: --root {}: {err}", dir.display());
+                return std::process::ExitCode::from(2);
+            }
+        },
+        None => Server::new(),
+    };
     eprintln!(
-        "cochlea-mcp {} starting on stdio",
-        env!("CARGO_PKG_VERSION")
+        "cochlea-mcp {} starting on stdio{}",
+        env!("CARGO_PKG_VERSION"),
+        root.as_ref()
+            .map(|r| format!(" (confined to {})", r.display()))
+            .unwrap_or_default()
     );
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    match serve(&Server::new(), stdin.lock(), stdout.lock()) {
+    match serve(&server, stdin.lock(), stdout.lock()) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("cochlea-mcp: stdio error: {err}");

@@ -194,6 +194,21 @@ enum VerifyDoc {
     HasClearRhythm {
         expected: bool,
     },
+    GridAlignmentAtLeast {
+        min: f64,
+    },
+    BrightnessRises {
+        track: String,
+        from: (u32, u32),
+        to: (u32, u32),
+        min_ratio: f64,
+    },
+    BrightnessFalls {
+        track: String,
+        from: (u32, u32),
+        to: (u32, u32),
+        min_ratio: f64,
+    },
     StereoWidthWithin {
         min: f64,
         max: f64,
@@ -397,6 +412,29 @@ fn verify_from_doc(v: VerifyDoc, score: &Score) -> Result<VerifySpec, ScoreError
             max_bpm,
         },
         VerifyDoc::HasClearRhythm { expected } => VerifySpec::HasClearRhythm { expected },
+        VerifyDoc::GridAlignmentAtLeast { min } => VerifySpec::GridAlignmentAtLeast { min },
+        VerifyDoc::BrightnessRises {
+            track,
+            from,
+            to,
+            min_ratio,
+        } => VerifySpec::BrightnessRises {
+            track,
+            from: resolve(from)?,
+            to: resolve(to)?,
+            min_ratio,
+        },
+        VerifyDoc::BrightnessFalls {
+            track,
+            from,
+            to,
+            min_ratio,
+        } => VerifySpec::BrightnessFalls {
+            track,
+            from: resolve(from)?,
+            to: resolve(to)?,
+            min_ratio,
+        },
         VerifyDoc::StereoWidthWithin { min, max } => VerifySpec::StereoWidthWithin { min, max },
         VerifyDoc::LraBelow { lu } => VerifySpec::LraBelow { lu },
         VerifyDoc::SectionCount { min, max } => VerifySpec::SectionCount { min, max },
@@ -454,6 +492,29 @@ fn verify_doc(v: &VerifySpec, ppq: Ppq, ts: TimeSignature) -> VerifyDoc {
         },
         VerifySpec::HasClearRhythm { expected } => VerifyDoc::HasClearRhythm {
             expected: *expected,
+        },
+        VerifySpec::GridAlignmentAtLeast { min } => VerifyDoc::GridAlignmentAtLeast { min: *min },
+        VerifySpec::BrightnessRises {
+            track,
+            from,
+            to,
+            min_ratio,
+        } => VerifyDoc::BrightnessRises {
+            track: track.clone(),
+            from: unresolve(*from),
+            to: unresolve(*to),
+            min_ratio: *min_ratio,
+        },
+        VerifySpec::BrightnessFalls {
+            track,
+            from,
+            to,
+            min_ratio,
+        } => VerifyDoc::BrightnessFalls {
+            track: track.clone(),
+            from: unresolve(*from),
+            to: unresolve(*to),
+            min_ratio: *min_ratio,
         },
         VerifySpec::StereoWidthWithin { min, max } => VerifyDoc::StereoWidthWithin {
             min: *min,

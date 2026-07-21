@@ -142,6 +142,7 @@ fn tools_list_shape() {
             "spectrogram",
             "lint_score",
             "probe_digest",
+            "score_reference",
             "audio_diff",
         ]
     );

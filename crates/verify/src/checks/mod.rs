@@ -13,11 +13,13 @@
 //! asserts that directly instead (e.g. `HasClearRhythm(expected: false)`,
 //! `SilentAfter`). Each check's doc states which side it's on.
 
+pub(crate) mod brightness;
 pub(crate) mod discontinuity;
 pub(crate) mod loudness;
 pub(crate) mod monotone;
 pub(crate) mod onset;
 pub(crate) mod pitch;
+pub(crate) mod rhythm;
 pub(crate) mod silence;
 pub(crate) mod stereo;
 pub(crate) mod structure;

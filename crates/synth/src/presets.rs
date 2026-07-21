@@ -1,11 +1,13 @@
-//! The six shipped presets and the reverb insert, plus the `PatchBank`
+//! The eight shipped presets and the reverb insert, plus the `PatchBank`
 //! registry that resolves names and backs score validation via `Catalog`.
 //!
 //! Determinism rules in force here (docs/determinism.md): fundsp graphs use
 //! the `prelude64` constructors (f64 internal state, f32 node interface);
 //! all noise comes from the counter RNG; no fundsp `noise()`/`pluck()`/
-//! `feedback()`/`fdn()`; envelopes are piecewise-linear closures over note
-//! time (pure arithmetic); construction-time libm only.
+//! `feedback()`/`fdn()`; envelope closures are pure arithmetic over note
+//! time (piecewise-linear ADSR, and rational `1/(1+t/tau)` pseudo-
+//! exponential decays for the drums — no per-sample transcendentals);
+//! construction-time libm only.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -171,7 +173,100 @@ impl Patch for SquareBass {
     }
 }
 
+/// Kick drum: a sine whose frequency drops from ~3x the scored pitch down
+/// to it over ~25 ms (the classic pitch-envelope thump), with a snappy
+/// rational-decay amplitude envelope. Both envelopes are pure arithmetic —
+/// `1/(1 + t/tau)` decays, no per-sample transcendentals. Score the kick
+/// low (A1/C2-region pitches read as a fundamental, not a note).
+struct Kick;
+
+impl Patch for Kick {
+    fn name(&self) -> &'static str {
+        "kick"
+    }
+
+    fn params(&self) -> Vec<ParamInfo> {
+        Vec::new()
+    }
+
+    fn polyphony(&self) -> Polyphony {
+        Polyphony::Mono
+    }
+
+    fn release_secs(&self) -> f64 {
+        0.25
+    }
+
+    fn voice(&self, ctx: &VoiceCtx) -> Voice {
+        let f0 = ctx.pitch.hz();
+        let amp = f64::from(0.85 * ctx.amp());
+        // Frequency: f0 * (1 + 2.2 / (1 + t/tau_f)) — starts at 3.2x f0,
+        // settles to f0. Amplitude: 1 ms linear attack, then a squared
+        // rational decay that reaches -60 dB-ish within ~0.3 s.
+        let freq = fd::envelope(move |t| f0 * (1.0 + 2.2 / (1.0 + t / 0.012)));
+        let amp_env = fd::envelope(move |t| {
+            let attack = (t / 0.001).clamp(0.0, 1.0);
+            let decay = 1.0 / (1.0 + t / 0.09);
+            amp * attack * decay * decay
+        });
+        let graph = ((freq >> fd::sine()) * amp_env) >> fd::pan(0.0);
+        boxed_voice(ctx, Vec::new(), graph)
+    }
+}
+
+/// Snare drum: a short two-partial tonal body at the scored pitch plus a
+/// counter-RNG noise burst through a highpass — the noise decays slower
+/// than the body, the usual snare shape. Pure-arithmetic envelopes (see
+/// [`Kick`]). Score it around D3/E3 for a classic snare body.
+struct Snare;
+
+impl Patch for Snare {
+    fn name(&self) -> &'static str {
+        "snare"
+    }
+
+    fn params(&self) -> Vec<ParamInfo> {
+        Vec::new()
+    }
+
+    fn polyphony(&self) -> Polyphony {
+        Polyphony::Poly(4)
+    }
+
+    fn release_secs(&self) -> f64 {
+        0.3
+    }
+
+    fn voice(&self, ctx: &VoiceCtx) -> Voice {
+        let f0 = ctx.pitch.hz();
+        let amp = f64::from(ctx.amp());
+        let body_amp = 0.5 * amp;
+        let noise_amp = 0.55 * amp;
+        let body_env = fd::envelope(move |t| {
+            let attack = (t / 0.001).clamp(0.0, 1.0);
+            let decay = 1.0 / (1.0 + t / 0.035);
+            body_amp * attack * decay * decay
+        });
+        let noise_env = fd::envelope(move |t| {
+            let attack = (t / 0.001).clamp(0.0, 1.0);
+            let decay = 1.0 / (1.0 + t / 0.06);
+            noise_amp * attack * decay * decay
+        });
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "snare partials sit far inside f32's audio band"
+        )]
+        let (b1, b2) = (f0 as f32, (f0 * 1.6) as f32);
+        let body = (fd::sine_hz(b1) + fd::sine_hz(b2)) * body_env;
+        let noise = (An(CounterNoise::new(ctx.seed)) >> fd::highpass_hz(2_200.0, 0.7)) * noise_env;
+        let graph = (body + noise) >> fd::pan(0.0);
+        boxed_voice(ctx, Vec::new(), graph)
+    }
+}
+
 /// Detuned-saw pad (±4 cents) through an automatable lowpass, slow ADSR.
+/// The two saws pan apart (±0.35, constant-power) — the pad is the
+/// engine's built-in source of real stereo width.
 struct ChordPad;
 
 impl Patch for ChordPad {
@@ -205,12 +300,18 @@ impl Patch for ChordPad {
         )]
         let (lo, hi) = ((f * cents(-4.0)) as f32, (f * cents(4.0)) as f32);
         let cutoff = fd::shared(1_200.0);
-        let graph = (((fd::saw_hz(lo) + fd::saw_hz(hi))
-            * adsr_node(adsr, ctx.note_len_secs(), 0.10 * ctx.amp()))
-            | fd::var(&cutoff)
-            | fd::dc(0.5))
-            >> fd::lowpass()
-            >> fd::pan(0.0);
+        // Each detuned saw gets its own filter chain and pans to its own
+        // side (both filters share the one automatable cutoff cell) —
+        // opposing constant-power pans, so the pad carries real stereo
+        // width instead of collapsing to dead center.
+        let note_len = ctx.note_len_secs();
+        let level = 0.10 * ctx.amp();
+        let side = |freq: f32, pan: f32| {
+            ((fd::saw_hz(freq) * adsr_node(adsr, note_len, level)) | fd::var(&cutoff) | fd::dc(0.5))
+                >> fd::lowpass()
+                >> fd::pan(pan)
+        };
+        let graph = side(lo, -0.35) + side(hi, 0.35);
         boxed_voice(ctx, vec![(Param::CUTOFF_HZ, cutoff)], graph)
     }
 }
@@ -314,7 +415,7 @@ pub struct PatchBank {
 }
 
 impl PatchBank {
-    /// The six shipped presets and the reverb insert.
+    /// The eight shipped presets and the reverb insert.
     pub fn presets() -> PatchBank {
         let mut patches: BTreeMap<String, Arc<dyn Patch>> = BTreeMap::new();
         for patch in [
@@ -324,12 +425,25 @@ impl PatchBank {
             Arc::new(ChordPad),
             Arc::new(NoiseHat),
             Arc::new(Pluck),
+            Arc::new(Kick),
+            Arc::new(Snare),
         ] {
             patches.insert(patch.name().to_owned(), patch);
         }
         let mut inserts: BTreeMap<String, Arc<dyn InsertFx>> = BTreeMap::new();
         inserts.insert("reverb".to_owned(), Arc::new(ReverbInsert));
         PatchBank { patches, inserts }
+    }
+
+    /// Every registered patch name, sorted (BTreeMap order) — powers error
+    /// messages and the self-describing authoring reference.
+    pub fn patch_names(&self) -> Vec<&str> {
+        self.patches.keys().map(String::as_str).collect()
+    }
+
+    /// Every registered insert name, sorted.
+    pub fn insert_names(&self) -> Vec<&str> {
+        self.inserts.keys().map(String::as_str).collect()
     }
 
     /// Registers a custom patch (the `Instrument::custom` render path).
@@ -362,5 +476,13 @@ impl Catalog for PatchBank {
 
     fn insert(&self, name: &str) -> bool {
         self.inserts.contains_key(name)
+    }
+
+    fn instrument_names(&self) -> Vec<String> {
+        self.patches.keys().cloned().collect()
+    }
+
+    fn insert_names(&self) -> Vec<String> {
+        self.inserts.keys().cloned().collect()
     }
 }
