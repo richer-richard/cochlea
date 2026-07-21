@@ -1,17 +1,16 @@
 // Demo 4: an eight-bar drum groove at 110 BPM — the rhythm-analysis
-// showcase. Hats on eighths, four-on-the-floor pluck kick, hat-snare on 2
-// and 4, and a reverb-tailed pad that enters at bar 5. The verify block
-// asserts the new wave-2 dimensions: detected tempo, the clear-rhythm
-// flag, stereo width (from the pad's reverb tail — every other voice in
-// this v1 engine pans dead center, so without it the mix would be exactly
-// mono-compatible), loudness range, plus the classic peak check.
-// Thresholds are measured from the render, not guessed (workspace
-// convention) — including two honest surprises, documented at their
-// assertions below: `TempoIs` needed a four-on-the-floor kick (not just
-// beats 1 and 3) to avoid a genuine octave error, and `HasClearRhythm`
-// reads `false` here even though the tempo itself is spot-on — the
-// confidence metric, calibrated against clean single-instrument click
-// tracks, doesn't carry over cleanly to a layered real-instrument groove.
+// showcase. Hats on eighths (panned slightly right), a real four-on-the-
+// floor `kick` (pitch-drop sine), a real `snare` on 2 and 4 (tone + noise
+// burst, panned slightly left), and a reverb-tailed stereo pad that
+// enters at bar 5. The verify block asserts detected tempo, the
+// grid-based clear-rhythm flag and grid alignment, stereo width (from the
+// per-track pans, the pad's own spread, and the reverb tail), loudness
+// range, plus the classic peak check. Thresholds are measured from the
+// render, not guessed (workspace convention). Historical note: under the
+// pre-0.2.0 mass-fraction confidence metric this groove read
+// `clear_rhythm: false` at confidence 0.01 despite a spot-on BPM — the
+// canonical motivating case for the tempo/rhythm split, where the
+// grid-based rule now reads the truth: these hits sit on the grid.
 Score(
     version: 1,
     sample_rate: 48000,
@@ -88,6 +87,11 @@ Score(
                 Note(at: (8, 4), dur: "1/16", pitch: "A5", vel: 82),
                 Note(at: (8, 4), off: "1/8", dur: "1/16", pitch: "A5", vel: 70),
             ],
+            automation: [
+                // Static pan: hats sit slightly right, the classic kit
+                // seating (engine-level constant-power pan, one key).
+                Auto(param: "pan", keys: [Key(at: (1, 1), value: 0.25)]),
+            ],
         ),
         Track(
             // Four-on-the-floor, not just beats 1 and 3: measured (workspace
@@ -99,7 +103,7 @@ Score(
             // than by tuning the (already-tested, already-calibrated)
             // detector to this one fixture.
             name: "kick",
-            instrument: Preset("pluck"),
+            instrument: Preset("kick"),
             notes: [
                 Note(at: (1, 1), dur: "1/8", pitch: "A1", vel: 112),
                 Note(at: (1, 2), dur: "1/8", pitch: "A1", vel: 100),
@@ -137,24 +141,28 @@ Score(
         ),
         Track(
             name: "snare",
-            instrument: Preset("noise_hat"),
+            instrument: Preset("snare"),
             notes: [
-                Note(at: (1, 2), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (1, 4), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (2, 2), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (2, 4), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (3, 2), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (3, 4), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (4, 2), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (4, 4), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (5, 2), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (5, 4), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (6, 2), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (6, 4), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (7, 2), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (7, 4), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (8, 2), dur: "1/8", pitch: "A4", vel: 96),
-                Note(at: (8, 4), dur: "1/8", pitch: "A4", vel: 96),
+                Note(at: (1, 2), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (1, 4), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (2, 2), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (2, 4), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (3, 2), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (3, 4), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (4, 2), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (4, 4), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (5, 2), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (5, 4), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (6, 2), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (6, 4), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (7, 2), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (7, 4), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (8, 2), dur: "1/8", pitch: "D3", vel: 96),
+                Note(at: (8, 4), dur: "1/8", pitch: "D3", vel: 96),
+            ],
+            automation: [
+                // Snare seats slightly left, opposing the hats.
+                Auto(param: "pan", keys: [Key(at: (1, 1), value: -0.15)]),
             ],
         ),
         Track(
@@ -188,40 +196,35 @@ Score(
         // decays, so there is no silent region to assert (metronome and
         // title_cue already cover that check).
         TruePeakBelow(dbtp: -1.0),
-        // Measured 110.29 BPM. Needed a four-on-the-floor kick, not just
-        // beats 1 and 3: kick-on-1&3-only made the strongest periodicity
-        // in the onset envelope the 2-beat (55 BPM) alternation, and the
-        // tempo tracker's autocorrelation locked onto that half-tempo
-        // instead of the true beat — a genuine, reproducible octave error,
-        // fixed at the composition level rather than by tuning the
-        // (separately tested and calibrated) detector to this one
-        // fixture.
+        // Measured 110.29 BPM (pulse clarity 0.79). The candidates list
+        // also surfaces the genuine 55 BPM half-tempo reading (salience
+        // 0.89 — actually the stronger raw peak; the octave prior breaks
+        // the tie toward the beat) — exactly the metrical ambiguity the
+        // candidates field exists to expose.
         TempoIs(bpm: 110.3, tol_bpm: 2.0),
-        // Measured confidence ~0.015 (clear_rhythm's threshold is 0.05).
-        // Counterintuitive but real: a click-track fixture of one
-        // instrument at one periodicity gets confidence ~0.11-0.15 (see
-        // crates/features/tests/tempo.rs), but this groove layers three
-        // real instruments across three simultaneous periodicities (hat
-        // eighths, kick/snare quarters, bar-level pad) — the salience of
-        // any single lag in the autocorrelation drops accordingly even
-        // though the tempo itself (above) is measured spot-on. Asserting
-        // `false` here is the honest reading, not a bug: `HasClearRhythm`
-        // is deliberately stricter than "did we find a tempo."
-        HasClearRhythm(expected: false),
-        // Measured width ~0.014 — small but real, entirely from the pad's
-        // reverb tail (every voice in this v1 engine pans dead center; see
-        // the header comment). Without the `reverb` insert on "pad" this
-        // would read exactly 0.0.
-        StereoWidthWithin(min: 0.001, max: 0.05),
-        // Measured ~1.73 LU — a groove built from repeating bars at
+        // The tempo/rhythm split's motivating case, resolved: under the
+        // old mass-fraction confidence this groove read `false` at 0.01
+        // because layering hats/kick/snare/pad across three metrical
+        // levels diluted every single lag's share of the total mass. The
+        // grid-based rule asks the right question — do the hits land on
+        // the pulse's grid? — and here they do: measured alignment 0.98.
+        HasClearRhythm(expected: true),
+        GridAlignmentAtLeast(min: 0.9),
+        // Measured width 0.072: the hats' +0.25 pan, the snare's -0.15,
+        // the chord_pad's own ±0.35 saw spread, and the reverb tail all
+        // contribute real stereo image now (pre-0.2.0 every voice panned
+        // dead center and this read 0.014, all of it from the reverb).
+        StereoWidthWithin(min: 0.03, max: 0.2),
+        // Measured ~1.61 LU — a groove built from repeating bars at
         // constant velocity genuinely has a small loudness range.
         LraBelow(lu: 3.0),
         // Measured section_count=1: the structure detector doesn't flag
         // the pad's entrance at bar 5 as a boundary either — the drums'
         // RMS/band-energy dominate the feature vector so heavily that the
         // comparatively quiet pad layering in underneath doesn't move the
-        // self-similarity novelty curve past its adaptive threshold. Also
-        // an honest reading, not a forced pass.
+        // self-similarity novelty curve past its adaptive threshold. An
+        // honest reading, not a forced pass.
         SectionCount(min: 1, max: 1),
     ],
+
 )

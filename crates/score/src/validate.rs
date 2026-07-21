@@ -40,6 +40,11 @@ pub trait Catalog {
     fn instrument(&self, name: &str) -> Option<InstrumentInfo>;
     /// Whether an insert preset name exists.
     fn insert(&self, name: &str) -> bool;
+    /// Every instrument name this catalog can resolve, sorted — powers
+    /// error messages and the self-describing authoring reference.
+    fn instrument_names(&self) -> Vec<String>;
+    /// Every insert name this catalog can resolve, sorted.
+    fn insert_names(&self) -> Vec<String>;
 }
 
 /// Lint severity: `Error` findings fail `cochlea lint` (nonzero exit);

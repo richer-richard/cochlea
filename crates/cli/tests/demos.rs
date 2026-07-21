@@ -144,27 +144,45 @@ fn title_cue_hits_its_targets() {
 #[test]
 fn drum_groove_rhythm_analysis_reads_as_written() {
     // run_demo already runs the score's embedded verify: block (TempoIs,
-    // HasClearRhythm, StereoWidthWithin, LraBelow, SectionCount,
-    // TruePeakBelow) and checks the Tier 3 spectrogram sentinel; this test
-    // adds the same assertions directly against a fresh probe, so a
-    // regression in `Report`'s v2 fields fails here even if the score's
-    // own tolerances happen to still be loose enough to pass.
+    // HasClearRhythm, GridAlignmentAtLeast, StereoWidthWithin, LraBelow,
+    // SectionCount, TruePeakBelow) and checks the Tier 3 spectrogram
+    // sentinel; this test adds the same assertions directly against a
+    // fresh probe, so a regression in `Report`'s tempo/rhythm fields
+    // fails here even if the score's own tolerances happen to still be
+    // loose enough to pass.
     let rendered = run_demo("drum_groove");
     let report = probe(&audio_of(&rendered), &ProbeOpts::default());
 
     let bpm = report.tempo.bpm.expect("drum groove should have a tempo");
     assert!((bpm - 110.3).abs() <= 2.0, "bpm = {bpm}");
-    // See the score's own verify: block comment: this specific layered
-    // real-instrument groove doesn't clear the clear_rhythm confidence
-    // bar even though the tempo itself is accurate — an honest, measured
-    // outcome, not a bug.
-    assert!(!report.tempo.clear_rhythm, "{:?}", report.tempo);
+    // The tempo/rhythm split's flagship reading: the hits sit on the
+    // detected grid (measured alignment 0.98), so clear_rhythm is true —
+    // under the pre-0.2.0 mass-fraction confidence this same groove read
+    // false at confidence 0.01 despite the spot-on BPM.
+    assert!(report.rhythm.clear_rhythm, "{:?}", report.rhythm);
+    assert!(
+        report.rhythm.grid_alignment.expect("grid exists") >= 0.9,
+        "{:?}",
+        report.rhythm
+    );
+    // The candidates list surfaces the genuine 55 BPM half-tempo
+    // alternative — the metrical ambiguity is data, not a hidden coin
+    // flip inside the detector.
+    assert!(
+        report
+            .tempo
+            .candidates
+            .iter()
+            .any(|c| (c.bpm - 55.0).abs() < 2.0),
+        "{:?}",
+        report.tempo.candidates
+    );
 
     let stereo = report
         .stereo
         .expect("stereo input should have a stereo report");
     assert!(
-        (0.001..=0.05).contains(&stereo.width),
+        (0.03..=0.2).contains(&stereo.width),
         "width = {}",
         stereo.width
     );

@@ -240,16 +240,20 @@ fn golden_pcm_hash_of_the_committed_example() {
 ))]
 const GOLDEN_MIX_HASH: u64 = 0x3DC3_B57D_406D_E89F; // blessed 2026-07-03, rustc 1.95.0
 
-/// Golden PCM hash of the `drum_groove` demo (`demos/drum_groove`) — Wave
-/// 2's rhythm-analysis showcase. Extends Tier 1 coverage to a DSP
-/// combination the original golden doesn't exercise: `pluck` +
-/// `noise_hat` + `chord_pad` together, with a `reverb` insert on one
-/// track. See [`golden_pcm_hash_of_the_committed_example`]'s docs on the
-/// re-blessing process.
+/// Golden PCM hash of the `drum_groove` demo (`demos/drum_groove`) — the
+/// rhythm-analysis showcase. Extends Tier 1 coverage to a DSP combination
+/// the original golden doesn't exercise: the `kick` and `snare` drum
+/// patches + `noise_hat` + the stereo-spread `chord_pad` together, with
+/// per-track pan automation and a `reverb` insert on one track. See
+/// [`golden_pcm_hash_of_the_committed_example`]'s docs on the re-blessing
+/// process.
 ///
-/// Blessed on aarch64-macos only so far (2026-07-09) — not yet confirmed
-/// cross-arch by a Tier 1 CI run the way the first-light golden above was;
-/// update this note once CI runs it on x86_64-linux.
+/// Re-blessed 2026-07-21 for the 0.2.0 preset work (kick/snare patches,
+/// chord_pad's ±0.35 saw spread, and the demo's new pan automation — a
+/// deliberate DSP + score change). Blessed on aarch64-macos; the previous
+/// hash (0xBECB_EB55_B4F8_DD00) was confirmed byte-identical cross-arch
+/// by the 2026-07-10 Tier 1 CI run, and the first CI run after this
+/// re-bless re-confirms on x86_64-linux.
 #[test]
 #[cfg(any(
     all(target_arch = "x86_64", target_os = "linux"),
@@ -274,4 +278,4 @@ fn golden_pcm_hash_of_the_drum_groove_demo() {
     all(target_arch = "x86_64", target_os = "linux"),
     all(target_arch = "aarch64", target_os = "macos"),
 ))]
-const DRUM_GROOVE_GOLDEN_MIX_HASH: u64 = 0xBECB_EB55_B4F8_DD00; // blessed 2026-07-09, aarch64-macos, rustc 1.95.0
+const DRUM_GROOVE_GOLDEN_MIX_HASH: u64 = 0xE613_FEF7_9664_B529; // blessed 2026-07-21, aarch64-macos, rustc 1.95.0
