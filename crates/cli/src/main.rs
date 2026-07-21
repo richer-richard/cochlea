@@ -133,6 +133,21 @@ enum Cmd {
         #[arg(long, value_parser = parse_seconds)]
         to: Option<f64>,
     },
+    /// Convert a Standard MIDI File (format 0 or 1) into a RON score.
+    /// Timing imports exactly (SMF ticks -> score ticks, tempo events ->
+    /// tempo map); instruments map to rough preset families and channel-10
+    /// percussion to kick/snare/hat tracks — every guess is printed so you
+    /// can re-voice.
+    Import {
+        /// Input MIDI file (.mid/.midi).
+        input: PathBuf,
+        /// Output RON score path.
+        #[arg(long)]
+        out: PathBuf,
+        /// Sample rate for the imported score (MIDI files carry none).
+        #[arg(long, default_value_t = 48_000)]
+        sample_rate: u32,
+    },
     /// Print the score-authoring reference (RON grammar, instrument
     /// catalog, verify assertions, worked example) — the same text the
     /// MCP `score_reference` tool serves.
@@ -441,6 +456,44 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                 write_annotated_spectro(&audio, &out)?;
             } else {
                 write_spectro(&audio, &out, sheet, bars_per_tile)?;
+            }
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+
+        Cmd::Import {
+            input,
+            out,
+            sample_rate,
+        } => {
+            if out == input {
+                anyhow::bail!("--out would overwrite the input file {out:?}");
+            }
+            let bytes =
+                std::fs::read(&input).with_context(|| format!("reading {}", input.display()))?;
+            let cochlea_score::MidiImport { score, warnings } =
+                cochlea_score::import_midi(&bytes, cochlea_score::SampleRate(sample_rate))?;
+            for w in &warnings {
+                eprintln!("note: {w}");
+            }
+            std::fs::write(&out, score.to_ron()?)
+                .with_context(|| format!("writing {}", out.display()))?;
+            eprintln!(
+                "imported {} tracks, {} tempo changes -> {}",
+                score.tracks().len(),
+                score.tempo_changes().count(),
+                out.display()
+            );
+            // The import maps instruments by rough family — lint the result
+            // so a preset guess that doesn't exist in the catalog (it
+            // shouldn't happen, but the lint is cheap) surfaces here, not
+            // at render time.
+            let errors = score
+                .validate(&PatchBank::presets())
+                .into_iter()
+                .filter(|f| f.severity == Severity::Error)
+                .count();
+            if errors > 0 {
+                anyhow::bail!("imported score fails lint with {errors} error(s)");
             }
             Ok(std::process::ExitCode::SUCCESS)
         }
