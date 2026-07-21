@@ -211,6 +211,182 @@ pub struct Track {
     pub automation: Vec<Automation>,
 }
 
+/// Master-bus processing: an output gain and an optional brick-wall
+/// limiter, applied to the f64 stem sum after mixing (the mix becomes
+/// `master(Σ stems)`; with the default master the pipeline is untouched
+/// and `mix == Σ stems` byte-for-byte as before). This is the tool for
+/// hitting loudness targets: push the bus with `gain_db`, let the limiter
+/// hold the ceiling, and assert both with `IntegratedLufs` +
+/// `TruePeakBelow`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Master {
+    gain_db: f32,
+    limiter: Option<Limiter>,
+}
+
+impl Default for Master {
+    fn default() -> Self {
+        Master::new()
+    }
+}
+
+impl Master {
+    /// Unity gain, no limiter — the do-nothing master every score starts
+    /// with.
+    pub fn new() -> Master {
+        Master {
+            gain_db: 0.0,
+            limiter: None,
+        }
+    }
+
+    /// Output gain in dB, applied before the limiter. Range `-40..=24`.
+    ///
+    /// # Panics
+    /// On an out-of-range value (use [`Master::try_gain_db`] to handle it).
+    pub fn gain_db(self, db: f32) -> Master {
+        self.try_gain_db(db)
+            .unwrap_or_else(|e| panic!("Master::gain_db: {e}"))
+    }
+
+    pub fn try_gain_db(mut self, db: f32) -> Result<Master, ScoreError> {
+        if !db.is_finite() || !(-40.0..=24.0).contains(&db) {
+            return Err(ScoreError::OutOfRange {
+                what: "master gain_db",
+                value: f64::from(db),
+                min: -40.0,
+                max: 24.0,
+            });
+        }
+        self.gain_db = db;
+        Ok(self)
+    }
+
+    /// Install a limiter after the gain stage.
+    pub fn limiter(mut self, limiter: Limiter) -> Master {
+        self.limiter = Some(limiter);
+        self
+    }
+
+    /// The configured gain, dB.
+    pub fn gain_db_value(&self) -> f32 {
+        self.gain_db
+    }
+
+    /// The configured limiter, if any.
+    pub fn limiter_value(&self) -> Option<&Limiter> {
+        self.limiter.as_ref()
+    }
+
+    /// Whether this master changes nothing (unity gain, no limiter) — the
+    /// renderer skips the master stage entirely in that case, keeping the
+    /// pre-0.3.0 byte-exact pipeline.
+    pub fn is_default(&self) -> bool {
+        self.gain_db == 0.0 && self.limiter.is_none()
+    }
+}
+
+/// A brick-wall lookahead limiter on the master bus. Sample peaks in the
+/// rendered mix never exceed `ceiling_db` — exactly, by construction (the
+/// gain at every sample is at most `ceiling / windowed-peak`). Note the
+/// guarantee is on *sample* peaks; inter-sample (true) peaks can read up
+/// to a fraction of a dB higher, so leave ~1 dB of headroom under a
+/// `TruePeakBelow` target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Limiter {
+    ceiling_db: f32,
+    lookahead_ms: f32,
+    release_ms: f32,
+}
+
+impl Limiter {
+    /// A limiter holding `ceiling_db` (range `-40..=0`), with 5 ms
+    /// lookahead and 50 ms release.
+    ///
+    /// # Panics
+    /// On an out-of-range ceiling (use [`Limiter::try_new`]).
+    pub fn new(ceiling_db: f32) -> Limiter {
+        Limiter::try_new(ceiling_db).unwrap_or_else(|e| panic!("Limiter::new: {e}"))
+    }
+
+    pub fn try_new(ceiling_db: f32) -> Result<Limiter, ScoreError> {
+        if !ceiling_db.is_finite() || !(-40.0..=0.0).contains(&ceiling_db) {
+            return Err(ScoreError::OutOfRange {
+                what: "limiter ceiling_db",
+                value: f64::from(ceiling_db),
+                min: -40.0,
+                max: 0.0,
+            });
+        }
+        Ok(Limiter {
+            ceiling_db,
+            lookahead_ms: 5.0,
+            release_ms: 50.0,
+        })
+    }
+
+    /// Lookahead window, ms (range `0..=50`): the gain reaches its reduced
+    /// value this far before a peak arrives.
+    ///
+    /// # Panics
+    /// On an out-of-range value (use [`Limiter::try_lookahead_ms`]).
+    pub fn lookahead_ms(self, ms: f32) -> Limiter {
+        self.try_lookahead_ms(ms)
+            .unwrap_or_else(|e| panic!("Limiter::lookahead_ms: {e}"))
+    }
+
+    pub fn try_lookahead_ms(mut self, ms: f32) -> Result<Limiter, ScoreError> {
+        if !ms.is_finite() || !(0.0..=50.0).contains(&ms) {
+            return Err(ScoreError::OutOfRange {
+                what: "limiter lookahead_ms",
+                value: f64::from(ms),
+                min: 0.0,
+                max: 50.0,
+            });
+        }
+        self.lookahead_ms = ms;
+        Ok(self)
+    }
+
+    /// Release time constant, ms (range `1..=1000`): how quickly gain
+    /// recovers toward unity after a peak passes.
+    ///
+    /// # Panics
+    /// On an out-of-range value (use [`Limiter::try_release_ms`]).
+    pub fn release_ms(self, ms: f32) -> Limiter {
+        self.try_release_ms(ms)
+            .unwrap_or_else(|e| panic!("Limiter::release_ms: {e}"))
+    }
+
+    pub fn try_release_ms(mut self, ms: f32) -> Result<Limiter, ScoreError> {
+        if !ms.is_finite() || !(1.0..=1000.0).contains(&ms) {
+            return Err(ScoreError::OutOfRange {
+                what: "limiter release_ms",
+                value: f64::from(ms),
+                min: 1.0,
+                max: 1000.0,
+            });
+        }
+        self.release_ms = ms;
+        Ok(self)
+    }
+
+    /// The ceiling, dB.
+    pub fn ceiling_db_value(&self) -> f32 {
+        self.ceiling_db
+    }
+
+    /// The lookahead, ms.
+    pub fn lookahead_ms_value(&self) -> f32 {
+        self.lookahead_ms
+    }
+
+    /// The release, ms.
+    pub fn release_ms_value(&self) -> f32 {
+        self.release_ms
+    }
+}
+
 /// A complete score. Build with the chainable methods below, load/save RON
 /// with [`Score::from_ron`]/[`Score::to_ron`], compile timing with
 /// [`Score::tempo_map`].
@@ -224,6 +400,7 @@ pub struct Score {
     /// form round-trips what the author wrote.
     pub(crate) tempo: Vec<TempoChange>,
     pub(crate) tracks: Vec<Track>,
+    pub(crate) master: Master,
     pub(crate) verify: Vec<VerifySpec>,
 }
 
@@ -273,8 +450,16 @@ impl Score {
                     .expect("120 BPM is in range"),
             }],
             tracks: Vec::new(),
+            master: Master::new(),
             verify: Vec::new(),
         })
+    }
+
+    /// Sets the master-bus processing (gain + optional limiter). The
+    /// default master changes nothing — see [`Master`].
+    pub fn with_master(mut self, master: Master) -> Score {
+        self.master = master;
+        self
     }
 
     /// Sets the (single, v1) time signature.
@@ -451,6 +636,11 @@ impl Score {
 
     pub fn tracks(&self) -> &[Track] {
         &self.tracks
+    }
+
+    /// The master-bus configuration.
+    pub fn master(&self) -> &Master {
+        &self.master
     }
 
     pub fn verify_specs(&self) -> &[VerifySpec] {

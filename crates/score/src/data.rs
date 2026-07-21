@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ScoreError;
 use crate::param::Param;
-use crate::score::{Automation, EaseSpec, Insert, Instrument, KeyDef, Note, Score, Track};
+use crate::score::{
+    Automation, EaseSpec, Insert, Instrument, KeyDef, Limiter, Master, Note, Score, Track,
+};
 use crate::time::{Bpm, Dur, Pos, Ppq, SampleRate, Ticks, TimeSignature, Vel, bar};
 use crate::verify_spec::{MonotoneDir, VerifySpec};
 
@@ -25,8 +27,40 @@ struct ScoreDoc {
     time_signature: (u32, u32),
     tempo: Vec<TempoDoc>,
     tracks: Vec<TrackDoc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    master: Option<MasterDoc>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     verify: Vec<VerifyDoc>,
+}
+
+/// Master-bus data form: `master: Master(gain_db: 3.0, limiter:
+/// Limiter(ceiling_db: -1.0))`. Omitted entirely for the do-nothing
+/// default.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename = "Master", deny_unknown_fields)]
+struct MasterDoc {
+    #[serde(default)]
+    gain_db: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    limiter: Option<LimiterDoc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename = "Limiter", deny_unknown_fields)]
+struct LimiterDoc {
+    ceiling_db: f32,
+    #[serde(default = "default_lookahead_ms")]
+    lookahead_ms: f32,
+    #[serde(default = "default_release_ms")]
+    release_ms: f32,
+}
+
+fn default_lookahead_ms() -> f32 {
+    5.0
+}
+
+fn default_release_ms() -> f32 {
+    50.0
 }
 
 fn default_signature() -> (u32, u32) {
@@ -291,6 +325,17 @@ impl Score {
                 score = score.try_automate(&track.name, Param::custom(auto.param.clone()), keys)?;
             }
         }
+        if let Some(m) = doc.master {
+            let mut master = Master::new().try_gain_db(m.gain_db)?;
+            if let Some(l) = m.limiter {
+                master = master.limiter(
+                    Limiter::try_new(l.ceiling_db)?
+                        .try_lookahead_ms(l.lookahead_ms)?
+                        .try_release_ms(l.release_ms)?,
+                );
+            }
+            score = score.with_master(master);
+        }
         for v in doc.verify {
             let spec = verify_from_doc(v, &score)?;
             score = score.with_verify(spec);
@@ -321,6 +366,14 @@ impl Score {
                 .iter()
                 .map(|t| track_doc(t, ppq, ts))
                 .collect::<Result<_, ScoreError>>()?,
+            master: (!self.master.is_default()).then(|| MasterDoc {
+                gain_db: self.master.gain_db_value(),
+                limiter: self.master.limiter_value().map(|l| LimiterDoc {
+                    ceiling_db: l.ceiling_db_value(),
+                    lookahead_ms: l.lookahead_ms_value(),
+                    release_ms: l.release_ms_value(),
+                }),
+            }),
             verify: self.verify.iter().map(|v| verify_doc(v, ppq, ts)).collect(),
         };
         let config = ron::ser::PrettyConfig::new().struct_names(true);

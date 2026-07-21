@@ -15,6 +15,7 @@
 
 mod engine;
 mod error;
+mod master;
 mod schedule;
 
 use std::path::Path;
@@ -28,8 +29,11 @@ pub use error::RenderError;
 /// stereo f32 at the score's sample rate.
 ///
 /// The mix is *defined* as the f64 sum of the stems' stored f32 values in
-/// fixed track order, converted back to f32 — so the invariant
-/// "mix == sum of stems" holds byte-for-byte and is tested.
+/// fixed track order, passed through the score's master stage (gain +
+/// limiter — a no-op for the default master), converted back to f32. For
+/// a score without a master section the invariant "mix == sum of stems"
+/// therefore holds byte-for-byte exactly as before, and is tested; with a
+/// master, the mix is `master(Σ stems)` and the stems stay pre-master.
 pub struct Rendered {
     sample_rate: SampleRate,
     stems: Vec<(String, Vec<f32>)>,
@@ -99,7 +103,9 @@ fn write_wav(path: &Path, sample_rate: SampleRate, samples: &[f32]) -> Result<()
 fn render_inner(score: &Score, bank: &PatchBank, parallel: bool) -> Result<Rendered, RenderError> {
     let schedule = schedule::compile(score, bank)?;
     let stems = engine::render_stems(&schedule, score, parallel);
-    let mix = engine::sum_stems(&stems, schedule.total_samples);
+    let mut mix64 = engine::sum_stems_f64(&stems, schedule.total_samples);
+    master::process(&mut mix64, schedule.sample_rate, score.master());
+    let mix = engine::quantize(&mix64);
     Ok(Rendered {
         sample_rate: schedule.sample_rate,
         stems: schedule
