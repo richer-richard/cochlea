@@ -144,6 +144,7 @@ fn tools_list_shape() {
             "probe_digest",
             "score_reference",
             "audio_diff",
+            "import_midi",
         ]
     );
     for tool in tools {
