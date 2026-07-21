@@ -29,14 +29,27 @@ const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024
 /// server process.
 const MAX_LINE_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Stateless: every tool call is an independent offline operation on
-/// caller-given paths, so there's no session state to carry between lines.
+/// Stateless between lines: every tool call is an independent offline
+/// operation on caller-given paths. The only configuration is the
+/// optional `--root` confinement directory, fixed at startup.
 #[derive(Default)]
-pub struct Server;
+pub struct Server {
+    ctx: tools::ToolCtx,
+}
 
 impl Server {
     pub fn new() -> Self {
-        Server
+        Server::default()
+    }
+
+    /// A server whose tools refuse any path outside `root` (canonicalized
+    /// here; the directory must exist). See [`tools::ToolCtx`].
+    pub fn with_root(root: &std::path::Path) -> std::io::Result<Self> {
+        Ok(Server {
+            ctx: tools::ToolCtx {
+                root: Some(root.canonicalize()?),
+            },
+        })
     }
 
     /// Handles one line of input, returning the line to write back (if
@@ -126,18 +139,23 @@ impl Server {
         let args = params.get("arguments").unwrap_or(&empty);
 
         let outcome = match name {
-            "render_score" => tools::render_score(args),
-            "probe_audio" => tools::probe_audio(args),
-            "spectrogram" => tools::spectrogram(args),
-            "lint_score" => tools::lint_score(args),
-            "probe_digest" => tools::probe_digest(args),
-            "audio_diff" => tools::audio_diff(args),
+            "render_score" => tools::render_score(&self.ctx, args),
+            "probe_audio" => tools::probe_audio(&self.ctx, args),
+            "spectrogram" => tools::spectrogram(&self.ctx, args),
+            "lint_score" => tools::lint_score(&self.ctx, args),
+            "probe_digest" => tools::probe_digest(&self.ctx, args),
+            "audio_diff" => tools::audio_diff(&self.ctx, args),
+            "score_reference" => tools::score_reference(),
             other => return Err((INVALID_PARAMS, format!("unknown tool: {other}"))),
         };
 
         Ok(match outcome {
             ToolOutcome::Ok(text) => json!({
                 "content": [{"type": "text", "text": text}],
+                "isError": false,
+            }),
+            ToolOutcome::OkContent(blocks) => json!({
+                "content": blocks,
                 "isError": false,
             }),
             ToolOutcome::Failed(text) => json!({

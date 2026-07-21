@@ -104,6 +104,10 @@ enum Cmd {
         #[arg(long, default_value_t = 8)]
         bars_per_tile: usize,
     },
+    /// Print the score-authoring reference (RON grammar, instrument
+    /// catalog, verify assertions, worked example) — the same text the
+    /// MCP `score_reference` tool serves.
+    Reference,
 }
 
 fn main() -> std::process::ExitCode {
@@ -335,6 +339,14 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             write_spectro(&audio, &out, sheet, bars_per_tile)?;
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+
+        Cmd::Reference => {
+            print!(
+                "{}",
+                cochlea_score::authoring_reference(&cochlea_synth::PatchBank::presets())
+            );
             Ok(std::process::ExitCode::SUCCESS)
         }
     }

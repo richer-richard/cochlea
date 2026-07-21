@@ -7,24 +7,116 @@
 //! Adding a tool is one [`schemas`] entry plus one function here plus one
 //! match arm in `server::Server::tools_call`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cochlea_score::Severity;
 use cochlea_verify::VerifyExt;
 use serde_json::{Value, json};
 
 /// A tool's result before it's wrapped into the `tools/call` envelope.
+#[derive(Debug)]
 pub enum ToolOutcome {
     /// Ran to completion; `isError: false`.
     Ok(String),
+    /// Ran to completion with pre-built content blocks (e.g. an inline
+    /// image plus a text summary); `isError: false`.
+    OkContent(Vec<Value>),
     /// Ran, but the *tool-level* operation failed (bad score, verify
     /// failure, render error) — still `tools/call`'s success response,
     /// per the spec, but `isError: true` with the reason as text.
     Failed(String),
     /// The arguments were unusable before any work could start (missing
-    /// required field, unknown tool name) — surfaced as a JSON-RPC
-    /// Invalid Params error, not a tool result.
+    /// required field, unknown tool name, a path outside `--root`) —
+    /// surfaced as a JSON-RPC Invalid Params error, not a tool result.
     InvalidParams(String),
+}
+
+/// Per-server tool context: the optional `--root` confinement directory
+/// (canonicalized at startup). When set, every caller-supplied path —
+/// reads and writes alike — must resolve inside it; the server refuses
+/// anything else before touching the filesystem. Best-effort protection
+/// against a confused or prompt-injected *client*, not against a hostile
+/// local process (canonicalize-then-open is not TOCTOU-proof).
+#[derive(Default)]
+pub struct ToolCtx {
+    pub root: Option<PathBuf>,
+}
+
+impl ToolCtx {
+    /// Resolve a path that will be read: it must exist (canonicalization
+    /// requires that) and, under `--root`, sit inside the root.
+    fn resolve_read(&self, raw: &str, what: &str) -> Result<PathBuf, ToolOutcome> {
+        let canonical = Path::new(raw).canonicalize().map_err(|err| {
+            ToolOutcome::Failed(format!("reading {raw}: {err}"))
+        })?;
+        self.check_root(&canonical, raw, what)?;
+        Ok(canonical)
+    }
+
+    /// Resolve a path that will be written: its *parent* must exist and
+    /// canonicalize (the file itself usually doesn't exist yet), and the
+    /// resulting parent-canonical + file-name path must sit inside the
+    /// root. Rejects paths with no file name (`..`, a bare directory).
+    fn resolve_write(&self, raw: &str, what: &str) -> Result<PathBuf, ToolOutcome> {
+        let path = Path::new(raw);
+        let Some(name) = path.file_name() else {
+            return Err(ToolOutcome::InvalidParams(format!(
+                "{what} {raw:?} has no file name"
+            )));
+        };
+        let parent = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        let canonical_parent = parent.canonicalize().map_err(|err| {
+            ToolOutcome::Failed(format!("resolving {what} {raw}: {err}"))
+        })?;
+        let canonical = canonical_parent.join(name);
+        self.check_root(&canonical, raw, what)?;
+        Ok(canonical)
+    }
+
+    fn check_root(&self, canonical: &Path, raw: &str, what: &str) -> Result<(), ToolOutcome> {
+        if let Some(root) = &self.root
+            && !canonical.starts_with(root)
+        {
+            return Err(ToolOutcome::InvalidParams(format!(
+                "{what} {raw:?} resolves outside this server's --root ({})",
+                root.display()
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Inline-image size cap, bytes of raw PNG (~933 KB after base64) — under
+/// typical MCP client message limits. Larger spectrograms are file-only.
+const INLINE_PNG_CAP: usize = 700_000;
+
+/// Standard (RFC 4648) base64, hand-rolled: three dependency-free dozen
+/// lines beat pulling a crate into a supply-chain-sensitive audio
+/// workspace for one encode call. Tested against RFC vectors in this
+/// module's tests.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 /// The `inputSchema` + `description` for every tool, in `tools/list` order.
@@ -75,7 +167,7 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "spectrogram",
-            "description": "Render a mel spectrogram PNG (or a tiled contact sheet covering the whole file) from a WAV or FLAC file, for visual inspection of harmonic content, sweeps, or silence. Use this when a numeric probe report isn't enough and you want to look at the audio.",
+            "description": "Render a mel spectrogram (or a tiled contact sheet covering the whole file) from a WAV or FLAC file, for visual inspection of harmonic content, sweeps, or silence. The image comes back inline as MCP image content (base64 PNG) whenever it fits the size cap, so you can look at it directly without filesystem access; pass out_path to also (or instead) write the PNG to disk. Use this when a numeric probe report isn't enough and you want to look at the audio.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -85,7 +177,7 @@ pub fn schemas() -> Vec<Value> {
                     },
                     "out_path": {
                         "type": "string",
-                        "description": "Where to write the output PNG."
+                        "description": "Optional: also write the PNG here. Required in practice only when the image exceeds the inline size cap (the call says so if that happens)."
                     },
                     "sheet": {
                         "type": "boolean",
@@ -98,7 +190,7 @@ pub fn schemas() -> Vec<Value> {
                         "default": 8
                     }
                 },
-                "required": ["audio_path", "out_path"]
+                "required": ["audio_path"]
             }
         }),
         json!({
@@ -132,6 +224,15 @@ pub fn schemas() -> Vec<Value> {
                     }
                 },
                 "required": ["audio_path"]
+            }
+        }),
+        json!({
+            "name": "score_reference",
+            "description": "The score-authoring reference: the complete RON score grammar (tracks, notes, durations, automation, easing), the live instrument-preset catalog with every automatable parameter and range, all embeddable verify: assertions, and a worked example. Call this FIRST when composing — everything render_score accepts is documented here; do not guess the format.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": []
             }
         }),
         json!({
@@ -209,7 +310,7 @@ fn window_ms_or_invalid(args: &Value) -> Result<f64, ToolOutcome> {
 /// `Cmd::Render`), minus `--report` (the report is always inlined into the
 /// text result here, never written to a file — the caller is an agent, not
 /// a shell pipeline).
-pub fn render_score(args: &Value) -> ToolOutcome {
+pub fn render_score(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     let score_path = match require_str(args, "score_path") {
         Ok(p) => p,
         Err(outcome) => return outcome,
@@ -221,17 +322,33 @@ pub fn render_score(args: &Value) -> ToolOutcome {
     let stems_dir = args.get("stems_dir").and_then(Value::as_str);
     let verify = bool_or(args, "verify", false);
 
-    // The score is fully read before out_path is written, so an equal path
-    // would "succeed" while destroying the caller's score file — reject it
-    // before any work starts.
-    if out_path == score_path {
+    let score_resolved = match ctx.resolve_read(score_path, "score_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let out_resolved = match ctx.resolve_write(out_path, "out_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    // The score is fully read before out_path is written, so an aliasing
+    // path would "succeed" while destroying the caller's score file —
+    // reject before any work starts. Canonical comparison, so `./x.ron`
+    // vs `x.ron`, symlinks, and absolute/relative spellings all count.
+    if out_resolved == score_resolved {
         return ToolOutcome::InvalidParams(
-            "out_path must not equal score_path (the WAV write would overwrite the score)"
+            "out_path must not alias score_path (the WAV write would overwrite the score)"
                 .to_string(),
         );
     }
+    let stems_resolved = match stems_dir {
+        Some(dir) => match ctx.resolve_write(dir, "stems_dir") {
+            Ok(p) => Some(p),
+            Err(outcome) => return outcome,
+        },
+        None => None,
+    };
 
-    let text = match std::fs::read_to_string(score_path) {
+    let text = match std::fs::read_to_string(&score_resolved) {
         Ok(text) => text,
         Err(err) => return ToolOutcome::Failed(format!("reading {score_path}: {err}")),
     };
@@ -243,13 +360,13 @@ pub fn render_score(args: &Value) -> ToolOutcome {
         Ok(rendered) => rendered,
         Err(err) => return ToolOutcome::Failed(format!("rendering {score_path}: {err}")),
     };
-    if let Err(err) = rendered.write_wav(out_path) {
+    if let Err(err) = rendered.write_wav(&out_resolved) {
         return ToolOutcome::Failed(format!("writing {out_path}: {err}"));
     }
-    if let Some(dir) = stems_dir
+    if let Some(dir) = &stems_resolved
         && let Err(err) = rendered.write_stems(dir)
     {
-        return ToolOutcome::Failed(format!("writing stems to {dir}: {err}"));
+        return ToolOutcome::Failed(format!("writing stems to {}: {err}", dir.display()));
     }
 
     let frames = rendered.frames();
@@ -301,12 +418,16 @@ fn peak_dbfs(samples: &[f32]) -> Option<f64> {
 /// `probe_audio`: mirrors `cochlea probe` (`crates/cli/src/main.rs`
 /// `Cmd::Probe`) without the `--spectro` side effect — call `spectrogram`
 /// separately for that, so each tool does exactly one thing.
-pub fn probe_audio(args: &Value) -> ToolOutcome {
+pub fn probe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     let audio_path = match require_str(args, "audio_path") {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    let audio = match cochlea_decode::load(Path::new(audio_path)) {
+    let resolved = match ctx.resolve_read(audio_path, "audio_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let audio = match cochlea_decode::load(&resolved) {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
@@ -320,30 +441,47 @@ pub fn probe_audio(args: &Value) -> ToolOutcome {
 /// `spectrogram`: mirrors `cochlea spectro` (`crates/cli/src/main.rs`
 /// `Cmd::Spectro` / `write_spectro`) — plain spectrogram or contact sheet,
 /// no markers (those need score context via `render_score`, per the CLI's
-/// own `--bars-per-tile` doc comment).
-pub fn spectrogram(args: &Value) -> ToolOutcome {
+/// own `--bars-per-tile` doc comment) — plus the MCP-native part the CLI
+/// can't do: the PNG comes back *inline* as an image content block
+/// (base64) whenever it fits [`INLINE_PNG_CAP`], so a client with no
+/// filesystem access still gets to look at the audio. `out_path` is
+/// optional; when the image exceeds the cap and no `out_path` was given,
+/// the call fails with instructions rather than silently returning
+/// nothing viewable.
+pub fn spectrogram(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     let audio_path = match require_str(args, "audio_path") {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    let out_path = match require_str(args, "out_path") {
-        Ok(p) => p,
-        Err(outcome) => return outcome,
-    };
+    let out_path = args.get("out_path").and_then(Value::as_str);
     let sheet = bool_or(args, "sheet", false);
     let bars_per_tile = usize_or(args, "bars_per_tile", 8);
 
-    // Same protection as render_score: the audio is fully decoded before
-    // out_path is written, so an equal path destroys the input while the
-    // call still "succeeds".
-    if out_path == audio_path {
-        return ToolOutcome::InvalidParams(
-            "out_path must not equal audio_path (the PNG write would overwrite the audio)"
-                .to_string(),
-        );
-    }
+    let audio_resolved = match ctx.resolve_read(audio_path, "audio_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let out_resolved = match out_path {
+        Some(raw) => {
+            let resolved = match ctx.resolve_write(raw, "out_path") {
+                Ok(p) => p,
+                Err(outcome) => return outcome,
+            };
+            // Same protection as render_score, canonical form: the audio
+            // is fully decoded before out_path is written, so an aliasing
+            // path destroys the input while the call still "succeeds".
+            if resolved == audio_resolved {
+                return ToolOutcome::InvalidParams(
+                    "out_path must not alias audio_path (the PNG write would overwrite the audio)"
+                        .to_string(),
+                );
+            }
+            Some(resolved)
+        }
+        None => None,
+    };
 
-    let audio = match cochlea_decode::load(Path::new(audio_path)) {
+    let audio = match cochlea_decode::load(&audio_resolved) {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
@@ -358,25 +496,64 @@ pub fn spectrogram(args: &Value) -> ToolOutcome {
     } else {
         cochlea_spectro::render_png(&spec, &[])
     };
-    if let Err(err) = cochlea_spectro::write_png(&img, out_path) {
-        return ToolOutcome::Failed(format!("writing {out_path}: {err}"));
+
+    let mut summary = format!("spectrogram {}x{}", img.width(), img.height());
+    if let Some(out) = &out_resolved {
+        if let Err(err) = cochlea_spectro::write_png(&img, out) {
+            return ToolOutcome::Failed(format!("writing {}: {err}", out.display()));
+        }
+        summary.push_str(&format!(" -> {}", out.display()));
     }
-    ToolOutcome::Ok(format!(
-        "spectrogram -> {out_path} ({}x{})",
-        img.width(),
-        img.height()
+
+    let png = match cochlea_spectro::encode_png(&img) {
+        Ok(bytes) => bytes,
+        Err(err) => return ToolOutcome::Failed(format!("encoding PNG: {err}")),
+    };
+    if png.len() <= INLINE_PNG_CAP {
+        summary.push_str(" (inline)");
+        return ToolOutcome::OkContent(vec![
+            json!({
+                "type": "image",
+                "data": base64_encode(&png),
+                "mimeType": "image/png",
+            }),
+            json!({"type": "text", "text": summary}),
+        ]);
+    }
+    if out_resolved.is_none() {
+        return ToolOutcome::Failed(format!(
+            "image is {} bytes, over the {INLINE_PNG_CAP}-byte inline cap, and no out_path was \
+             given — pass out_path (or sheet: true, which tiles long audio into a denser image)",
+            png.len()
+        ));
+    }
+    summary.push_str(" (too large to inline)");
+    ToolOutcome::Ok(summary)
+}
+
+/// `score_reference`: the self-describing half of the compose loop — the
+/// full authoring reference generated against the live preset bank
+/// (`cochlea_score::authoring_reference`), so an agent that has only this
+/// server can still learn to write scores.
+pub fn score_reference() -> ToolOutcome {
+    ToolOutcome::Ok(cochlea_score::authoring_reference(
+        &cochlea_synth::PatchBank::presets(),
     ))
 }
 
 /// `lint_score`: mirrors `cochlea lint` (`crates/cli/src/main.rs`
 /// `Cmd::Lint`) — errors (not warnings) are what make the tool call
 /// `isError: true`, matching the CLI's exit-1 threshold.
-pub fn lint_score(args: &Value) -> ToolOutcome {
+pub fn lint_score(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     let score_path = match require_str(args, "score_path") {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    let text = match std::fs::read_to_string(score_path) {
+    let resolved = match ctx.resolve_read(score_path, "score_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let text = match std::fs::read_to_string(&resolved) {
         Ok(text) => text,
         Err(err) => return ToolOutcome::Failed(format!("reading {score_path}: {err}")),
     };
@@ -405,7 +582,7 @@ pub fn lint_score(args: &Value) -> ToolOutcome {
 /// `probe_digest`: the token-cheap sibling of `probe_audio` — a full probe
 /// plus segment timeline, rendered through `cochlea_features::digest_text`
 /// instead of returned as JSON.
-pub fn probe_digest(args: &Value) -> ToolOutcome {
+pub fn probe_digest(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     let audio_path = match require_str(args, "audio_path") {
         Ok(p) => p,
         Err(outcome) => return outcome,
@@ -415,7 +592,11 @@ pub fn probe_digest(args: &Value) -> ToolOutcome {
         Err(outcome) => return outcome,
     };
 
-    let audio = match cochlea_decode::load(Path::new(audio_path)) {
+    let resolved = match ctx.resolve_read(audio_path, "audio_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let audio = match cochlea_decode::load(&resolved) {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
@@ -430,7 +611,7 @@ pub fn probe_digest(args: &Value) -> ToolOutcome {
 /// `audio_diff`: feature-space comparison of two WAVs. A `Different`
 /// verdict is a valid, successful answer — only a real read failure on
 /// either side makes this a tool-level [`ToolOutcome::Failed`].
-pub fn audio_diff(args: &Value) -> ToolOutcome {
+pub fn audio_diff(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     let path_a = match require_str(args, "audio_path_a") {
         Ok(p) => p,
         Err(outcome) => return outcome,
@@ -445,11 +626,19 @@ pub fn audio_diff(args: &Value) -> ToolOutcome {
     };
     let want_json = bool_or(args, "json", false);
 
-    let audio_a = match cochlea_decode::load(Path::new(path_a)) {
+    let resolved_a = match ctx.resolve_read(path_a, "audio_path_a") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let resolved_b = match ctx.resolve_read(path_b, "audio_path_b") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let audio_a = match cochlea_decode::load(&resolved_a) {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {path_a}: {err}")),
     };
-    let audio_b = match cochlea_decode::load(Path::new(path_b)) {
+    let audio_b = match cochlea_decode::load(&resolved_b) {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {path_b}: {err}")),
     };
@@ -481,4 +670,80 @@ pub fn audio_diff(args: &Value) -> ToolOutcome {
         text.push_str(&compare_json);
     }
     ToolOutcome::Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RFC 4648 §10 test vectors.
+    #[test]
+    fn base64_matches_rfc_vectors() {
+        for (input, expected) in [
+            (&b""[..], ""),
+            (b"f", "Zg=="),
+            (b"fo", "Zm8="),
+            (b"foo", "Zm9v"),
+            (b"foob", "Zm9vYg=="),
+            (b"fooba", "Zm9vYmE="),
+            (b"foobar", "Zm9vYmFy"),
+        ] {
+            assert_eq!(base64_encode(input), expected);
+        }
+    }
+
+    /// Confinement: reads and writes outside `--root` are refused before
+    /// any filesystem work; aliased spellings of an inside path pass.
+    #[test]
+    fn tool_ctx_root_confinement() {
+        let dir = std::env::temp_dir().join(format!("cochlea-mcp-root-test-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("inside")).unwrap();
+        std::fs::write(dir.join("inside/a.wav"), b"x").unwrap();
+        std::fs::write(dir.join("outside.wav"), b"x").unwrap();
+
+        let ctx = ToolCtx {
+            root: Some(dir.join("inside").canonicalize().unwrap()),
+        };
+
+        let inside = dir.join("inside/a.wav");
+        assert!(ctx.resolve_read(inside.to_str().unwrap(), "p").is_ok());
+        // A dot-dot spelling of the same inside file still resolves fine.
+        let dotted = dir.join("inside/../inside/a.wav");
+        assert!(ctx.resolve_read(dotted.to_str().unwrap(), "p").is_ok());
+
+        let outside = dir.join("outside.wav");
+        match ctx.resolve_read(outside.to_str().unwrap(), "p") {
+            Err(ToolOutcome::InvalidParams(msg)) => {
+                assert!(msg.contains("--root"), "{msg}");
+            }
+            _ => panic!("outside read must be refused as InvalidParams"),
+        }
+        // Escape-by-dot-dot on a write is refused too.
+        let escape = dir.join("inside/../escape.png");
+        match ctx.resolve_write(escape.to_str().unwrap(), "p") {
+            Err(ToolOutcome::InvalidParams(msg)) => {
+                assert!(msg.contains("--root"), "{msg}");
+            }
+            _ => panic!("outside write must be refused as InvalidParams"),
+        }
+        // Writes to a not-yet-existing file inside the root are fine.
+        let new_inside = dir.join("inside/new.png");
+        assert!(ctx.resolve_write(new_inside.to_str().unwrap(), "p").is_ok());
+    }
+
+    /// Unconfined (no --root): alias detection still canonicalizes, so
+    /// `./x` and `x` count as the same file.
+    #[test]
+    fn alias_detection_is_canonical_not_string_equality() {
+        let dir = std::env::temp_dir().join(format!("cochlea-mcp-alias-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.ron");
+        std::fs::write(&f, b"x").unwrap();
+
+        let ctx = ToolCtx::default();
+        let read = ctx.resolve_read(f.to_str().unwrap(), "p").unwrap();
+        let aliased = dir.join(".").join("s.ron");
+        let write = ctx.resolve_write(aliased.to_str().unwrap(), "p").unwrap();
+        assert_eq!(read, write, "aliased spellings must resolve equal");
+    }
 }

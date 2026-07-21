@@ -85,7 +85,22 @@ fn render_probe_spectrogram_round_trip() {
     );
     assert_eq!(response["result"]["isError"], false, "{response}");
     assert!(std::path::Path::new(&png).exists());
-    assert!(tool_text(&response).contains(&png));
+    // The image comes back inline as MCP image content (content[0]) with
+    // the text summary after it — a client with no filesystem access gets
+    // to look at the audio directly. The base64 payload must decode-match
+    // the PNG on disk byte-for-byte (same encoder).
+    let blocks = response["result"]["content"]
+        .as_array()
+        .expect("content array");
+    assert_eq!(blocks[0]["type"], "image", "{response}");
+    assert_eq!(blocks[0]["mimeType"], "image/png", "{response}");
+    let b64 = blocks[0]["data"].as_str().expect("base64 image data");
+    assert!(!b64.is_empty() && b64.len().is_multiple_of(4));
+    assert_eq!(blocks[1]["type"], "text", "{response}");
+    assert!(
+        blocks[1]["text"].as_str().unwrap().contains("inline"),
+        "{response}"
+    );
 
     let sheet = tmp_path("first_light_sheet.png");
     let response = call_tool(
@@ -96,6 +111,15 @@ fn render_probe_spectrogram_round_trip() {
     );
     assert_eq!(response["result"]["isError"], false, "{response}");
     assert!(std::path::Path::new(&sheet).exists());
+
+    // out_path is optional now: an inline-only call still returns the
+    // image.
+    let response = call_tool(&server, 41, "spectrogram", json!({"audio_path": wav}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["content"][0]["type"], "image",
+        "{response}"
+    );
 
     // 4. probe_digest on the same file — the token-cheap alternative to
     // probe_audio's full JSON.
@@ -194,14 +218,143 @@ fn out_path_must_not_overwrite_the_input() {
     let response: Value = serde_json::from_str(&line).unwrap();
     assert_eq!(response["error"]["code"], -32602, "{response}");
 
+    // Same guard on spectrogram, against an existing file (path
+    // resolution precedes the alias check, so a nonexistent input fails
+    // as an ordinary read error instead — also correct, differently).
     let request = json!({
         "jsonrpc": "2.0",
         "id": 2,
         "method": "tools/call",
         "params": {"name": "spectrogram",
-                   "arguments": {"audio_path": "x.wav", "out_path": "x.wav"}},
+                   "arguments": {"audio_path": score_path(), "out_path": score_path()}},
     });
     let line = server.handle_line(&request.to_string()).unwrap();
     let response: Value = serde_json::from_str(&line).unwrap();
     assert_eq!(response["error"]["code"], -32602, "{response}");
+}
+
+/// The self-description contract: `score_reference` must (a) exist, (b)
+/// document every preset the live bank actually has, and (c) contain a
+/// worked example that *itself* parses, lints clean, and renders — an
+/// agent that pastes the reference's example must succeed on the first
+/// try, forever.
+#[test]
+fn score_reference_example_actually_renders() {
+    let server = Server::new();
+    let response = call_tool(&server, 1, "score_reference", json!({}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+
+    for preset in cochlea_synth::PatchBank::presets().patch_names() {
+        assert!(
+            text.contains(&format!("`{preset}`")),
+            "reference must document preset {preset}"
+        );
+    }
+    for tool in ["lint_score", "render_score", "probe_audio", "spectrogram"] {
+        assert!(text.contains(tool), "reference must mention {tool}");
+    }
+
+    // Extract the worked example: the last ```ron block.
+    let start = text.rfind("```ron").expect("a worked example block") + "```ron".len();
+    let end = start + text[start..].find("```").expect("closing fence");
+    let example = text[start..end].trim();
+    let score = cochlea_score::Score::from_ron(example)
+        .expect("the reference's worked example must parse");
+    let errors: Vec<_> = score
+        .validate(&cochlea_synth::PatchBank::presets())
+        .into_iter()
+        .filter(|f| f.severity == cochlea_score::Severity::Error)
+        .collect();
+    assert!(errors.is_empty(), "example lint errors: {errors:?}");
+    let rendered = cochlea_render::render(&score).expect("example must render");
+    assert!(rendered.frames() > 0);
+}
+
+/// `--root` confinement, end to end: reads and writes outside the root
+/// come back as JSON-RPC Invalid Params (-32602) before any filesystem
+/// work; the same operations inside the root succeed.
+#[test]
+fn root_confinement_refuses_escapes_end_to_end() {
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("confined-root");
+    std::fs::create_dir_all(&root).unwrap();
+    // A score inside the root, copied from the repo fixture.
+    let inside_score = root.join("first_light.ron");
+    std::fs::copy(score_path(), &inside_score).unwrap();
+
+    let server = Server::with_root(&root).expect("root exists");
+
+    // Reading the repo fixture (outside the root) is refused.
+    let response = call_tool(
+        &server,
+        1,
+        "lint_score",
+        json!({"score_path": score_path()}),
+    );
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--root"),
+        "{response}"
+    );
+
+    // Writing outside the root (dot-dot escape) is refused.
+    let escape_wav = root.join("../escaped.wav");
+    let response = call_tool(
+        &server,
+        2,
+        "render_score",
+        json!({
+            "score_path": inside_score.to_str().unwrap(),
+            "out_path": escape_wav.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+
+    // The same work entirely inside the root succeeds.
+    let wav = root.join("mix.wav");
+    let response = call_tool(
+        &server,
+        3,
+        "render_score",
+        json!({
+            "score_path": inside_score.to_str().unwrap(),
+            "out_path": wav.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert!(wav.exists());
+}
+
+/// The canonical alias guard: `./score.ron` vs `score.ron` is the same
+/// file, and render_score must refuse to clobber it regardless of
+/// spelling (the old guard was string equality and missed this).
+#[test]
+fn clobber_guard_sees_through_path_aliases() {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("alias-guard");
+    std::fs::create_dir_all(&dir).unwrap();
+    let score = dir.join("s.ron");
+    std::fs::copy(score_path(), &score).unwrap();
+    let aliased = dir.join(".").join("s.ron");
+
+    let server = Server::new();
+    let response = call_tool(
+        &server,
+        1,
+        "render_score",
+        json!({
+            "score_path": score.to_str().unwrap(),
+            "out_path": aliased.to_str().unwrap(),
+        }),
+    );
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("alias"),
+        "{response}"
+    );
 }

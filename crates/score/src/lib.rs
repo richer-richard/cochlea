@@ -24,6 +24,7 @@ mod data;
 mod error;
 mod param;
 mod pitch;
+mod reference;
 mod score;
 mod tempo;
 mod time;
@@ -31,6 +32,7 @@ mod validate;
 mod verify_spec;
 
 pub use data::DATA_VERSION;
+pub use reference::authoring_reference;
 pub use error::ScoreError;
 pub use param::Param;
 pub use pitch::Pitch;
