@@ -4,7 +4,7 @@
 [package]
 name = "cochlea-spectro"
 description = "Mel spectrogram to PNG with viridis LUT, time ruler, and tiled contact sheets"
-readme = "../../README.md"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

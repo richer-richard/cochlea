@@ -1,10 +1,13 @@
 # cochlea-features
 
 Feature extraction over PCM for [cochlea](https://github.com/richer-richard/cochlea):
-one schema-versioned JSON report (v2) — integrated LUFS / momentary max /
+one schema-versioned JSON report (v3) — integrated LUFS / momentary max /
 true peak / loudness range (via [ebur128]), spectral-flux onsets, YIN
-pitch with cents deviation, chroma + Krumhansl-Schmuckler key, tempo/beat
-tracking with a calibrated `clear_rhythm` flag, stereo image
+pitch with cents deviation, chroma + Krumhansl-Schmuckler key, tempo
+(pulse clarity, octave-alternative candidates, windowed stability) and
+rhythm (beat-grid alignment, offbeat ratio, a calibrated `clear_rhythm`)
+as deliberately separate axes — a drum solo changes its rhythm without
+changing its speed, and the report can say so — stereo image
 (width/correlation/balance), structural section boundaries, silence/tail,
 clipping — plus a windowed segment timeline, a compact plain-text digest
 sized for LLM context windows, and a feature-space `compare` API

@@ -25,9 +25,11 @@ of primitives an agent can compose:
 - **Deterministic render** — the same score renders to the same PCM
   bytes every time on the pinned CI target, enforced at the toolchain
   level, not by convention. See [Determinism Contract](./determinism.md).
-- **Feature reports** — loudness, true peak, onsets, pitch, key, tempo,
-  stereo width, structure — as a few kilobytes of JSON, or a
-  sub-kilobyte text digest sized for an LLM's context window.
+- **Feature reports** — loudness, true peak, onsets, pitch, key, tempo
+  (with octave-alternative candidates and stability), rhythm (grid
+  alignment, syncopation, a trustable `clear_rhythm`), stereo width,
+  structure — as a few kilobytes of JSON, or a sub-kilobyte text digest
+  sized for an LLM's context window.
 - **Spectrograms** — a small PNG when a report alone doesn't answer the
   question.
 - **Verify** — an assertion DSL over a render (`true_peak_below`,
@@ -41,6 +43,11 @@ nor `synth`, checked via `cargo tree` in CI).
 
 ## Where to start
 
+- Writing a score — the RON grammar, every preset and parameter, the
+  verify assertions, a worked example: [Score Format
+  Reference](./score-format.md). The same text is served in-band by
+  `cochlea reference` and the MCP `score_reference` tool, and a test
+  pins all three to the same generator.
 - Building instruments and scores, or wiring cochlea into a bigger
   system: [Design & API Surface](./plan.md).
 - The determinism contract, and the fundsp/rustfft audits behind it:

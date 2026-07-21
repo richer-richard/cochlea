@@ -7,7 +7,7 @@
 [package]
 name = "cochlea-decode"
 description = "Lossless audio decode (WAV, FLAC) for the cochlea analysis pipeline"
-readme = "../../README.md"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

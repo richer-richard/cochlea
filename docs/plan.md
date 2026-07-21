@@ -322,16 +322,19 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report;
 ```
 
 `Report` (serde, `schema_version: 2` — v1 lacked `loudness.lra`, `tempo`,
-`stereo`, and `structure`):
+`stereo`, and `structure`; v3 split tempo/rhythm — 0.2.0 **Deviation** ledger below applies):
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "source": { "sample_rate": 48000, "channels": 2, "samples": 480000, "duration_ms": 10000.0 },
   "loudness": { "integrated_lufs": -14.2, "momentary_max_lufs": -10.1,
                 "true_peak_dbtp": -1.3, "sample_peak_dbfs": -1.5, "lra": 4.2 },
-  "tempo":    { "bpm": 110.3, "confidence": 0.01, "clear_rhythm": false,
+  "tempo":    { "bpm": 110.3, "confidence": 0.79, "stability": 1.0,
+                "candidates": [ { "bpm": 110.3, "salience": 0.79 }, { "bpm": 55.1, "salience": 0.89 } ],
                 "beat_count": 32, "mean_beat_interval_ms": 545.4 },
+  "rhythm":   { "grid_alignment": 0.98, "offbeat_ratio": 0.56,
+                "onset_rate_per_s": 2.79, "clear_rhythm": true },
   "stereo":   { "width": 0.01, "correlation": 1.0, "balance": -0.0 },
   "structure": { "boundaries_ms": [8000.0], "section_count": 2, "confidence": 0.74 },
   "onsets":   { "count": 17, "times_ms": [...] },
@@ -506,3 +509,29 @@ audio_diff. Hand-rolled protocol, no async runtime; see `docs/mcp.md`.
 
 Each demo = a `.ron` score + a test running render → verify → probe, plus a
 committed spectrogram sentinel.
+
+
+---
+
+## 0.2.0 deviations from this plan (2026-07-21)
+
+- **Tempo/rhythm split (schema v3).** `tempo.confidence` became pulse
+  clarity (normalized autocovariance), `tempo` gained `candidates` and
+  `stability`, and `clear_rhythm` moved to a new grid-based `rhythm`
+  section (`grid_alignment`, `offbeat_ratio`). The v2 confidence sketch
+  above is superseded; the drum-groove demo now asserts
+  `HasClearRhythm(true)`.
+- **Verify additions**: `GridAlignmentAtLeast`, `BrightnessRises`/
+  `BrightnessFalls` (render-side sweep verification over the stem's
+  spectral centroid — the output-side companion to `Monotone`, which
+  remains authored-curve-only by design).
+- **Synth**: eight presets (`kick`, `snare` added); `chord_pad` is
+  stereo (±0.35 constant-power saw spread).
+- **Self-describing reference**: `cochlea_score::authoring_reference`
+  feeds `cochlea reference`, the MCP `score_reference` tool, and the
+  book's Score Format page, pinned together by tests.
+- **MCP**: seven tools; inline image content for spectrograms
+  (`out_path` optional); `--root` confinement; canonical-path clobber
+  guards.
+- **Structure detection** computes a banded similarity matrix with a
+  deterministic frame-count cap (the O(n²) full matrix is gone).

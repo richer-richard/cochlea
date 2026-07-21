@@ -1,7 +1,7 @@
 [package]
 name = "cochlea"
 description = "Headless audio engine for agents: render, probe, diff, lint, spectro"
-readme = "../../README.md"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

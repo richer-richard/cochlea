@@ -246,3 +246,29 @@ fn lint_fails_on_a_broken_score() {
         .unwrap();
     assert_eq!(status.code(), Some(1), "lint exits 1 on errors");
 }
+
+/// The book's Score Format page (`docs/score-format.md`) is the generated
+/// authoring reference, verbatim — the same text `cochlea reference` and
+/// the MCP `score_reference` tool serve. This test pins the file to the
+/// generator: run with `COCHLEA_BLESS=1` to rewrite it after a deliberate
+/// reference change; without, drift fails the build (same contract as the
+/// spectrogram sentinels).
+#[test]
+fn book_score_format_page_matches_the_generated_reference() {
+    let path = format!(
+        "{}/../../docs/score-format.md",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let generated =
+        cochlea_score::authoring_reference(&cochlea_synth::PatchBank::presets());
+    if std::env::var("COCHLEA_BLESS").is_ok() {
+        std::fs::write(&path, &generated).unwrap();
+        return;
+    }
+    let committed = std::fs::read_to_string(&path)
+        .expect("docs/score-format.md exists (COCHLEA_BLESS=1 writes it)");
+    assert_eq!(
+        committed, generated,
+        "docs/score-format.md is stale — COCHLEA_BLESS=1 cargo test -p cochlea --test demos re-blesses it"
+    );
+}

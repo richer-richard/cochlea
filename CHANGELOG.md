@@ -4,7 +4,94 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
-## [Unreleased]
+## [0.2.0] — 2026-07-21
+
+> **Versioning note, honestly stated.** The crates published to crates.io
+> as `0.1.0` on 2026-07-10 were built from a tree that already contained
+> the entire "agent read stack" below — the workspace was published
+> mid-cycle without a version bump, so the published `0.1.0` does not
+> match this changelog's `0.1.0` entry. `0.2.0` is the first release
+> where the version number, the tag, and this changelog agree. Sorry;
+> won't happen again (releases now cut from a tagged, changelog-matched
+> commit only).
+
+### Changed — the tempo/rhythm split (Report schema v3)
+
+Tempo (speed) and rhythm (pattern) are separate axes that change
+independently — a drum solo holds a steady pulse while its pattern turns
+confusing — and are now separate detectors and report sections:
+
+- **`tempo.confidence` is now pulse clarity** — mean-removed,
+  length-unbiased normalized autocorrelation — replacing the v2
+  mass-fraction score, which structurally punished music for carrying
+  several metrical levels at once (the `drum_groove` demo read 0.01
+  despite a spot-on BPM; it now reads 0.79). Not comparable to v2 values.
+- **`tempo.candidates`**: the winner plus the strongest distinct octave
+  alternatives with saliences — metrical ambiguity surfaced as data for
+  the caller to weigh, instead of a coin flip hidden behind the prior.
+- **`tempo.stability`**: windowed tempo agreement (mod octave) — the
+  axis that separates "the rhythm got confusing" from "the speed moved".
+- **New top-level `rhythm` section** (`cochlea_features::RhythmReport`):
+  `grid_alignment` (fraction of onsets on the beat-subdivision grid),
+  `offbeat_ratio` (syncopation as a number), `onset_rate_per_s`, and the
+  grid-based **`clear_rhythm`** that replaces the old confidence rule
+  (moved here from `tempo`).
+- Tempo with fewer than two detected onsets is now honestly `null` — a
+  sustained tone's window-sliding flux ripple is genuinely periodic and
+  used to read confidence 0.99.
+- The Ellis beat-DP envelope is normalized to unit std with the penalty
+  rescaled accordingly; the unnormalized envelope made the period
+  penalty negligible, so the "beat grid" snapped to every onset.
+- Robustness, measured (`crates/features/tests/rhythm.rs`): ±10 ms
+  humanized timing jitter keeps the exact BPM and `clear_rhythm`;
+  ±20–30 ms octave-folds the BPM but keeps alignment 1.0 and
+  `clear_rhythm`; a dropped plus an extra hit in 22 changes nothing;
+  uniformly random onsets are rejected on two independent gates.
+- `CompareReport` schema v2: `rhythm` delta section; `tempo` delta
+  carries `stability_delta`.
+
+### Added
+
+- **Verify**: `GridAlignmentAtLeast(min)`, and the render-side sweep
+  checks `BrightnessRises`/`BrightnessFalls(track, from, to, min_ratio)`
+  — `Monotone` deliberately validates only the *authored* automation
+  curve, so nothing previously verified a sweep audibly happened in the
+  output; these listen to the stem's spectral centroid (new public
+  `cochlea_features::spectral_centroid_curve`). Builder forms:
+  `grid_alignment_at_least`, `brightness_rises`, `brightness_falls`.
+- **Synth**: `kick` (pitch-drop sine) and `snare` (tonal body +
+  counter-RNG noise burst) presets — eight total; `chord_pad` is now
+  genuinely stereo (detuned saws pan ±0.35, constant-power).
+  `drum_groove` uses the real kit, pans hats/snare via the engine's
+  (previously never-exercised) `pan` automation, and asserts
+  `HasClearRhythm(true)` with grid alignment ≥ 0.9. Golden re-blessed.
+- **Self-describing authoring reference**
+  (`cochlea_score::authoring_reference`): the RON grammar, the live
+  preset catalog (generated from the registry, cannot go stale), every
+  verify assertion, and a worked example that the test suite parses and
+  renders. Served by the new `cochlea reference` subcommand, the new
+  `score_reference` MCP tool, and the book's Score Format page (all
+  three pinned to one generator by tests).
+- **MCP**: `spectrogram` returns the image inline as MCP image content
+  (base64 PNG, size-capped; `out_path` now optional) — clients without
+  filesystem access get the one-vision-call review. `--root DIR`
+  confinement: every path must canonically resolve inside the root or
+  the call is refused before any filesystem work; the input-clobber
+  guards now compare canonical paths, not strings.
+- `cochlea_features::estimate_tempo_and_rhythm` (one shared analysis
+  pass) and `cochlea_spectro::encode_png` (PNG to memory).
+
+### Fixed
+
+- Structure detection computes a *banded* self-similarity matrix — the
+  novelty kernel never reads beyond ±16 frames, so the full O(n²) matrix
+  (~415 MB for two hours of audio) was almost entirely waste — plus a
+  deterministic frame-count cap; the old 1 ms `frame_ms` floor never
+  actually bounded long files, despite its comment claiming so.
+- `UnknownInstrument` errors list the bank's actual patch names instead
+  of a hard-coded six-name string.
+
+## [0.1.0-unversioned] — published to crates.io 2026-07-10 (see the 0.2.0 versioning note)
 
 ### Added — the agent read stack (v2, wave 1 + wave 2)
 
