@@ -263,6 +263,11 @@ fn book_score_format_page_matches_the_generated_reference() {
     }
     let committed = std::fs::read_to_string(&path)
         .expect("docs/score-format.md exists (COCHLEA_BLESS=1 writes it)");
+    // Windows checkouts rewrite the committed file to CRLF (git autocrlf on
+    // the CI runner); the comparison is about *content*, so normalize line
+    // endings before comparing — measured as the only Windows CI failure of
+    // the 0.2.0 release run.
+    let committed = committed.replace("\r\n", "\n");
     assert_eq!(
         committed, generated,
         "docs/score-format.md is stale — COCHLEA_BLESS=1 cargo test -p cochlea --test demos re-blesses it"
