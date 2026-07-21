@@ -146,9 +146,10 @@ fn parse_track(data: &[u8], index: u16) -> Result<RawTrack, ScoreError> {
 
         let first = r.u8()?;
         let status = if first & 0x80 != 0 {
-            if first < 0xF0 {
-                running_status = Some(first);
-            }
+            // Channel statuses arm running status; sysex and meta events
+            // *cancel* it (SMF spec) — a data byte after one of those with
+            // no fresh status byte is malformed, not a continuation.
+            running_status = if first < 0xF0 { Some(first) } else { None };
             first
         } else {
             r.rewind(1);

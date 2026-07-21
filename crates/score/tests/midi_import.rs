@@ -205,3 +205,18 @@ fn unsupported_files_error_clearly() {
     cut.truncate(cut.len() - 10);
     assert!(import_midi(&cut, SampleRate(48_000)).is_err());
 }
+
+/// Sysex and meta events cancel running status (SMF spec) — a bare data
+/// byte after a meta event is malformed input, not a continuation of the
+/// last channel message.
+#[test]
+fn meta_events_cancel_running_status() {
+    let mut bytes = header(0, 1, 96);
+    bytes.extend(track(&[
+        (0, vec![0x90, 60, 80]),
+        (0, vec![0xFF, 0x01, 1, b'x']), // text meta
+        (0, vec![62, 80]),              // data bytes with canceled status
+    ]));
+    let err = import_midi(&bytes, SampleRate(48_000)).unwrap_err();
+    assert!(err.to_string().contains("running status"), "{err}");
+}
