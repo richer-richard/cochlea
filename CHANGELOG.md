@@ -6,7 +6,7 @@ versions all crates together.
 
 ## [0.2.0] — 2026-07-21
 
-> **Versioning note, honestly stated.** The crates published to crates.io
+> **Versioning note.** The crates published to crates.io
 > as `0.1.0` on 2026-07-10 were built from a tree that already contained
 > the entire "agent read stack" below — the workspace was published
 > mid-cycle without a version bump, so the published `0.1.0` does not
@@ -36,7 +36,7 @@ confusing — and are now separate detectors and report sections:
   `offbeat_ratio` (syncopation as a number), `onset_rate_per_s`, and the
   grid-based **`clear_rhythm`** that replaces the old confidence rule
   (moved here from `tempo`).
-- Tempo with fewer than two detected onsets is now honestly `null` — a
+- Tempo with fewer than two detected onsets is now `null` — a
   sustained tone's window-sliding flux ripple is genuinely periodic and
   used to read confidence 0.99.
 - The Ellis beat-DP envelope is normalized to unit std with the penalty

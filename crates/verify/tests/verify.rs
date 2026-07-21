@@ -659,7 +659,7 @@ fn verify_report_serializes_with_schema_version_and_stable_kinds() {
 /// first via the features API, then asserted through both the typed
 /// builder and the RON spec form. The default range keeps finding ~120,
 /// so the same assertion fails there. (A range with *no* genuine
-/// periodicity in it — e.g. 200..=300 on this metronome — now honestly
+/// periodicity in it — e.g. 200..=300 on this metronome — now
 /// reports no measurable tempo at all: mean-removed autocovariance is
 /// negative at unarticulated lags, where the old raw autocorrelation
 /// manufactured a tiny positive peak.)

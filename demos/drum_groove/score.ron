@@ -98,8 +98,9 @@ Score(
             // convention — never guessed) that a kick on only 1 and 3 gives
             // the onset envelope its strongest periodicity at the 2-beat
             // (half-tempo) cycle, which the tempo tracker's autocorrelation
-            // locks onto instead of the true 110 BPM beat — a real, honest
-            // octave-error case, fixed here at the composition level rather
+            // locks onto instead of the true 110 BPM beat — a real,
+            // reproducible octave-error case, fixed here at the composition
+            // level rather
             // than by tuning the (already-tested, already-calibrated)
             // detector to this one fixture.
             name: "kick",
@@ -222,8 +223,8 @@ Score(
         // the pad's entrance at bar 5 as a boundary either — the drums'
         // RMS/band-energy dominate the feature vector so heavily that the
         // comparatively quiet pad layering in underneath doesn't move the
-        // self-similarity novelty curve past its adaptive threshold. An
-        // honest reading, not a forced pass.
+        // self-similarity novelty curve past its adaptive threshold — a
+        // measured reading, not a forced pass.
         SectionCount(min: 1, max: 1),
     ],
 

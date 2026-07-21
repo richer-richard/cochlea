@@ -83,7 +83,7 @@ pub(crate) fn decode(path: &Path) -> Result<Audio, DecodeError> {
     // yields zero packets previously fabricated an Audio with
     // channels: 0 / sample_rate: 0 that downstream analyzers quietly
     // rendered as an all-null report. Declared shape + empty samples is an
-    // honest "this file contains no audio frames" instead.
+    // truthful "this file contains no audio frames" instead.
     let sample_rate = codec_params
         .sample_rate
         .ok_or(DecodeError::MissingStreamInfo)?;
@@ -104,7 +104,7 @@ pub(crate) fn decode(path: &Path) -> Result<Audio, DecodeError> {
         }
         // Every error here means the file failed to reconstruct the exact
         // PCM it promises (FLAC is lossless by spec) — unlike a playback
-        // use case, there's no honest "skip the bad packet and keep going"
+        // use case, there's no defensible "skip the bad packet and keep going"
         // for an analysis tool that promises sample-exact decode, so every
         // error is fatal rather than silently dropped.
         let decoded = decoder.decode(&packet)?;

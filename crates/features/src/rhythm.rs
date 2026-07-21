@@ -13,8 +13,8 @@
 //! Method: each consecutive beat-grid interval is split into
 //! [`SUBDIVISIONS_PER_BEAT`] equal subdivisions (16ths at the beat level —
 //! fine enough for hats/ghost notes, coarse enough that random onsets don't
-//! accidentally align; a triplet feel will read a little lower, honestly,
-//! rather than being force-fit). An onset is *aligned* when it falls within
+//! accidentally align; a triplet feel reads a little lower rather than
+//! being force-fit). An onset is *aligned* when it falls within
 //! [`ALIGN_TOL_FRACTION`] of a subdivision interval from the nearest grid
 //! point (floored at [`ALIGN_TOL_MIN_MS`] — the onset detector itself is
 //! only accurate to a few ms, and human timing jitter under ~10 ms reads as
@@ -157,7 +157,7 @@ fn classify_onsets(onset_times_ms: &[f64], beats_ms: &[f64]) -> (usize, usize) {
 /// `t_ms`, if `t_ms` is within tolerance of it; `None` otherwise. The grid
 /// covers `beats_ms[0] - one beat .. beats_ms[last] + one beat`, with each
 /// real beat-to-beat interval subdivided individually (so a DP grid that
-/// flexes with the music keeps its subdivisions honest), and the two
+/// flexes with the music keeps its subdivisions faithful), and the two
 /// extension intervals reusing their adjacent interval's length.
 fn nearest_grid_point(t_ms: f64, beats_ms: &[f64]) -> Option<usize> {
     let first = beats_ms[0];

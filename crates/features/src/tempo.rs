@@ -224,8 +224,8 @@ pub(crate) fn estimate_from_parts(
     // events at all — a sustained tone's window-sliding flux ripple is
     // genuinely periodic and measured pulse clarity 0.99 before this gate
     // — but with fewer than two detected onsets there is no pulse to name
-    // a speed for, so the honest answer is "no tempo", not a confident
-    // BPM of the measurement artifact.
+    // a speed for — the answer is "no tempo", not a confident BPM of the
+    // measurement artifact.
     if onset_report.count < 2 {
         return degenerate_report();
     }

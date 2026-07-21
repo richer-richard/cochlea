@@ -33,7 +33,7 @@ pub enum DecodeError {
     /// The FLAC stream's STREAMINFO didn't declare a sample rate or
     /// channel count. These are what a zero-packet (truncated or
     /// metadata-only) stream falls back to — without them there's no
-    /// honest `Audio` shape to return at all.
+    /// defensible `Audio` shape to return at all.
     #[error("FLAC stream is missing its STREAMINFO sample rate or channel count")]
     MissingStreamInfo,
     /// A decoded packet's sample rate or channel count disagreed with the

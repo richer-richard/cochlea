@@ -272,7 +272,7 @@ cd cochlea && cargo install --path crates/cli`.
   in score RON under `verify:` — `cochlea render score.ron --verify` runs
   them and exits nonzero with a machine-readable JSON failure report.
 
-## Determinism, honestly stated
+## Determinism, precisely scoped
 
 Audio is a fold, not a map: filters and delays carry state, so per-sample
 purity is not the contract. The contract is three tiers:
@@ -311,7 +311,7 @@ fundsp node family, ebur128 internals, rustfft dispatch — lives in
 | Rhythm robustness | click track, ±5/±10 ms human timing jitter | BPM exact, alignment 1.0, `clear_rhythm` holds (clarity 0.77 / 0.51) |
 | Rhythm robustness | click track, ±20/±30 ms jitter | BPM octave-folds to the half tempo (smeared beats make the two-beat lag as clear as one) — but alignment stays 1.0 and `clear_rhythm` holds |
 | Rhythm robustness | one dropped + one extra hit in 22 | BPM and `clear_rhythm` unaffected |
-| Rhythm honesty | uniformly random onset times | alignment 0.57 (vs the 0.7 clear-rhythm bar), pulse clarity 0.10 — rejected on two independent gates |
+| Rhythm false-positive guard | uniformly random onset times | alignment 0.57 (vs the 0.7 clear-rhythm bar), pulse clarity 0.10 — rejected on two independent gates |
 | Tempo vs rhythm | pattern change at constant speed (quarters → dense eighths) | stability stays ≥ 0.75 — the drum-solo case: the *rhythm* changed, the *speed* didn't |
 | Tempo vs rhythm | real speed change (100 → 140 BPM mid-buffer) | stability drops ≤ 0.75 — the axis that separates the two |
 | Structure | two 8 s segments, distinct timbre | boundary within 1.5 s of the true 8.0 s cut |
