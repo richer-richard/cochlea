@@ -32,9 +32,9 @@ impl ProbeOpts {
     }
 }
 
-/// Top-level probe report, `schema_version: 2`. Mirrors the JSON sketch in
-/// `docs/plan.md` (`crates/features`) field-for-field, plus the `v2`
-/// analyzers added after the initial sketch (`tempo`/`stereo`/`structure`,
+/// Top-level probe report, `schema_version: 3`. Mirrors the JSON sketch in
+/// `docs/plan.md` (`crates/features`) field-for-field, plus the analyzers
+/// added since the initial sketch (`tempo`/`stereo`/`structure`/`rhythm`,
 /// and `loudness.lra`) — see [`crate::SCHEMA_VERSION`]'s docs for the
 /// version history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,8 +55,13 @@ pub struct Report {
     pub silence: SilenceReport,
     /// Sample-clamp clipping count and true-peak-over-0dBTP flag.
     pub clipping: ClippingReport,
-    /// Compact tempo/beat-tracking summary. Added in `schema_version: 2`.
+    /// Compact tempo (speed) summary. Added in `schema_version: 2`;
+    /// reshaped (pulse-clarity confidence, candidates, stability) in `3`.
     pub tempo: TempoSummary,
+    /// Rhythm (pattern) analysis: the onsets' relationship to the beat
+    /// grid, including `clear_rhythm`. Added in `schema_version: 3` (in
+    /// `2`, a differently-defined `clear_rhythm` lived under `tempo`).
+    pub rhythm: crate::RhythmReport,
     /// Stereo-image metrics; `None` for non-stereo input. Added in
     /// `schema_version: 2`.
     pub stereo: Option<crate::StereoReport>,
@@ -71,16 +76,19 @@ pub struct Report {
 /// probe JSON for information most callers don't need at that resolution.
 /// Callers that want the full beat grid call
 /// [`crate::estimate_tempo`] directly on the same [`crate::Audio`].
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TempoSummary {
     /// Estimated tempo, BPM. `None` for degenerate/non-rhythmic input.
     pub bpm: Option<f64>,
-    /// Salience of the winning tempo lag, `0.0..=1.0`. See
+    /// Pulse clarity at the winning lag, `0.0..=1.0`. See
     /// [`crate::TempoReport::confidence`] for the exact definition.
     pub confidence: f64,
-    /// Whether the tempo/beat grid is trustworthy as a real, steady pulse.
-    /// See [`crate::TempoReport::clear_rhythm`] for the exact rule.
-    pub clear_rhythm: bool,
+    /// The winning tempo plus the strongest distinct alternatives (octave
+    /// relatives), strongest-first. See [`crate::TempoReport::candidates`].
+    pub candidates: Vec<crate::TempoCandidate>,
+    /// Windowed tempo agreement, `0.0..=1.0`; `None` for buffers too short
+    /// to window. See [`crate::TempoReport::stability`].
+    pub stability: Option<f64>,
     /// `beats_ms.len()` from the full [`crate::TempoReport`] — how many
     /// beats were placed, without embedding the grid itself.
     pub beat_count: usize,

@@ -130,7 +130,10 @@ fn digest_text_snapshot_with_silent_run_collapsing() {
         "cochlea digest: 8.000s  1ch  48000Hz",
         "loudness: integrated=-10.05  momentary_max=-9.71  true_peak=-6.01  lra=3.01",
         "key: A minor (conf 0.68)  pitch: voiced=50%  median=440.0Hz (A4 +0.1c)",
-        "tempo: 126.4bpm (conf 0.00) clear_rhythm=false",
+        // Two isolated events six seconds apart have no tempo — the v3
+        // detector says so instead of the old "126.4bpm (conf 0.00)".
+        "tempo: -",
+        "rhythm: clear=false  grid_align=-  offbeat=-",
         "structure: 1 section",
         "onsets: count=2  rate=0.25/s",
         "silence: leading=0ms  trailing=0ms",

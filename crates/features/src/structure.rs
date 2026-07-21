@@ -6,14 +6,15 @@
 //! "verse" or "chorus" is, just where the music's character changes.
 //!
 //! Pipeline: per-frame (default 1 s) feature vectors — 12-bin chroma +
-//! 3-band spectral energy + RMS, see [`feature_vectors`] — an all-pairs
-//! cosine self-similarity matrix (see [`similarity_matrix`]) — a
-//! Gaussian-tapered checkerboard kernel convolved along the matrix
-//! diagonal (Foote's novelty curve: high where "before" and "after" a
-//! point look different from each other but each side looks internally
-//! consistent; see [`novelty_curve`]) — adaptive-threshold peak-picking
-//! with a minimum inter-boundary gap, capped at `max_sections - 1`
-//! boundaries keeping the strongest (see [`pick_boundaries`]).
+//! 3-band spectral energy + RMS, see [`feature_vectors`] — a *banded*
+//! cosine self-similarity matrix (only pairs the kernel can reach are
+//! computed; see [`BandedSimilarity`]) — a Gaussian-tapered checkerboard
+//! kernel convolved along the matrix diagonal (Foote's novelty curve: high
+//! where "before" and "after" a point look different from each other but
+//! each side looks internally consistent; see [`novelty_curve`]) —
+//! adaptive-threshold peak-picking with a minimum inter-boundary gap,
+//! capped at `max_sections - 1` boundaries keeping the strongest (see
+//! [`pick_boundaries`]).
 //!
 //! Self-contained: this module reimplements its own small STFT-bucketing
 //! and adaptive-threshold-peak-picking helpers (mirroring `key`'s chroma
@@ -66,6 +67,12 @@ const KERNEL_SIGMA: f64 = 4.0;
 /// cluster of adjacent peaks around one real transition as several
 /// separate sections.
 const MIN_BOUNDARY_GAP_S: f64 = 4.0;
+/// Hard cap on the analysis frame count: when `frame_ms` would produce more
+/// frames than this, the effective frame length grows (deterministically)
+/// until it fits. Song sections live at second-to-minute scale, so ~50k
+/// frames covers 13+ hours at the default 1 s grid — the cap only ever
+/// engages on adversarially tiny `frame_ms` against long files.
+const MAX_FRAMES: usize = 50_000;
 /// Adaptive novelty threshold: `median + NOVELTY_THRESHOLD_SCALE * MAD`.
 /// Tuned empirically against this module's A/B and A/B/A fixtures (see
 /// `tests/structure.rs`).
@@ -77,7 +84,9 @@ const NOVELTY_THRESHOLD_SCALE: f64 = 1.5;
 pub struct StructureOpts {
     /// Frame length for the self-similarity analysis, milliseconds.
     /// Default `1000.0` — beat-agnostic, one frame per second of
-    /// programme.
+    /// programme. The effective frame length grows (deterministically)
+    /// when this would exceed `MAX_FRAMES` analysis frames for the input
+    /// — see [`detect_structure`].
     pub frame_ms: f64,
     /// Maximum sections to report (`boundaries_ms.len() + 1` for
     /// non-empty audio); the strongest `max_sections - 1` novelty peaks
@@ -173,10 +182,11 @@ fn one_section_report() -> StructureReport {
 pub fn detect_structure(audio: &Audio, opts: &StructureOpts) -> StructureReport {
     let mono = audio.mono();
     // Same guard shape as `segment_timeline`'s window_ms: NaN slips past a
-    // `<= 0.0` check (IEEE 754 comparisons with NaN are all false), then
-    // saturates to a 1-sample frame and the O(n²) similarity matrix
-    // explodes toward vec![vec![_; len]; len] — terabytes for real audio.
-    // The 1 ms floor closes the tiny-positive route to the same blowup.
+    // `<= 0.0` check (IEEE 754 comparisons with NaN are all false) and
+    // would then saturate to a 1-sample frame; the 1 ms floor rejects the
+    // sub-millisecond route to a degenerate grid. Note this floor alone
+    // does NOT bound the frame count for long files — MAX_FRAMES below
+    // does that.
     if mono.is_empty()
         || audio.sample_rate == 0
         || !opts.frame_ms.is_finite()
@@ -186,18 +196,27 @@ pub fn detect_structure(audio: &Audio, opts: &StructureOpts) -> StructureReport 
     }
 
     let sample_rate = audio.sample_rate;
-    let frame_len = ((opts.frame_ms / 1000.0 * f64::from(sample_rate)).round() as usize).max(1);
+    let requested_len =
+        ((opts.frame_ms / 1000.0 * f64::from(sample_rate)).round() as usize).max(1);
+    // Cap the frame count: even with the banded similarity below (linear in
+    // frame count), millions of 1 ms frames of a long file would still cost
+    // minutes of compute for no analytical benefit at song-section scale.
+    // Deterministic: the cap depends only on the input length.
+    let frame_len = requested_len.max(mono.len().div_ceil(MAX_FRAMES));
     let frame_count = mono.len().div_ceil(frame_len);
+    // Effective frame length in ms — equals opts.frame_ms unless the cap
+    // engaged; all downstream time math uses this, not the requested value.
+    let frame_ms = frame_len as f64 / f64::from(sample_rate) * 1000.0;
 
     if frame_count < 2 * KERNEL_HALF_WIDTH {
         return one_section_report();
     }
 
-    let features = feature_vectors(&mono, sample_rate, frame_len, frame_count, opts.frame_ms);
-    let similarity = similarity_matrix(&features);
+    let features = feature_vectors(&mono, sample_rate, frame_len, frame_count, frame_ms);
+    let similarity = BandedSimilarity::compute(&features, 2 * KERNEL_HALF_WIDTH);
     let novelty = novelty_curve(&similarity, KERNEL_HALF_WIDTH, KERNEL_SIGMA);
 
-    let min_gap_frames = ((MIN_BOUNDARY_GAP_S * 1000.0 / opts.frame_ms).ceil() as usize).max(1);
+    let min_gap_frames = ((MIN_BOUNDARY_GAP_S * 1000.0 / frame_ms).ceil() as usize).max(1);
     let max_boundaries = opts.max_sections.max(1) - 1;
     let picked = pick_boundaries(&novelty, min_gap_frames, max_boundaries);
 
@@ -205,7 +224,7 @@ pub fn detect_structure(audio: &Audio, opts: &StructureOpts) -> StructureReport 
         return one_section_report();
     }
 
-    let boundaries_ms: Vec<f64> = picked.iter().map(|&i| i as f64 * opts.frame_ms).collect();
+    let boundaries_ms: Vec<f64> = picked.iter().map(|&i| i as f64 * frame_ms).collect();
     let confidence = confidence_of(&novelty, &picked);
 
     StructureReport {
@@ -324,33 +343,61 @@ fn bucket_index(t_ms: f64, frame_ms: f64, count: usize) -> usize {
     }
 }
 
-/// All-pairs cosine similarity, `-1.0..=1.0`, clamped defensively (the
-/// formula is bounded there by Cauchy-Schwarz, but summation order can
-/// overshoot by a hair in floating point). `0.0` — a neutral "undefined"
-/// value, not a real similarity — wherever either frame's vector has zero
-/// norm (a fully silent frame has an all-zero feature vector, so cosine
-/// similarity against anything, including itself, is undefined).
-fn similarity_matrix(features: &[[f64; FEATURE_DIMS]]) -> Vec<Vec<f64>> {
-    let n = features.len();
-    let norms: Vec<f64> = features
-        .iter()
-        .map(|v| v.iter().map(|x| x * x).sum::<f64>().sqrt())
-        .collect();
+/// Banded cosine self-similarity: only pairs within `band` frames of each
+/// other are computed and stored. The checkerboard kernel in
+/// [`novelty_curve`] never reads a pair further apart than `2 *
+/// KERNEL_HALF_WIDTH - 1` frames, so the full all-pairs matrix — O(n²)
+/// memory and time, ~415 MB for a two-hour file at the default 1 s grid —
+/// was almost entirely wasted work; this is O(n·band) for identical
+/// results.
+///
+/// Values are `-1.0..=1.0`, clamped defensively (the formula is bounded
+/// there by Cauchy-Schwarz, but summation order can overshoot by a hair in
+/// floating point). `0.0` — a neutral "undefined" value, not a real
+/// similarity — wherever either frame's vector has zero norm (a fully
+/// silent frame has an all-zero feature vector, so cosine similarity
+/// against anything, including itself, is undefined).
+struct BandedSimilarity {
+    n: usize,
+    band: usize,
+    /// `values[i * (band + 1) + d]` = sim(i, i + d), for `d <= band` and
+    /// `i + d < n`; slots past the end of the buffer stay `0.0` (unread).
+    values: Vec<f64>,
+}
 
-    let mut sim = vec![vec![0.0f64; n]; n];
-    for i in 0..n {
-        for j in 0..n {
-            if norms[i] > 0.0 && norms[j] > 0.0 {
-                let dot: f64 = features[i]
-                    .iter()
-                    .zip(features[j].iter())
-                    .map(|(a, b)| a * b)
-                    .sum();
-                sim[i][j] = (dot / (norms[i] * norms[j])).clamp(-1.0, 1.0);
+impl BandedSimilarity {
+    fn compute(features: &[[f64; FEATURE_DIMS]], band: usize) -> Self {
+        let n = features.len();
+        let norms: Vec<f64> = features
+            .iter()
+            .map(|v| v.iter().map(|x| x * x).sum::<f64>().sqrt())
+            .collect();
+
+        let mut values = vec![0.0f64; n * (band + 1)];
+        for i in 0..n {
+            for d in 0..=band.min(n - 1 - i) {
+                let j = i + d;
+                if norms[i] > 0.0 && norms[j] > 0.0 {
+                    let dot: f64 = features[i]
+                        .iter()
+                        .zip(features[j].iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    values[i * (band + 1) + d] =
+                        (dot / (norms[i] * norms[j])).clamp(-1.0, 1.0);
+                }
             }
         }
+        Self { n, band, values }
     }
-    sim
+
+    /// sim(a, b) — symmetric; caller must stay within the band (the
+    /// novelty kernel does by construction; debug-asserted here).
+    fn get(&self, a: usize, b: usize) -> f64 {
+        let (lo, d) = if a <= b { (a, b - a) } else { (b, a - b) };
+        debug_assert!(d <= self.band, "read outside the similarity band");
+        self.values[lo * (self.band + 1) + d]
+    }
 }
 
 /// Foote's novelty curve: a Gaussian-tapered checkerboard kernel convolved
@@ -364,8 +411,8 @@ fn similarity_matrix(features: &[[f64; FEATURE_DIMS]]) -> Vec<Vec<f64>> {
 /// outside `0..sim.len()` are skipped rather than padded, which naturally
 /// (and correctly) tapers the achievable novelty near the very start/end
 /// of the buffer, where a full kernel window doesn't fit.
-fn novelty_curve(sim: &[Vec<f64>], half_width: usize, sigma: f64) -> Vec<f64> {
-    let n = sim.len();
+fn novelty_curve(sim: &BandedSimilarity, half_width: usize, sigma: f64) -> Vec<f64> {
+    let n = sim.n;
     let half = half_width as i64;
 
     (0..n)
@@ -380,7 +427,7 @@ fn novelty_curve(sim: &[Vec<f64>], half_width: usize, sigma: f64) -> Vec<f64> {
                     }
                     let sign = if (u >= 0) == (v >= 0) { 1.0 } else { -1.0 };
                     let gaussian = libm::exp(-((u * u + v * v) as f64) / (2.0 * sigma * sigma));
-                    score += sign * gaussian * sim[a as usize][b as usize];
+                    score += sign * gaussian * sim.get(a as usize, b as usize);
                 }
             }
             score

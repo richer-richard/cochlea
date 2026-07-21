@@ -1,7 +1,8 @@
-//! Integration tests for `schema_version: 2`'s new `Report` fields
-//! (`tempo`, `stereo`, `structure`, `loudness.lra`) and their `compare`
-//! deltas. Fixtures are synthesized here with `libm`, never a synth
-//! dependency — mirrors `tests/probe.rs`'s style.
+//! Integration tests for the `Report` schema's newer fields (`tempo`,
+//! `rhythm`, `stereo`, `structure`, `loudness.lra` — added in schema
+//! versions 2 and 3) and their `compare` deltas. Fixtures are synthesized
+//! here with `libm`, never a synth dependency — mirrors `tests/probe.rs`'s
+//! style.
 
 use cochlea_features::{Analysis, Audio, ProbeOpts, SegmentOpts, compare, probe, segment_timeline};
 
@@ -23,10 +24,10 @@ fn stereo_audio(left: Vec<f32>, right: Vec<f32>, sample_rate: u32) -> Audio {
 }
 
 #[test]
-fn schema_version_is_2() {
+fn schema_version_is_3() {
     let audio = mono_audio(sine_wave(440.0, 0.5, 1.0, SR), SR);
     let report = probe(&audio, &ProbeOpts::default());
-    assert_eq!(report.schema_version, 2);
+    assert_eq!(report.schema_version, 3);
 }
 
 #[test]
@@ -40,7 +41,12 @@ fn report_tempo_matches_the_standalone_estimator_on_a_click_track() {
         .bpm
         .expect("a regular click track should have a detected tempo");
     assert!((bpm - 120.0).abs() <= 1.0, "bpm = {bpm}");
-    assert!(report.tempo.clear_rhythm, "{:?}", report.tempo);
+    assert!(report.rhythm.clear_rhythm, "{:?}", report.rhythm);
+    assert!(
+        !report.tempo.candidates.is_empty(),
+        "{:?}",
+        report.tempo
+    );
 }
 
 #[test]
@@ -112,8 +118,9 @@ fn compare_surfaces_tempo_stereo_structure_deltas() {
     assert_eq!(result.structure.section_count_delta, 1);
     // Both mono inputs: no stereo delta.
     assert!(result.stereo.is_none());
-    // tempo/loudness deltas exist as fields regardless of value — just
-    // confirm they're wired through and don't panic to compute.
+    // tempo/rhythm/loudness deltas exist as fields regardless of value —
+    // just confirm they're wired through and don't panic to compute.
     let _ = result.tempo.bpm_delta;
+    let _ = result.rhythm.grid_alignment_delta;
     let _ = result.loudness.lra_delta;
 }

@@ -13,7 +13,12 @@ use crate::segments::SegmentTimeline;
 use crate::util::{max_of, mode_name};
 
 /// Schema version of [`CompareReport`]'s JSON form.
-pub const COMPARE_SCHEMA_VERSION: u32 = 1;
+///
+/// - `1`: initial shape.
+/// - `2`: `clear_rhythm_changed` moved from `tempo` to the new `rhythm`
+///   delta (tracking the probe report's own v3 tempo/rhythm split), which
+///   also carries `grid_alignment_delta`; `tempo` gained `stability_delta`.
+pub const COMPARE_SCHEMA_VERSION: u32 = 2;
 
 /// Tier-2 equivalence tolerance for integrated LUFS, LU (the workspace's
 /// three-tier determinism contract, `docs/determinism.md`).
@@ -61,6 +66,9 @@ pub struct CompareReport {
     /// (the workspace's Tier-2 contract, `docs/determinism.md`, doesn't
     /// define a tempo tolerance).
     pub tempo: TempoDelta,
+    /// Rhythm (grid-alignment) deltas. Informational, same reasoning as
+    /// `tempo`.
+    pub rhythm: RhythmDelta,
     /// Stereo-image deltas; `None` unless both sides are stereo.
     /// Informational, same reasoning as `tempo`.
     pub stereo: Option<StereoDelta>,
@@ -88,8 +96,18 @@ pub struct LoudnessDelta {
 pub struct TempoDelta {
     /// `b.bpm - a.bpm`. `None` unless both sides have a detected tempo.
     pub bpm_delta: Option<f64>,
+    /// `b.stability - a.stability`. `None` unless both sides measured one.
+    pub stability_delta: Option<f64>,
+}
+
+/// Rhythm (grid-alignment) deltas, `b` relative to `a`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RhythmDelta {
     /// Whether `clear_rhythm` differs between `a` and `b`.
     pub clear_rhythm_changed: bool,
+    /// `b.grid_alignment - a.grid_alignment`. `None` unless both sides
+    /// have a usable beat grid.
+    pub grid_alignment_delta: Option<f64>,
 }
 
 /// Stereo-image deltas, `b - a`. Only produced when both sides are stereo
@@ -236,6 +254,7 @@ pub fn compare_with_identity(a: Analysis, b: Analysis, byte_identical: bool) -> 
     let key = key_delta(a.report, b.report);
     let segments = segment_rms_delta(a.timeline, b.timeline);
     let tempo = tempo_delta(a.report, b.report);
+    let rhythm = rhythm_delta(a.report, b.report);
     let stereo = stereo_delta(a.report, b.report);
     let structure = StructureDelta {
         section_count_delta: b.report.structure.section_count as i64
@@ -257,6 +276,7 @@ pub fn compare_with_identity(a: Analysis, b: Analysis, byte_identical: bool) -> 
         key,
         segments,
         tempo,
+        rhythm,
         stereo,
         structure,
         verdict,
@@ -306,7 +326,14 @@ fn key_delta(a: &Report, b: &Report) -> KeyDelta {
 fn tempo_delta(a: &Report, b: &Report) -> TempoDelta {
     TempoDelta {
         bpm_delta: delta_opt(a.tempo.bpm, b.tempo.bpm),
-        clear_rhythm_changed: a.tempo.clear_rhythm != b.tempo.clear_rhythm,
+        stability_delta: delta_opt(a.tempo.stability, b.tempo.stability),
+    }
+}
+
+fn rhythm_delta(a: &Report, b: &Report) -> RhythmDelta {
+    RhythmDelta {
+        clear_rhythm_changed: a.rhythm.clear_rhythm != b.rhythm.clear_rhythm,
+        grid_alignment_delta: delta_opt(a.rhythm.grid_alignment, b.rhythm.grid_alignment),
     }
 }
 
@@ -509,9 +536,16 @@ pub fn compare_text(r: &CompareReport) -> String {
     }
     writeln!(
         out,
-        "tempo        bpm {}  clear_rhythm_changed={}",
+        "tempo        bpm {}  stability {}",
         fmt_delta(r.tempo.bpm_delta, "bpm"),
-        r.tempo.clear_rhythm_changed,
+        fmt_delta(r.tempo.stability_delta, ""),
+    )
+    .expect("String write is infallible");
+    writeln!(
+        out,
+        "rhythm       clear_rhythm_changed={}  grid_align {}",
+        r.rhythm.clear_rhythm_changed,
+        fmt_delta(r.rhythm.grid_alignment_delta, ""),
     )
     .expect("String write is infallible");
     match &r.stereo {

@@ -1,4 +1,6 @@
-//! Integration tests for `cochlea_features::estimate_tempo`. Fixtures are
+//! Integration tests for `cochlea_features::estimate_tempo` — the *speed*
+//! half of the tempo/rhythm split (pattern-level judgments, including
+//! `clear_rhythm`, are `tests/rhythm.rs`'s territory). Fixtures are
 //! synthesized here with `libm`, never a synth dependency — mirrors
 //! `tests/probe.rs`'s style.
 
@@ -32,10 +34,14 @@ fn click_track_120_bpm_detected_with_tight_beat_grid() {
         .bpm
         .expect("a regular click track should have a detected tempo");
     assert!((bpm - 120.0).abs() <= 1.0, "bpm = {bpm}");
+    // Pulse clarity: a perfectly periodic click envelope should score high
+    // in normalized-autocorrelation units (calibration:
+    // `tests/rhythm.rs::calibration_readings`).
     assert!(
-        report.clear_rhythm,
+        report.confidence >= 0.3,
         "confidence={} beats_ms={:?}",
-        report.confidence, report.beats_ms
+        report.confidence,
+        report.beats_ms
     );
 
     assert!(
@@ -68,17 +74,62 @@ fn click_track_90_bpm_detected_without_octave_error() {
         (bpm - 180.0).abs() > 5.0,
         "bpm {bpm} looks like an octave error onto 180"
     );
-    assert!(report.clear_rhythm, "{:?}", report);
 }
 
+/// The winner is always `candidates[0]`, and a steady click track's octave
+/// relatives should surface as the alternatives — the "pass the variations,
+/// let the caller decide" contract.
 #[test]
-fn steady_tone_has_no_clear_rhythm() {
+fn candidates_lead_with_the_winner_and_surface_octave_alternatives() {
+    let audio = mono_audio(click_track_at_bpm(120.0, 12.0, SR), SR);
+    let report = estimate_tempo(&audio, &TempoOpts::default());
+    let bpm = report.bpm.expect("click track has a tempo");
+
+    assert!(!report.candidates.is_empty());
+    assert!(
+        (report.candidates[0].bpm - bpm).abs() < 1e-9,
+        "candidates[0] must be the winner: {:?}",
+        report.candidates
+    );
+    for c in &report.candidates {
+        assert!(
+            (0.0..=1.0).contains(&c.salience),
+            "salience out of range: {:?}",
+            c
+        );
+    }
+    // At least one alternative should be an octave relative of the winner
+    // (60 or 240 for a 120 BPM track).
+    assert!(
+        report.candidates.iter().skip(1).any(|c| {
+            let ratio = c.bpm / bpm;
+            (ratio - 0.5).abs() < 0.05 || (ratio - 2.0).abs() < 0.1
+        }),
+        "expected an octave alternative among {:?}",
+        report.candidates
+    );
+}
+
+/// A steady click track's tempo never changes — windowed stability should
+/// read 1.0. (The changing-tempo counterpart lives in `tests/rhythm.rs`.)
+#[test]
+fn steady_click_track_has_full_stability() {
+    let audio = mono_audio(click_track_at_bpm(120.0, 12.0, SR), SR);
+    let report = estimate_tempo(&audio, &TempoOpts::default());
+    let stability = report.stability.expect("12 s is long enough to window");
+    assert!(stability >= 0.99, "stability = {stability}");
+}
+
+/// A sustained tone's residual flux ripple is aperiodic — pulse clarity
+/// must read near zero (the old mass-fraction confidence read low here
+/// too, but for the wrong reason; see the tempo module docs).
+#[test]
+fn steady_tone_has_near_zero_pulse_clarity() {
     let audio = mono_audio(sine_wave(440.0, 0.5, 8.0, SR), SR);
     let report = estimate_tempo(&audio, &TempoOpts::default());
     assert!(
-        !report.clear_rhythm,
-        "a sustained tone has no attacks and shouldn't read as a clear rhythm: {:?}",
-        report
+        report.confidence < 0.1,
+        "a sustained tone has no pulse: {report:?}"
     );
 }
 
@@ -88,7 +139,8 @@ fn silence_is_degenerate_not_a_false_rhythm() {
     let report = estimate_tempo(&audio, &TempoOpts::default());
     assert_eq!(report.bpm, None);
     assert_eq!(report.confidence, 0.0);
-    assert!(!report.clear_rhythm);
+    assert!(report.candidates.is_empty());
+    assert_eq!(report.stability, None);
     assert!(report.beats_ms.is_empty());
 }
 
@@ -98,7 +150,7 @@ fn empty_audio_never_panics_and_reports_undefined_tempo() {
     let report = estimate_tempo(&audio, &TempoOpts::default());
     assert_eq!(report.bpm, None);
     assert_eq!(report.confidence, 0.0);
-    assert!(!report.clear_rhythm);
+    assert!(report.candidates.is_empty());
     assert!(report.beats_ms.is_empty());
 }
 

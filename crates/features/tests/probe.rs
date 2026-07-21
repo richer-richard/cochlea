@@ -213,12 +213,16 @@ fn pure_silence_never_panics_and_reports_undefined_measurements() {
     assert_eq!(report.clipping.clipped_samples, 0);
     assert!(!report.clipping.true_peak_over_0dbtp);
 
-    // v2 fields: degenerate but defined, never panicking.
+    // v2/v3 fields: degenerate but defined, never panicking.
     assert_eq!(report.tempo.bpm, None);
     assert_eq!(report.tempo.confidence, 0.0);
-    assert!(!report.tempo.clear_rhythm);
+    assert!(report.tempo.candidates.is_empty());
+    assert_eq!(report.tempo.stability, None);
     assert_eq!(report.tempo.beat_count, 0);
     assert_eq!(report.tempo.mean_beat_interval_ms, None);
+    assert!(!report.rhythm.clear_rhythm);
+    assert_eq!(report.rhythm.grid_alignment, None);
+    assert_eq!(report.rhythm.offbeat_ratio, None);
     assert!(
         report.stereo.is_none(),
         "mono input should have no stereo report"
@@ -271,7 +275,7 @@ fn wav_round_trip_through_hound() {
     assert_eq!(audio.samples.len(), samples.len());
 
     let report = probe(&audio, &ProbeOpts::default());
-    assert_eq!(report.schema_version, 2);
+    assert_eq!(report.schema_version, 3);
     assert_eq!(report.source.samples, audio.frames());
 }
 
