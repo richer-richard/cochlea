@@ -145,6 +145,7 @@ impl Server {
             "lint_score" => tools::lint_score(&self.ctx, args),
             "probe_digest" => tools::probe_digest(&self.ctx, args),
             "audio_diff" => tools::audio_diff(&self.ctx, args),
+            "import_midi" => tools::import_midi(&self.ctx, args),
             "score_reference" => tools::score_reference(),
             other => return Err((INVALID_PARAMS, format!("unknown tool: {other}"))),
         };

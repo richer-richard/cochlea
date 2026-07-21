@@ -157,23 +157,29 @@ pub(crate) fn render_track(
     stem
 }
 
-/// Sums stems (their stored f32 values) at f64 in fixed track order — the
-/// mix is *defined* as this sum, so `mix == Σ stems` holds byte-for-byte.
-pub(crate) fn sum_stems(stems: &[Vec<f32>], total: u64) -> Vec<f32> {
+/// Sums stems (their stored f32 values) at f64 in fixed track order. The
+/// mix is *defined* as this sum passed through the master stage and
+/// rounded to f32 ([`quantize`]) — for the default (do-nothing) master
+/// that reduces to exactly the pre-master pipeline, so `mix == Σ stems`
+/// holds byte-for-byte as before.
+pub(crate) fn sum_stems_f64(stems: &[Vec<f32>], total: u64) -> Vec<f64> {
     #[expect(clippy::cast_possible_truncation, reason = "capped render length")]
     let len = (total * 2) as usize;
-    let mut mix = vec![0.0f32; len];
+    let mut mix = vec![0.0f64; len];
     for (i, out) in mix.iter_mut().enumerate() {
         let mut acc = 0.0f64;
         for stem in stems {
             acc += f64::from(stem[i]);
         }
-        #[expect(clippy::cast_possible_truncation, reason = "rounding rule 4")]
-        {
-            *out = acc as f32;
-        }
+        *out = acc;
     }
     mix
+}
+
+/// The single f64 → f32 rounding at the end of the bus (rounding rule 4).
+pub(crate) fn quantize(mix: &[f64]) -> Vec<f32> {
+    #[expect(clippy::cast_possible_truncation, reason = "rounding rule 4")]
+    mix.iter().map(|&s| s as f32).collect()
 }
 
 pub(crate) fn render_stems(schedule: &Schedule, score: &Score, parallel: bool) -> Vec<Vec<f32>> {

@@ -15,6 +15,7 @@ Score(
     time_signature: (4, 4),          // optional, default (4, 4)
     tempo: [(tick: 0, bpm: 120.0)],  // tempo map: step changes at ticks
     tracks: [ Track(...), ... ],
+    master: Master(...),             // optional master bus (below)
     verify: [ ... ],                 // optional embedded assertions (below)
 )
 ```
@@ -62,6 +63,27 @@ Auto(param: "cutoff_hz", keys: [
   `Hold`, `EaseIn`, `EaseOut`, `EaseInOut`, `Bezier(x1, y1, x2, y2)`.
 - Automation is control-rate: sampled every 64 samples (~1.3 ms at
   48 kHz). Note timing is sample-accurate.
+
+## Master bus
+
+```ron
+master: Master(
+    gain_db: 3.0,                    // optional, default 0.0 (-40..=24)
+    limiter: Limiter(
+        ceiling_db: -1.0,            // required (-40..=0)
+        lookahead_ms: 5.0,           // optional, default 5.0 (0..=50)
+        release_ms: 50.0,            // optional, default 50.0 (1..=1000)
+    ),
+)
+```
+
+Applied to the f64 stem sum after mixing: gain first, then a brick-wall
+lookahead limiter whose *sample*-peak ceiling holds exactly (inter-sample
+true peaks can read fractionally higher — leave ~1 dB of headroom under a
+`TruePeakBelow` target). This is the tool for hitting loudness targets:
+push with `gain_db`, let the limiter hold the ceiling, and assert both
+with `IntegratedLufs` + `TruePeakBelow`. Omit `master:` entirely for a
+untouched bus; per-track stems are always exported pre-master.
 
 ## Instrument presets
 

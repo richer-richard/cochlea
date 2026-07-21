@@ -113,6 +113,46 @@ impl Audio {
         }
         self.frames() as f64 / f64::from(self.sample_rate) * 1000.0
     }
+
+    /// Cut the `[from_s, to_s)` window as a new buffer — the read path's
+    /// zoom lens (`probe --from/--to`). Frame-exact: each boundary rounds
+    /// to the nearest frame, and the cut is on frame boundaries so channel
+    /// interleaving is preserved. Bounds are clamped to the buffer
+    /// (`from_s` below zero reads as zero, `to_s = None` or past the end
+    /// reads as the end); an inverted or empty window yields an empty
+    /// buffer, not an error. Returns the windowed audio plus the exact
+    /// start offset actually used, milliseconds — callers thread it into
+    /// [`crate::ProbeOpts::with_start_ms`] so the report says where its
+    /// times are anchored.
+    pub fn window(&self, from_s: f64, to_s: Option<f64>) -> (Audio, f64) {
+        let frames = self.frames();
+        let sr = f64::from(self.sample_rate);
+        let to_frame = |s: f64| -> usize {
+            if self.sample_rate == 0 || !s.is_finite() || s <= 0.0 {
+                return 0;
+            }
+            let f = libm::round(s * sr);
+            if f >= frames as f64 {
+                frames
+            } else {
+                f as usize
+            }
+        };
+        let start = to_frame(from_s);
+        let end = to_s.map_or(frames, to_frame).max(start);
+        let channels = self.channels.max(1) as usize;
+        let audio = Audio {
+            samples: self.samples[start * channels..end * channels].to_vec(),
+            channels: self.channels,
+            sample_rate: self.sample_rate,
+        };
+        let start_ms = if self.sample_rate == 0 {
+            0.0
+        } else {
+            start as f64 / sr * 1000.0
+        };
+        (audio, start_ms)
+    }
 }
 
 /// Full-scale magnitude for `bits`-deep signed integer PCM: the divisor

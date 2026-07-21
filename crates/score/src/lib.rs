@@ -22,6 +22,7 @@
 
 mod data;
 mod error;
+mod midi;
 mod param;
 mod pitch;
 mod reference;
@@ -33,10 +34,13 @@ mod verify_spec;
 
 pub use data::DATA_VERSION;
 pub use error::ScoreError;
+pub use midi::{MidiImport, import_midi};
 pub use param::Param;
 pub use pitch::Pitch;
 pub use reference::authoring_reference;
-pub use score::{AutoKey, Automation, EaseSpec, Insert, Instrument, KeyDef, Note, Score, Track};
+pub use score::{
+    AutoKey, Automation, EaseSpec, Insert, Instrument, KeyDef, Limiter, Master, Note, Score, Track,
+};
 pub use tempo::TempoMap;
 pub use time::{Bpm, Dur, Pos, Ppq, SampleRate, Ticks, TimeSignature, Vel, bar};
 pub use validate::{Catalog, InstrumentInfo, LintFinding, ParamInfo, Polyphony, Severity};

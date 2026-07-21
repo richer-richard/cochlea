@@ -18,7 +18,10 @@ use crate::util::{max_of, mode_name};
 /// - `2`: `clear_rhythm_changed` moved from `tempo` to the new `rhythm`
 ///   delta (tracking the probe report's own v3 tempo/rhythm split), which
 ///   also carries `grid_alignment_delta`; `tempo` gained `stability_delta`.
-pub const COMPARE_SCHEMA_VERSION: u32 = 2;
+/// - `3`: `rhythm` gained `grid_changed` (straight-vs-triplet feel change);
+///   new `timbre` delta (MFCC spectral-shape distance) — tracking the
+///   probe report's v4 additions.
+pub const COMPARE_SCHEMA_VERSION: u32 = 3;
 
 /// Tier-2 equivalence tolerance for integrated LUFS, LU (the workspace's
 /// three-tier determinism contract, `docs/determinism.md`).
@@ -69,6 +72,8 @@ pub struct CompareReport {
     /// Rhythm (grid-alignment) deltas. Informational, same reasoning as
     /// `tempo`.
     pub rhythm: RhythmDelta,
+    /// Timbre (MFCC) distance. Informational, same reasoning as `tempo`.
+    pub timbre: TimbreDelta,
     /// Stereo-image deltas; `None` unless both sides are stereo.
     /// Informational, same reasoning as `tempo`.
     pub stereo: Option<StereoDelta>,
@@ -108,6 +113,25 @@ pub struct RhythmDelta {
     /// `b.grid_alignment - a.grid_alignment`. `None` unless both sides
     /// have a usable beat grid.
     pub grid_alignment_delta: Option<f64>,
+    /// Whether the winning subdivision hypothesis (straight vs triplet)
+    /// differs between `a` and `b` — a feel change (straightened or swung),
+    /// distinct from a tightness change. `false` when either side has no
+    /// grid at all (that case already reads as `grid_alignment_delta:
+    /// null`).
+    pub grid_changed: bool,
+}
+
+/// Timbre distance, `b` relative to `a`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TimbreDelta {
+    /// Euclidean distance between the two sides' mean MFCC vectors,
+    /// *excluding `c0`* (`c0` is log-energy, i.e. loudness — already
+    /// covered by the loudness delta — so this number is spectral shape
+    /// only). Same instrument re-rendered measures near `0`; a sine-vs-saw
+    /// swap at matched loudness measures well above it. Unitless, in log
+    /// mel-energy space; useful as an ordering, not an absolute scale.
+    /// `None` unless both sides produced a timbre digest.
+    pub mfcc_distance: Option<f64>,
 }
 
 /// Stereo-image deltas, `b - a`. Only produced when both sides are stereo
@@ -255,6 +279,7 @@ pub fn compare_with_identity(a: Analysis, b: Analysis, byte_identical: bool) -> 
     let segments = segment_rms_delta(a.timeline, b.timeline);
     let tempo = tempo_delta(a.report, b.report);
     let rhythm = rhythm_delta(a.report, b.report);
+    let timbre = timbre_delta(a.report, b.report);
     let stereo = stereo_delta(a.report, b.report);
     let structure = StructureDelta {
         section_count_delta: b.report.structure.section_count as i64
@@ -277,6 +302,7 @@ pub fn compare_with_identity(a: Analysis, b: Analysis, byte_identical: bool) -> 
         segments,
         tempo,
         rhythm,
+        timbre,
         stereo,
         structure,
         verdict,
@@ -331,10 +357,34 @@ fn tempo_delta(a: &Report, b: &Report) -> TempoDelta {
 }
 
 fn rhythm_delta(a: &Report, b: &Report) -> RhythmDelta {
+    let grid_changed = match (a.rhythm.grid, b.rhythm.grid) {
+        (Some(ga), Some(gb)) => ga != gb,
+        _ => false,
+    };
     RhythmDelta {
         clear_rhythm_changed: a.rhythm.clear_rhythm != b.rhythm.clear_rhythm,
         grid_alignment_delta: delta_opt(a.rhythm.grid_alignment, b.rhythm.grid_alignment),
+        grid_changed,
     }
+}
+
+/// Euclidean distance between mean MFCC vectors, skipping `c0` (see
+/// [`TimbreDelta::mfcc_distance`]).
+fn timbre_delta(a: &Report, b: &Report) -> TimbreDelta {
+    let mfcc_distance = match (&a.timbre, &b.timbre) {
+        (Some(ta), Some(tb)) => {
+            let sum_sq: f64 = ta
+                .mfcc_mean
+                .iter()
+                .zip(tb.mfcc_mean.iter())
+                .skip(1)
+                .map(|(&x, &y)| (x - y) * (x - y))
+                .sum();
+            Some(libm::sqrt(sum_sq))
+        }
+        _ => None,
+    };
+    TimbreDelta { mfcc_distance }
 }
 
 fn stereo_delta(a: &Report, b: &Report) -> Option<StereoDelta> {
@@ -543,9 +593,16 @@ pub fn compare_text(r: &CompareReport) -> String {
     .expect("String write is infallible");
     writeln!(
         out,
-        "rhythm       clear_rhythm_changed={}  grid_align {}",
+        "rhythm       clear_rhythm_changed={}  grid_align {}  grid_changed={}",
         r.rhythm.clear_rhythm_changed,
         fmt_delta(r.rhythm.grid_alignment_delta, ""),
+        r.rhythm.grid_changed,
+    )
+    .expect("String write is infallible");
+    writeln!(
+        out,
+        "timbre       mfcc_distance {}",
+        fmt_dash_plain(r.timbre.mfcc_distance),
     )
     .expect("String write is infallible");
     match &r.stereo {
@@ -593,6 +650,15 @@ fn fmt_delta(v: Option<f64>, unit: &str) -> String {
 fn fmt_ms(v: Option<f64>) -> String {
     match v {
         Some(x) => format!("{x:.2} ms"),
+        None => "-".to_string(),
+    }
+}
+
+/// Unsigned undefined-capable formatting — for magnitudes (distances)
+/// where a forced `+` sign would misread as a direction.
+fn fmt_dash_plain(v: Option<f64>) -> String {
+    match v {
+        Some(x) => format!("{x:.2}"),
         None => "-".to_string(),
     }
 }

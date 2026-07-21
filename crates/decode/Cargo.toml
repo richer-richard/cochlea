@@ -1,12 +1,13 @@
-# Lossless decode into the analysis pipeline's `Audio` type: WAV via hound,
-# FLAC via symphonia (pure Rust, MPL-2.0 — no ffmpeg, no system codecs).
-# Depends on cochlea-features only for `Audio` itself; never on score/synth,
-# so `cochlea probe some.flac` stays score-free like the rest of the read
-# path. FLAC is lossless: decoded PCM is bit-exact by spec, so nothing here
-# weakens the determinism contract.
+# Audio decode into the analysis pipeline's `Audio` type: WAV via hound,
+# FLAC/mp3/ogg-vorbis via symphonia (pure Rust, MPL-2.0 — no ffmpeg, no
+# system codecs). Depends on cochlea-features only for `Audio` itself;
+# never on score/synth, so `cochlea probe some.mp3` stays score-free like
+# the rest of the read path. Two contracts: WAV/FLAC decode bit-exact (FLAC
+# is lossless by spec, so nothing weakens the determinism contract); mp3/
+# ogg are analysis input only — reproducible per build, no exactness claim.
 [package]
 name = "cochlea-decode"
-description = "Lossless audio decode (WAV, FLAC) for the cochlea analysis pipeline"
+description = "Audio decode (WAV/FLAC bit-exact; mp3/ogg for analysis) for the cochlea pipeline"
 readme = "README.md"
 version.workspace = true
 edition.workspace = true

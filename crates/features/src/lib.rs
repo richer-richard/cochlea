@@ -17,6 +17,7 @@ mod compare;
 mod digest;
 mod key;
 mod loudness;
+mod melody;
 mod onsets;
 mod pitch;
 mod report;
@@ -27,6 +28,7 @@ mod stereo;
 mod stft;
 mod structure;
 mod tempo;
+mod timbre;
 mod util;
 
 pub use audio::{Audio, AudioError};
@@ -34,15 +36,16 @@ pub use centroid::{CentroidPoint, spectral_centroid_curve};
 pub use compare::{
     Analysis, COMPARE_SCHEMA_VERSION, CompareReport, KeyDelta, KeySummary, LoudnessDelta,
     OnsetMatch, PitchDelta, RhythmDelta, SegmentDelta, StereoDelta, StructureDelta, TempoDelta,
-    Verdict, compare, compare_text, compare_with_identity, samples_identical,
+    TimbreDelta, Verdict, compare, compare_text, compare_with_identity, samples_identical,
 };
 pub use digest::digest_text;
 pub use loudness::loudness_range;
+pub use melody::{MelodyNote, extract_melody};
 pub use report::{
     ClippingReport, KeyReport, LoudnessReport, Mode, OnsetsReport, PitchClass, PitchReport,
     PitchSegment, ProbeOpts, Report, SilenceReport, SourceInfo, TempoSummary,
 };
-pub use rhythm::{RhythmReport, analyze_rhythm};
+pub use rhythm::{GridKind, RhythmReport, analyze_rhythm};
 pub use segments::{
     BandEnergy, SEGMENTS_SCHEMA_VERSION, Segment, SegmentOpts, SegmentTimeline, segment_timeline,
     validate_window_ms,
@@ -50,6 +53,7 @@ pub use segments::{
 pub use stereo::{StereoReport, analyze_stereo};
 pub use structure::{StructureOpts, StructureReport, detect_structure};
 pub use tempo::{TempoCandidate, TempoOpts, TempoReport, estimate_tempo};
+pub use timbre::TimbreReport;
 
 /// Schema version of [`Report`]'s JSON form. Bump and document here on any
 /// breaking change to the report shape.
@@ -65,7 +69,13 @@ pub use tempo::{TempoCandidate, TempoOpts, TempoReport, estimate_tempo};
 ///   `stability` (windowed tempo agreement); `clear_rhythm` moves from
 ///   `tempo` to the new top-level `rhythm` section and is now grid-
 ///   alignment-based (see [`RhythmReport`]).
-pub const SCHEMA_VERSION: u32 = 3;
+/// - `4`: the hearing upgrade. `rhythm` gains `grid` (the winning
+///   straight-vs-triplet subdivision hypothesis — swing/shuffle now reads
+///   as an aligned triplet rhythm); `pitch` gains `melody` (quantized note
+///   events, [`MelodyNote`]); new top-level `timbre` section (MFCC digest,
+///   [`TimbreReport`]); `source` gains `start_ms` (nonzero when the probe
+///   covered a `--from/--to` window of the file).
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Run every extractor over `audio` and assemble the schema-versioned
 /// report. Infallible: undefined measurements (silence, no voiced frames,
@@ -82,7 +92,10 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
 
     let loudness = loudness::analyze(audio);
     let onsets = onsets::analyze_stft(&onset_stft);
-    let pitch = pitch::analyze(&mono, audio.sample_rate);
+    // One YIN pass feeds both the pitch summary and the melody events.
+    let f0_track = pitch::f0_track(&mono, audio.sample_rate);
+    let pitch = pitch::analyze_track(&f0_track, audio.sample_rate);
+    let timbre = timbre::analyze(&mono, audio.sample_rate);
     let key = key::analyze(&mono, audio.sample_rate);
     let silence = silence::analyze(&mono, audio.sample_rate, opts.silence_floor_dbfs);
     let clipping = clipping::analyze(audio, loudness.true_peak_dbtp);
@@ -105,10 +118,12 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
             channels: audio.channels,
             samples: audio.frames(),
             duration_ms: audio.duration_ms(),
+            start_ms: opts.start_ms,
         },
         loudness,
         onsets,
         pitch,
+        timbre,
         key,
         silence,
         clipping,

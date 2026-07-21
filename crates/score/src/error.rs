@@ -62,6 +62,9 @@ pub enum ScoreError {
     #[error("unsupported score version {0} (this build reads version 1)")]
     UnsupportedVersion(u32),
 
+    #[error("MIDI import: {0}")]
+    Midi(String),
+
     #[error("RON parse error: {0}")]
     Parse(#[from] ron::error::SpannedError),
 

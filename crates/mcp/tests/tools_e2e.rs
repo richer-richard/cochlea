@@ -71,7 +71,7 @@ fn render_probe_spectrogram_round_trip() {
     let response = call_tool(&server, 2, "probe_audio", json!({"audio_path": wav}));
     assert_eq!(response["result"]["isError"], false, "{response}");
     let report: Value = serde_json::from_str(tool_text(&response)).unwrap();
-    assert_eq!(report["schema_version"], 3);
+    assert_eq!(report["schema_version"], 4);
     assert_eq!(report["source"]["sample_rate"], 48_000);
     assert_eq!(report["source"]["channels"], 2);
 
@@ -158,7 +158,7 @@ fn probe_audio_and_digest_read_flac() {
     let response = call_tool(&server, 1, "probe_audio", json!({"audio_path": flac}));
     assert_eq!(response["result"]["isError"], false, "{response}");
     let report: Value = serde_json::from_str(tool_text(&response)).unwrap();
-    assert_eq!(report["schema_version"], 3);
+    assert_eq!(report["schema_version"], 4);
     assert_eq!(report["source"]["channels"], 1);
 
     let response = call_tool(&server, 2, "probe_digest", json!({"audio_path": flac}));
@@ -357,4 +357,110 @@ fn clobber_guard_sees_through_path_aliases() {
             .contains("alias"),
         "{response}"
     );
+}
+
+/// The 0.3.0 additions in one pass over cheap committed fixtures: window
+/// params, annotated spectrograms, the diff heat map, and MIDI import.
+#[test]
+fn hearing_upgrade_tools_end_to_end() {
+    let server = Server::new();
+    let stereo = format!(
+        "{}/../decode/tests/fixtures/tone_stereo_16.flac",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mono = format!(
+        "{}/../decode/tests/fixtures/tone_mono_16.flac",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    // probe_audio with a window: times are relative to the cut and
+    // source.start_ms anchors it.
+    let response = call_tool(
+        &server,
+        1,
+        "probe_audio",
+        json!({"audio_path": stereo, "from_s": 0.1, "to_s": 0.4}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let report: Value = serde_json::from_str(tool_text(&response)).unwrap();
+    assert_eq!(report["source"]["start_ms"], 100.0, "{report}");
+    assert_eq!(report["source"]["duration_ms"], 300.0, "{report}");
+
+    // An inverted window is a JSON-RPC invalid-params error, not a tool
+    // failure.
+    let response = call_tool(
+        &server,
+        2,
+        "probe_audio",
+        json!({"audio_path": stereo, "from_s": 0.4, "to_s": 0.1}),
+    );
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+
+    // Annotated spectrogram comes back inline; annotate+sheet is refused.
+    let response = call_tool(
+        &server,
+        3,
+        "spectrogram",
+        json!({"audio_path": stereo, "annotate": true}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        response["result"]["content"][0]["type"], "image",
+        "{response}"
+    );
+    let response = call_tool(
+        &server,
+        4,
+        "spectrogram",
+        json!({"audio_path": stereo, "annotate": true, "sheet": true}),
+    );
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+
+    // audio_diff with the heat map: image content plus the text report.
+    let response = call_tool(
+        &server,
+        5,
+        "audio_diff",
+        json!({"audio_path_a": mono, "audio_path_b": stereo, "spectrogram": true}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let blocks = response["result"]["content"].as_array().unwrap();
+    assert_eq!(blocks[0]["type"], "image", "{response}");
+    assert!(
+        blocks[1]["text"].as_str().unwrap().contains("verdict:"),
+        "{response}"
+    );
+
+    // import_midi: a minimal byte-built SMF in, a lintable RON score out.
+    let chunk = |id: &[u8; 4], data: &[u8]| {
+        let mut out = id.to_vec();
+        out.extend((data.len() as u32).to_be_bytes());
+        out.extend(data);
+        out
+    };
+    let mut midi = chunk(b"MThd", &[0, 0, 0, 1, 0x01, 0xE0]);
+    midi.extend(chunk(
+        b"MTrk",
+        &[
+            0x00, 0x90, 60, 100, 0x83, 0x60, 0x80, 60, 64, // C4 quarter
+            0x00, 0xFF, 0x2F, 0x00,
+        ],
+    ));
+    let midi_path = tmp_path("mcp_import.mid");
+    std::fs::write(&midi_path, midi).unwrap();
+    let ron_path = tmp_path("mcp_import.ron");
+    let response = call_tool(
+        &server,
+        6,
+        "import_midi",
+        json!({"midi_path": midi_path, "out_path": ron_path}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert!(
+        tool_text(&response).contains("imported 1 tracks"),
+        "{}",
+        tool_text(&response)
+    );
+    let response = call_tool(&server, 7, "lint_score", json!({"score_path": ron_path}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
 }

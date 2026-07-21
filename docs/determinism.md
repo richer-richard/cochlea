@@ -331,3 +331,42 @@ existing rules — but each addition deserves its line in this ledger:
 - **MCP base64/PNG.** `encode_png` runs the identical `image` encoder as
   the file path; base64 is a pure byte mapping — the inline spectrogram
   and the PNG on disk are the same bytes.
+
+## 0.3.0 additions (2026-07-22)
+
+- **Master bus (gain + limiter).** The bus becomes `Σ stems (f64) →
+  master → single f32 rounding` — rounding rule 4 is unchanged and still
+  applied exactly once. A default master returns before touching a
+  sample, so master-less scores render byte-identically to 0.2.0 (both
+  golden hashes confirmed unchanged). The limiter is pure arithmetic
+  plus two `libm` calls at setup (`pow` for the ceiling, `exp` for the
+  release coefficient): per-frame peaks, a forward sliding-window
+  maximum via a monotonic deque (integer logic, no float accumulation),
+  and a one-pole release. Gain is clamped by `ceiling / windowed_peak`
+  at every frame, so the sample-peak ceiling is exact by construction on
+  every platform — no fast-math, no FMA, nothing target-dependent.
+- **Melody + timbre analyzers.** Melody is integer quantization and run
+  grouping over the existing YIN track (`libm::log2`/`exp2` only, the
+  same calls the pitch report already made). MFCC is a hand-rolled mel
+  filterbank + orthonormal DCT-II over the shared scalar-FFT
+  magnitudes — `libm` transcendentals, fixed summation order, and a
+  per-frame dynamic-range floor that is a pure function of the frame.
+- **Triplet-grid rhythm hypothesis.** Grid geometry only — the same
+  classifier run at two subdivision counts, winner by aligned count with
+  a deterministic tie-break (straight). No new signal pass.
+- **Lossy decode (mp3/ogg) is Tier-2-adjacent, not Tier-1.** The lossy
+  path is analysis input only: symphonia is pure Rust and our feature
+  set keeps its `opt-simd` runtime dispatch *off*, so decoding the same
+  file with the same build is reproducible — but no bit-exactness claim
+  is made (the codec discarded the original samples), and nothing lossy
+  can reach the render path. The FLAC module and its WAV-twin
+  bit-exactness test are untouched.
+- **MIDI import.** Integer tick arithmetic end to end: SMF division
+  becomes PPQ verbatim, deltas sum in u64 with overflow checks, tempo
+  metas convert through the same `Bpm → ns/quarter` rounding rule 1 as
+  authored tempos. No float time anywhere in the parser.
+- **Spectrogram overlays and diffs.** Drawing is integer pixel writes at
+  positions derived from sample offsets; the diff image is per-cell f32
+  subtraction of two already-computed spectrograms. `MelSpec::hz_band`
+  uses the same HTK mel formula as the filterbank (`libm`), so overlay
+  placement is as deterministic as the spectrogram itself.

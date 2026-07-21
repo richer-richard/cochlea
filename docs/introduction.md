@@ -20,26 +20,32 @@ either — a few minutes of 48kHz float audio is tens of megabytes, which
 is a bad way to spend a context window. Cochlea's answer is a small set
 of primitives an agent can compose:
 
-- **Score IR** — ticks, tempo, tracks, notes, and automation, expressed
-  as data (Rust builder or RON).
+- **Score IR** — ticks, tempo, tracks, notes, automation, and an
+  optional master bus (gain + brick-wall limiter), expressed as data
+  (Rust builder or RON). Standard MIDI Files import with timing intact.
 - **Deterministic render** — the same score renders to the same PCM
   bytes every time on the pinned CI target, enforced at the toolchain
   level, not by convention. See [Determinism Contract](./determinism.md).
-- **Feature reports** — loudness, true peak, onsets, pitch, key, tempo
-  (with octave-alternative candidates and stability), rhythm (grid
-  alignment, syncopation, a trustable `clear_rhythm`), stereo width,
-  structure — as a few kilobytes of JSON, or a sub-kilobyte text digest
-  sized for an LLM's context window.
+- **Feature reports** — loudness, true peak, onsets, pitch plus a
+  quantized melody (note events an agent can diff against what it
+  wrote), an MFCC timbre digest, key, tempo (with octave-alternative
+  candidates and stability), rhythm (grid alignment with a
+  straight-vs-triplet hypothesis test, syncopation, a trustable
+  `clear_rhythm`), stereo width, structure — as a few kilobytes of JSON,
+  or a sub-kilobyte text digest sized for an LLM's context window.
+  Every read tool takes a `--from/--to` window, so a long file can be
+  probed a few bars at a time.
 - **Spectrograms** — a small PNG when a report alone doesn't answer the
-  question.
+  question; optionally annotated with the detected beats, onsets, and
+  pitch, and diffable as a signed A→B heat map.
 - **Verify** — an assertion DSL over a render (`true_peak_below`,
   `pitch_matches_score`, `tempo_is`, ...), so an agent can retry on a
   failed assertion instead of asking a human "does that sound right?"
 
-Every crate here works standalone. `cochlea probe` runs on any WAV or
-FLAC file with no score in sight — that's the adoption wedge, and it's
-enforced structurally (`features`/`spectro` depend on neither `score`
-nor `synth`, checked via `cargo tree` in CI).
+Every crate here works standalone. `cochlea probe` runs on any WAV,
+FLAC, mp3, or ogg file with no score in sight — that's the adoption
+wedge, and it's enforced structurally (`features`/`spectro` depend on
+neither `score` nor `synth`, checked via `cargo tree` in CI).
 
 ## Where to start
 

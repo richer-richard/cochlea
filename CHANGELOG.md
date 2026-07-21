@@ -4,6 +4,92 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
+## [Unreleased]
+
+The hearing upgrade: melody as notes, timbre identity, triplet grids, a
+zoom lens over every read tool, annotated and diff spectrograms, a master
+bus with a real limiter, lossy-format probe input, and MIDI import.
+
+### Added — reading audio (Report schema v4, CompareReport v3)
+
+- **`pitch.melody`** (`MelodyNote`): the YIN track quantized to
+  equal-tempered note events — start/end, note name, median f0, cents
+  deviation. The compose loop's read-back half: an agent that wrote a
+  melody can diff what the render *sounds like* as notes against what it
+  wrote. Monophonic by construction (documented); standalone entry point
+  `extract_melody`. The digest gains a `melody:` line.
+- **`timbre`** (`TimbreReport`): a compact MFCC digest (26 mel filters,
+  13 coefficients, per-coefficient mean and spread over the buffer) —
+  the "did the re-render keep the instrument's character" axis. The
+  compare report gains `timbre.mfcc_distance` (spectral shape only, `c0`
+  excluded) and the diff text a `timbre` row.
+- **`rhythm.grid`**: grid alignment now tests two subdivision hypotheses
+  — straight sixteenths and eighth-note triplets — and reports whichever
+  more onsets land on. A shuffle reads as an aligned *triplet* rhythm
+  (alignment 1.0 on the calibration fixture) instead of being force-fit
+  to sixteenths and scored sloppy; straight eighths stay decisively
+  `straight` (their off-beats sit at 1/2 beat, not a triplet point).
+  `CompareReport` gains `rhythm.grid_changed` — a feel change, distinct
+  from a tightness change.
+- **The zoom lens**: `Audio::window` (frame-exact `[from, to)` cuts) +
+  `ProbeOpts::start_ms` + `source.start_ms` in the report; CLI
+  `probe`/`spectro`/`diff` take `--from/--to`, and the MCP
+  `probe_audio`/`spectrogram` tools take `from_s`/`to_s`. Report times
+  are relative to the cut; `start_ms` anchors them in the file.
+- **mp3 and ogg/vorbis probe input** (`cochlea-decode`): a lossy
+  symphonia path with its contract stated where it lives — analysis
+  input, never render ground truth (reproducible per build; no exactness
+  claim once a codec has discarded the original samples). Extension and
+  magic-byte dispatch (ID3/MPEG sync, `OggS`); the same tone probed from
+  WAV, mp3, and ogg reads the same pitch within 5 cents (tested). The
+  FLAC bit-exact module is untouched and separate.
+
+### Added — looking at audio
+
+- **Annotated spectrograms**: `render_annotated` draws analysis overlays
+  on the image — detected beats (orange ticks, top edge), onsets (cyan
+  ticks, bottom), pitch segments (magenta lines at their mel band) — via
+  a plain-data `Overlay` (the spectro crate still never sees score or
+  feature types). CLI `spectro --annotate`; MCP `spectrogram` with
+  `annotate: true` (still inline image content).
+- **Signed diff spectrograms**: `render_diff_png` — per-band `B − A` in
+  dB, red = louder, blue = quieter, black = unchanged, saturating at
+  ±24 dB. A moved onset is a blue/red vertical pair; a brightened sweep
+  is a red wedge. Refuses mismatched analysis axes (`AxisMismatch`). CLI
+  `diff --spectro delta.png`; MCP `audio_diff` with `spectrogram: true`
+  (inline). `MelSpec` now carries its frequency axis (`fmin`/`fmax`) and
+  maps Hz→band via `hz_band`.
+
+### Added — making audio
+
+- **Master bus** (`Master`/`Limiter` in the score IR, RON `master:`
+  section): an output gain (−40..+24 dB) and a brick-wall lookahead
+  limiter (ceiling −40..0 dBFS, lookahead 0..50 ms, release 1..1000 ms),
+  applied to the f64 stem sum before the single f32 rounding. Offline
+  lookahead is a forward sliding-window maximum — no delay line, no
+  latency — and the *sample*-peak ceiling holds exactly by construction
+  (leave ~1 dB under a `TruePeakBelow` target; true peaks are
+  inter-sample). The do-nothing default master skips the stage entirely:
+  master-less scores render byte-identically to 0.2.0 (both golden
+  hashes unchanged), and `mix == Σ stems` still holds for them. Stems
+  stay pre-master. This is the tool the loop kept asking for: push with
+  `gain_db`, hold the ceiling, assert `IntegratedLufs` + `TruePeakBelow`.
+- **MIDI import** (`cochlea_score::import_midi`, `cochlea import`, MCP
+  `import_midi`): hand-rolled SMF format 0/1 parser (chunks, VLQs,
+  running status). Timing maps exactly — the file's division becomes the
+  score's PPQ verbatim, tempo metas become tempo-map steps, notes land
+  unquantized on the integer grid. GM programs map to rough preset
+  families and channel-10 percussion splits into kick/snare/hat tracks;
+  every guess is returned as a warning for re-voicing. SMPTE division
+  and format 2 are refused with reasons; CCs/bends/aftertouch are
+  skipped loudly, never silently.
+
+### Changed
+
+- `probe()` runs one shared YIN pass for the pitch summary and melody.
+- MCP tool descriptions updated to schema v4 and the wider format
+  support; the tool list is eight (`import_midi` added).
+
 ## [0.2.0] — 2026-07-21
 
 > **Versioning note.** The crates published to crates.io

@@ -110,7 +110,7 @@ fn probe_digest_and_json_together_write_both() {
     // ...full JSON report to the file, both present, no conflict.
     let report: Value =
         serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], 3);
+    assert_eq!(report["schema_version"], 4);
 }
 
 #[test]
@@ -213,4 +213,132 @@ fn output_flags_never_overwrite_an_input() {
         before,
         "the input WAV must be byte-identical after the rejected calls"
     );
+}
+
+/// The zoom lens: `--from/--to` cuts before analysis, the report anchors
+/// itself with `source.start_ms`, and bad windows are usage errors.
+#[test]
+fn probe_from_to_windows_the_analysis() {
+    let (a, _b) = fixtures();
+    let a_str = a.to_str().unwrap();
+    let json_path = tmp_path("probe_window_report.json");
+
+    let output = cochlea()
+        .args([
+            "probe",
+            a_str,
+            "--from",
+            "1.0",
+            "--to",
+            "3.0",
+            "--json",
+            json_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let report: Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+    assert_eq!(report["source"]["start_ms"], 1000.0);
+    assert_eq!(report["source"]["duration_ms"], 2000.0);
+
+    // Inverted and past-the-end windows are usage errors (exit 2).
+    let output = cochlea()
+        .args(["probe", a_str, "--from", "3.0", "--to", "1.0"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let output = cochlea()
+        .args(["probe", a_str, "--from", "9999"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
+fn spectro_annotate_and_window_write_a_png() {
+    let (a, _b) = fixtures();
+    let out = tmp_path("spectro_annotated.png");
+    let output = cochlea()
+        .args([
+            "spectro",
+            a.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--annotate",
+            "--from",
+            "0.5",
+            "--to",
+            "4.5",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let img = image::open(&out).unwrap().to_rgb8();
+    // 4 s at 512-hop/48kHz ≈ 375 real frames (+ padding tail) — the window
+    // was honored, not the full 16+ s render.
+    assert!(
+        img.width() < 450,
+        "windowed spectrogram too wide: {}",
+        img.width()
+    );
+    // The metronome has strong onsets: cyan onset ticks must appear.
+    let onset_px = img.pixels().filter(|p| p.0 == [64, 224, 255]).count();
+    assert!(onset_px > 0, "no onset overlay pixels drawn");
+
+    // --annotate and --sheet are mutually exclusive (clap conflict, exit 2).
+    let output = cochlea()
+        .args([
+            "spectro",
+            a.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--annotate",
+            "--sheet",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+}
+
+#[test]
+fn diff_spectro_writes_a_signed_heat_map() {
+    let (a, b) = fixtures();
+    let out = tmp_path("diff_spectro.png");
+    let output = cochlea()
+        .args([
+            "diff",
+            a.to_str().unwrap(),
+            b.to_str().unwrap(),
+            "--spectro",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let img = image::open(&out).unwrap().to_rgb8();
+    // Two different renders must produce both louder-in-b and quieter-in-b
+    // regions somewhere.
+    assert!(img.pixels().any(|p| p[0] > 32), "no red (louder) pixels");
+    assert!(img.pixels().any(|p| p[2] > 32), "no blue (quieter) pixels");
+
+    // Self-diff: the spectrogram region is all black (identical input).
+    let self_out = tmp_path("diff_spectro_self.png");
+    let output = cochlea()
+        .args([
+            "diff",
+            a.to_str().unwrap(),
+            a.to_str().unwrap(),
+            "--spectro",
+            self_out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let img = image::open(&self_out).unwrap().to_rgb8();
+    let nonblack = img
+        .enumerate_pixels()
+        .filter(|&(_, y, p)| y < img.height() - 10 && (p[0] > 0 || p[2] > 0))
+        .count();
+    assert_eq!(nonblack, 0, "self-diff must be black above the ruler");
 }

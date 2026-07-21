@@ -5,7 +5,7 @@
 //! performance contains. Fixtures are synthesized here with `libm`, never
 //! a synth dependency — mirrors `tests/probe.rs`'s style.
 
-use cochlea_features::{ProbeOpts, TempoOpts, analyze_rhythm, estimate_tempo, probe};
+use cochlea_features::{GridKind, ProbeOpts, TempoOpts, analyze_rhythm, estimate_tempo, probe};
 
 mod common;
 use common::*;
@@ -34,6 +34,24 @@ fn noise(seed: u64, index: u64) -> f64 {
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^= z >> 31;
     (z as f64 / u64::MAX as f64) * 2.0 - 1.0
+}
+
+/// Onset times for a shuffle: every beat plus a swung upbeat at 2/3 of the
+/// beat interval — the eighth-note-triplet feel a drummer plays on a
+/// shuffle or swing chart. The swung hit is ~1/12 beat from the nearest
+/// sixteenth, well outside alignment tolerance at ordinary tempos, so this
+/// fixture genuinely separates the two grid hypotheses.
+fn shuffle_times(interval_s: f64, seconds: f64) -> Vec<f64> {
+    let mut times = Vec::new();
+    for &t in &straight_times(interval_s, seconds) {
+        times.push(t);
+        let swung = t + interval_s * 2.0 / 3.0;
+        if swung < seconds {
+            times.push(swung);
+        }
+    }
+    times.sort_by(f64::total_cmp);
+    times
 }
 
 /// A 120 BPM click track `seconds` long with uniform timing jitter of up
@@ -88,6 +106,10 @@ fn calibration_readings() {
             "eighths at 120",
             click_track(&straight_times(0.25, 12.0), 12.0, SR),
         ),
+        (
+            "shuffle at 120",
+            click_track(&shuffle_times(0.5, 12.0), 12.0, SR),
+        ),
         ("sustained tone", sine_wave(440.0, 0.5, 12.0, SR)),
         (
             "random onsets",
@@ -103,11 +125,12 @@ fn calibration_readings() {
     for (name, samples) in fixtures {
         let (tempo, rhythm) = rhythm_of(samples);
         println!(
-            "{name}: bpm={:?} conf={:.3} stability={:?} align={:?} offbeat={:?} clear={}",
+            "{name}: bpm={:?} conf={:.3} stability={:?} align={:?} grid={:?} offbeat={:?} clear={}",
             tempo.bpm.map(|b| (b * 10.0).round() / 10.0),
             tempo.confidence,
             tempo.stability,
             rhythm.grid_alignment,
+            rhythm.grid,
             rhythm.offbeat_ratio,
             rhythm.clear_rhythm,
         );
@@ -153,6 +176,45 @@ fn eighth_notes_read_as_aligned_but_offbeat() {
         assert!(offbeat <= 0.1, "at 240 BPM every hit is a beat: {offbeat}");
     }
     assert!(rhythm.clear_rhythm, "{rhythm:?}");
+}
+
+/// The straight-vs-triplet hypothesis test, straight side: four-square
+/// playing must come back labeled `straight` (quarters trivially, and
+/// eighths — whose off-beats sit at 1/2 beat, a sixteenth point that is
+/// *not* a triplet point — decisively).
+#[test]
+fn straight_playing_reads_as_a_straight_grid() {
+    for times in [straight_times(0.5, 12.0), straight_times(0.25, 12.0)] {
+        let (tempo, rhythm) = rhythm_of(click_track(&times, 12.0, SR));
+        assert_eq!(
+            rhythm.grid,
+            Some(GridKind::Straight),
+            "{rhythm:?} tempo={tempo:?}"
+        );
+    }
+}
+
+/// The triplet side: a shuffle (beats + swung upbeats at 2/3 beat) must be
+/// *recognized* as an aligned triplet rhythm, not force-fit to sixteenths
+/// and scored sloppy — Richard's swing/shuffle ask, verbatim. The swung
+/// hits are off-beat triplet points, so the syncopation signal must read
+/// them too.
+#[test]
+fn shuffle_reads_as_an_aligned_triplet_rhythm() {
+    let (tempo, rhythm) = rhythm_of(click_track(&shuffle_times(0.5, 12.0), 12.0, SR));
+    assert_eq!(
+        rhythm.grid,
+        Some(GridKind::Triplet),
+        "{rhythm:?} tempo={tempo:?}"
+    );
+    let align = rhythm.grid_alignment.expect("grid exists");
+    assert!(align >= 0.9, "swing must align on its own grid: {align}");
+    assert!(rhythm.clear_rhythm, "{rhythm:?}");
+    let offbeat = rhythm.offbeat_ratio.expect("aligned onsets exist");
+    assert!(
+        offbeat >= 0.3,
+        "swung upbeats are offbeat triplet points: {offbeat}"
+    );
 }
 
 #[test]

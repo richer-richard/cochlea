@@ -535,3 +535,37 @@ committed spectrogram sentinel.
   guards.
 - **Structure detection** computes a banded similarity matrix with a
   deterministic frame-count cap (the O(n²) full matrix is gone).
+
+## 0.3.0 deviations from this plan (2026-07-22)
+
+- **Melody + timbre (schema v4).** `pitch.melody` (quantized note events
+  off the YIN track — the compose loop's read-back half) and a top-level
+  `timbre` MFCC digest; `CompareReport` v3 adds a spectral-shape
+  distance and `rhythm.grid_changed`.
+- **Triplet grids.** Rhythm alignment tests straight-16th *and*
+  eighth-note-triplet hypotheses and reports the winner (`rhythm.grid`)
+  — swing is recognized, not scored sloppy.
+- **The zoom lens.** `Audio::window` + `--from/--to` on probe/spectro/
+  diff (and `from_s`/`to_s` on the MCP tools); `source.start_ms` anchors
+  windowed reports.
+- **Spectro**: analysis overlays (beats/onsets/pitch as plain data) and
+  signed A→B difference heat maps.
+- **Master bus.** The score IR gains `Master`/`Limiter` (RON `master:`);
+  the render bus is now `Σ stems → master → f32`, byte-inert when
+  absent. "Bus routing" stays out of scope — this is one fixed output
+  stage, not routing.
+- **Lossy probe input.** mp3/ogg decode via symphonia ("compressed-
+  format probe (phase 2)" partially delivered) — analysis input only,
+  contract documented in `cochlea-decode`.
+- **MIDI import** (`import_midi` / `cochlea import` / MCP tool):
+  "MIDI import/export, out of scope for v1" is half-lifted — import
+  only, hand-rolled SMF 0/1, timing exact, instrumentation a labeled
+  guess. Export remains out of scope.
+- **MCP**: eight tools (`import_midi`), window/annotate params, inline
+  diff heat maps.
+
+Still deliberately out (design questions, not omissions): sampled
+instruments (external sample bytes vs the score-is-the-audio contract —
+needs content-hash pinning and a resampling determinism decision before
+any code), tempo ramps, time-signature changes, sample-accurate
+automation, bus/send routing, realtime anything.

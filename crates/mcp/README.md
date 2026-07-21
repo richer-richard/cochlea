@@ -3,8 +3,8 @@
 An MCP (Model Context Protocol) stdio server over the
 [cochlea](https://github.com/richer-richard/cochlea) libraries, so any
 MCP client — Claude Code, another agent, a script — gets
-render/probe/spectrogram/diff as tool calls, without shelling out to the
-`cochlea` binary or reading raw PCM.
+render/probe/spectrogram/diff/import as tool calls, without shelling
+out to the `cochlea` binary or reading raw PCM.
 
 ```sh
 cargo install cochlea-mcp
@@ -17,16 +17,21 @@ tools (render a score, extract a report, write a PNG) need none. Every
 response is a pure function of its request: no wall clock, no session
 state.
 
-Seven tools: `render_score`, `probe_audio`, `spectrogram`, `lint_score`,
-`probe_digest`, `audio_diff`, `score_reference` — accepting WAV or FLAC
-wherever audio input applies. `score_reference` makes the server
+Eight tools: `render_score`, `probe_audio`, `spectrogram`, `lint_score`,
+`probe_digest`, `audio_diff`, `import_midi`, `score_reference` —
+accepting WAV, FLAC, mp3, or ogg wherever audio input applies, with
+`from_s`/`to_s` window parameters on the read tools for zooming into a
+time range. `score_reference` makes the server
 self-describing: the full RON score grammar, the live instrument-preset
 catalog (generated from the validation registry, so it cannot go stale),
 every verify assertion, and a worked example the test suite itself
 renders — an agent connected cold can compose without ever seeing the
 repo. `spectrogram` returns the image inline as MCP image content
-(base64 PNG, size-capped), so clients without filesystem access still
-get to *look* at audio. Launch with `--root DIR` to confine every read
+(base64 PNG, size-capped) — optionally annotated with the detected
+beats, onsets, and pitch — so clients without filesystem access still
+get to *look* at audio, and `audio_diff` can return a signed A→B
+difference heat map the same way. `import_midi` brings Standard MIDI
+Files into the loop with timing intact. Launch with `--root DIR` to confine every read
 and write to one directory (canonical-path checked before any
 filesystem work). Tool-level failures (a bad path, a failed verify) come
 back as a normal success response with `isError: true`; JSON-RPC errors

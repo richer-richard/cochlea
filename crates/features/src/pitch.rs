@@ -13,36 +13,36 @@ const HOP: usize = 512;
 /// dips below this is accepted (de Cheveigné & Kawahara recommend ~0.1).
 const THRESHOLD: f64 = 0.1;
 
-/// Run YIN over every `HOP`-spaced `WINDOW`-sample frame of `mono`, then
-/// segment the per-hop f0 estimates into contiguous voiced runs.
-pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> PitchReport {
-    if mono.len() < WINDOW || sample_rate == 0 {
+/// Summarize an already-computed f0 track (see [`f0_track`]) into the
+/// probe report's pitch section: voiced ratio, whole-buffer median f0,
+/// contiguous voiced runs, and the quantized melody note events
+/// (`crate::melody`) — one YIN pass feeds all of it.
+pub(crate) fn analyze_track(track: &[(usize, Option<f64>)], sample_rate: u32) -> PitchReport {
+    if track.is_empty() || sample_rate == 0 {
         return PitchReport {
             voiced_ratio: 0.0,
             median_f0_hz: None,
             segments: Vec::new(),
+            melody: Vec::new(),
         };
     }
 
-    let frame_count = (mono.len() - WINDOW) / HOP + 1;
-    let f0s: Vec<Option<f64>> = f0_track(mono, sample_rate)
-        .into_iter()
-        .map(|(_, f0)| f0)
-        .collect();
-    debug_assert_eq!(f0s.len(), frame_count);
+    let f0s: Vec<Option<f64>> = track.iter().map(|(_, f0)| *f0).collect();
 
     let voiced_count = f0s.iter().filter(|v| v.is_some()).count();
-    let voiced_ratio = voiced_count as f64 / frame_count as f64;
+    let voiced_ratio = voiced_count as f64 / f0s.len() as f64;
 
     let mut all_voiced: Vec<f64> = f0s.iter().filter_map(|v| *v).collect();
     let median_f0_hz = median(&mut all_voiced);
 
     let segments = segment_runs(&f0s, sample_rate);
+    let melody = crate::melody::notes_from_track(track, sample_rate);
 
     PitchReport {
         voiced_ratio,
         median_f0_hz,
         segments,
+        melody,
     }
 }
 
@@ -73,6 +73,12 @@ pub(crate) fn f0_track(mono: &[f32], sample_rate: u32) -> Vec<(usize, Option<f64
 /// whether a hop's frame lies fully inside a display window.
 pub(crate) const fn window_len() -> usize {
     WINDOW
+}
+
+/// Hop length in samples — `pub(crate)` so `melody` can convert frame
+/// indices to the same times this module's segments use.
+pub(crate) const fn hop_len() -> usize {
+    HOP
 }
 
 /// One frame of YIN: `Some(f0_hz)` if some period passed the absolute

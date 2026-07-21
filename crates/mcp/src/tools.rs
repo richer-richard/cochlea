@@ -157,13 +157,21 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "probe_audio",
-            "description": "Extract the full feature report (integrated LUFS/true peak/LRA, onsets, YIN pitch track, chroma/key, tempo with a clear_rhythm flag, stereo image, structural sections, silence, clipping — schema v2) from any WAV or FLAC file, no score needed. Use this to 'listen' to audio through numbers: check loudness targets, confirm onset timing or tempo, or read back pitch/key/stereo width.",
+            "description": "Extract the full feature report (integrated LUFS/true peak/LRA, onsets, YIN pitch track plus quantized melody notes, MFCC timbre digest, chroma/key, tempo with octave-alternative candidates and stability, rhythm with grid alignment and a straight-vs-triplet grid call, stereo image, structural sections, silence, clipping — schema v4) from any WAV, FLAC, mp3, or ogg file, no score needed. Use this to 'listen' to audio through numbers: check loudness targets, confirm onset timing or tempo, or read back the melody you composed. Pass from_s/to_s to zoom into a time window instead of probing the whole file (report times are then relative to the cut; source.start_ms anchors them).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "audio_path": {
                         "type": "string",
-                        "description": "Path to a WAV (8/16/24/32-bit PCM or 32-bit float) or FLAC file."
+                        "description": "Path to a WAV (8/16/24/32-bit PCM or 32-bit float), FLAC, mp3, or ogg file."
+                    },
+                    "from_s": {
+                        "type": "number",
+                        "description": "Optional: analyze only from this time (seconds into the file)."
+                    },
+                    "to_s": {
+                        "type": "number",
+                        "description": "Optional: analyze only up to this time (seconds into the file)."
                     }
                 },
                 "required": ["audio_path"]
@@ -171,13 +179,13 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "spectrogram",
-            "description": "Render a mel spectrogram (or a tiled contact sheet covering the whole file) from a WAV or FLAC file, for visual inspection of harmonic content, sweeps, or silence. The image comes back inline as MCP image content (base64 PNG) whenever it fits the size cap, so you can look at it directly without filesystem access; pass out_path to also (or instead) write the PNG to disk. Use this when a numeric probe report isn't enough and you want to look at the audio.",
+            "description": "Render a mel spectrogram (or a tiled contact sheet covering the whole file) from a WAV, FLAC, mp3, or ogg file, for visual inspection of harmonic content, sweeps, or silence. The image comes back inline as MCP image content (base64 PNG) whenever it fits the size cap, so you can look at it directly without filesystem access; pass out_path to also (or instead) write the PNG to disk. Set annotate=true to draw what the analyzers heard onto the image — detected beats (orange ticks, top), onsets (cyan ticks, bottom), pitch segments (magenta lines) — and from_s/to_s to zoom into a time window. Use this when a numeric probe report isn't enough and you want to look at the audio.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "audio_path": {
                         "type": "string",
-                        "description": "Path to the input WAV or FLAC."
+                        "description": "Path to the input WAV, FLAC, mp3, or ogg."
                     },
                     "out_path": {
                         "type": "string",
@@ -185,13 +193,26 @@ pub fn schemas() -> Vec<Value> {
                     },
                     "sheet": {
                         "type": "boolean",
-                        "description": "Tile the piece into a contact sheet instead of one long strip — useful for reviewing a whole piece in one vision call. Default false.",
+                        "description": "Tile the piece into a contact sheet instead of one long strip — useful for reviewing a whole piece in one vision call. Default false. Incompatible with annotate.",
                         "default": false
                     },
                     "bars_per_tile": {
                         "type": "integer",
                         "description": "Time sections per tile when sheet is true. Default 8.",
                         "default": 8
+                    },
+                    "annotate": {
+                        "type": "boolean",
+                        "description": "Draw analysis overlays (beat grid, onsets, pitch) on the image. Default false.",
+                        "default": false
+                    },
+                    "from_s": {
+                        "type": "number",
+                        "description": "Optional: render only from this time (seconds into the file)."
+                    },
+                    "to_s": {
+                        "type": "number",
+                        "description": "Optional: render only up to this time (seconds into the file)."
                     }
                 },
                 "required": ["audio_path"]
@@ -241,17 +262,17 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "audio_diff",
-            "description": "Compare two audio files (WAV or FLAC) in feature space (loudness, onsets, pitch, key, per-segment RMS) rather than byte-for-byte, and report a verdict: byte-identical, tier-2 equivalent (within this workspace's cross-platform tolerances), or different (naming which dimensions diverge). Use this to check whether a re-render, edit, or platform change actually altered the audio in a way that matters — a `different` verdict is a normal, successful answer, not a tool failure.",
+            "description": "Compare two audio files (WAV, FLAC, mp3, or ogg) in feature space (loudness, onsets, pitch, key, timbre distance, per-segment RMS) rather than byte-for-byte, and report a verdict: byte-identical, tier-2 equivalent (within this workspace's cross-platform tolerances), or different (naming which dimensions diverge). Set spectrogram=true to also get a signed A→B difference heat map inline (red = louder in B, blue = quieter, black = unchanged) — 'what changed' as visible structure. Use this to check whether a re-render, edit, or platform change actually altered the audio in a way that matters — a `different` verdict is a normal, successful answer, not a tool failure.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "audio_path_a": {
                         "type": "string",
-                        "description": "Path to the first audio file (WAV or FLAC)."
+                        "description": "Path to the first audio file (WAV, FLAC, mp3, or ogg)."
                     },
                     "audio_path_b": {
                         "type": "string",
-                        "description": "Path to the second audio file (WAV or FLAC)."
+                        "description": "Path to the second audio file (WAV, FLAC, mp3, or ogg)."
                     },
                     "window_ms": {
                         "type": "number",
@@ -262,9 +283,37 @@ pub fn schemas() -> Vec<Value> {
                         "type": "boolean",
                         "description": "Also append the full CompareReport as pretty JSON after the text summary. Default false.",
                         "default": false
+                    },
+                    "spectrogram": {
+                        "type": "boolean",
+                        "description": "Also return the signed A→B difference spectrogram as inline image content (requires both files to share a sample rate). Default false.",
+                        "default": false
                     }
                 },
                 "required": ["audio_path_a", "audio_path_b"]
+            }
+        }),
+        json!({
+            "name": "import_midi",
+            "description": "Convert a Standard MIDI File (format 0 or 1) into a cochlea RON score. Timing imports exactly (SMF ticks become score ticks, tempo events become the tempo map); General MIDI programs map to rough preset families and channel-10 percussion to kick/snare/hat tracks — every mapping guess comes back in the response so you can re-voice the score afterwards. Use this to bring existing musical material into the compose→render→probe loop.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "midi_path": {
+                        "type": "string",
+                        "description": "Path to a .mid/.midi file (SMF format 0 or 1, metrical division)."
+                    },
+                    "out_path": {
+                        "type": "string",
+                        "description": "Where to write the imported RON score."
+                    },
+                    "sample_rate": {
+                        "type": "integer",
+                        "description": "Sample rate for the imported score (MIDI files carry none). Default 48000.",
+                        "default": 48000
+                    }
+                },
+                "required": ["midi_path", "out_path"]
             }
         }),
     ]
@@ -308,6 +357,41 @@ fn window_ms_or_invalid(args: &Value) -> Result<f64, ToolOutcome> {
     let v = f64_or(args, "window_ms", 1000.0);
     cochlea_features::validate_window_ms(v)
         .map_err(|reason| ToolOutcome::InvalidParams(format!("window_ms {reason}")))
+}
+
+/// Apply the optional `from_s`/`to_s` zoom window to loaded audio —
+/// mirrors the CLI's `--from/--to` semantics exactly: a no-op (offset 0)
+/// when neither is given, inverted or past-the-end windows are parameter
+/// errors, and the returned offset feeds `ProbeOpts::with_start_ms`.
+fn apply_window(
+    audio: cochlea_features::Audio,
+    args: &Value,
+) -> Result<(cochlea_features::Audio, f64), ToolOutcome> {
+    let from = args.get("from_s").and_then(Value::as_f64);
+    let to = args.get("to_s").and_then(Value::as_f64);
+    if from.is_none() && to.is_none() {
+        return Ok((audio, 0.0));
+    }
+    let from = from.unwrap_or(0.0);
+    if !from.is_finite() || from < 0.0 {
+        return Err(ToolOutcome::InvalidParams(format!(
+            "from_s must be a non-negative number of seconds: {from}"
+        )));
+    }
+    if let Some(to) = to
+        && (!to.is_finite() || to <= from)
+    {
+        return Err(ToolOutcome::InvalidParams(format!(
+            "to_s ({to}) must be a finite number of seconds greater than from_s ({from})"
+        )));
+    }
+    let (cut, start_ms) = audio.window(from, to);
+    if cut.frames() == 0 {
+        return Err(ToolOutcome::InvalidParams(format!(
+            "from_s {from} is past the end of the file"
+        )));
+    }
+    Ok((cut, start_ms))
 }
 
 /// `render_score`: mirrors `cochlea render` (`crates/cli/src/main.rs`
@@ -435,7 +519,14 @@ pub fn probe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
-    let report = cochlea_features::probe(&audio, &cochlea_features::ProbeOpts::default());
+    let (audio, start_ms) = match apply_window(audio, args) {
+        Ok(pair) => pair,
+        Err(outcome) => return outcome,
+    };
+    let report = cochlea_features::probe(
+        &audio,
+        &cochlea_features::ProbeOpts::default().with_start_ms(start_ms),
+    );
     match serde_json::to_string_pretty(&report) {
         Ok(text) => ToolOutcome::Ok(text),
         Err(err) => ToolOutcome::Failed(format!("serializing report: {err}")),
@@ -460,6 +551,13 @@ pub fn spectrogram(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     let out_path = args.get("out_path").and_then(Value::as_str);
     let sheet = bool_or(args, "sheet", false);
     let bars_per_tile = usize_or(args, "bars_per_tile", 8);
+    let annotate = bool_or(args, "annotate", false);
+    if annotate && sheet {
+        return ToolOutcome::InvalidParams(
+            "annotate and sheet are incompatible (overlays draw on the single-strip image)"
+                .to_string(),
+        );
+    }
 
     let audio_resolved = match ctx.resolve_read(audio_path, "audio_path") {
         Ok(p) => p,
@@ -489,6 +587,10 @@ pub fn spectrogram(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
+    let (audio, _start_ms) = match apply_window(audio, args) {
+        Ok(pair) => pair,
+        Err(outcome) => return outcome,
+    };
     let spec = cochlea_spectro::mel_spectrogram(
         &audio.samples,
         audio.channels,
@@ -497,11 +599,16 @@ pub fn spectrogram(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     );
     let img = if sheet {
         cochlea_spectro::contact_sheet(&spec, &[], bars_per_tile)
+    } else if annotate {
+        cochlea_spectro::render_annotated(&spec, &[], &build_overlay(&audio))
     } else {
         cochlea_spectro::render_png(&spec, &[])
     };
 
     let mut summary = format!("spectrogram {}x{}", img.width(), img.height());
+    if annotate {
+        summary.push_str(" (annotated: beats orange/top, onsets cyan/bottom, pitch magenta)");
+    }
     if let Some(out) = &out_resolved {
         if let Err(err) = cochlea_spectro::write_png(&img, out) {
             return ToolOutcome::Failed(format!("writing {}: {err}", out.display()));
@@ -532,6 +639,103 @@ pub fn spectrogram(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         ));
     }
     summary.push_str(" (too large to inline)");
+    ToolOutcome::Ok(summary)
+}
+
+/// Overlay data for `spectrogram`'s `annotate` — the same probe/tempo
+/// pass the CLI's `--annotate` runs, translated to plain samples/Hz here
+/// because the spectro crate never sees feature-report types.
+fn build_overlay(audio: &cochlea_features::Audio) -> cochlea_spectro::Overlay {
+    let report = cochlea_features::probe(audio, &cochlea_features::ProbeOpts::default());
+    let tempo = cochlea_features::estimate_tempo(audio, &cochlea_features::TempoOpts::default());
+    let sr = f64::from(audio.sample_rate);
+    let ms_to_sample = |ms: f64| -> u64 {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "report times are non-negative and within the buffer"
+        )]
+        {
+            (ms / 1000.0 * sr).round().max(0.0) as u64
+        }
+    };
+    cochlea_spectro::Overlay {
+        beats: tempo.beats_ms.iter().map(|&ms| ms_to_sample(ms)).collect(),
+        onsets: report
+            .onsets
+            .times_ms
+            .iter()
+            .map(|&ms| ms_to_sample(ms))
+            .collect(),
+        pitch: report
+            .pitch
+            .segments
+            .iter()
+            .map(|s| (ms_to_sample(s.start_ms), ms_to_sample(s.end_ms), s.f0_hz))
+            .collect(),
+    }
+}
+
+/// `import_midi`: mirrors `cochlea import` (`crates/cli/src/main.rs`
+/// `Cmd::Import`) — SMF in, RON score out, every instrument-mapping guess
+/// reported in the response text.
+pub fn import_midi(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
+    let midi_path = match require_str(args, "midi_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let out_path = match require_str(args, "out_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let sample_rate = usize_or(args, "sample_rate", 48_000);
+    let Ok(sample_rate) = u32::try_from(sample_rate) else {
+        return ToolOutcome::InvalidParams(format!("sample_rate {sample_rate} out of range"));
+    };
+
+    let midi_resolved = match ctx.resolve_read(midi_path, "midi_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let out_resolved = match ctx.resolve_write(out_path, "out_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    if out_resolved == midi_resolved {
+        return ToolOutcome::InvalidParams(
+            "out_path must not alias midi_path (the RON write would overwrite the MIDI file)"
+                .to_string(),
+        );
+    }
+
+    let bytes = match std::fs::read(&midi_resolved) {
+        Ok(bytes) => bytes,
+        Err(err) => return ToolOutcome::Failed(format!("reading {midi_path}: {err}")),
+    };
+    let import = match cochlea_score::import_midi(&bytes, cochlea_score::SampleRate(sample_rate)) {
+        Ok(import) => import,
+        Err(err) => return ToolOutcome::Failed(err.to_string()),
+    };
+    let ron = match import.score.to_ron() {
+        Ok(ron) => ron,
+        Err(err) => return ToolOutcome::Failed(format!("serializing the imported score: {err}")),
+    };
+    if let Err(err) = std::fs::write(&out_resolved, ron) {
+        return ToolOutcome::Failed(format!("writing {out_path}: {err}"));
+    }
+
+    let mut summary = format!(
+        "imported {} tracks, {} tempo changes -> {out_path}\n",
+        import.score.tracks().len(),
+        import.score.tempo_changes().count(),
+    );
+    for w in &import.warnings {
+        summary.push_str(&format!("note: {w}\n"));
+    }
+    summary.push_str(
+        "\nNext: lint_score to check it, render_score to hear it, and edit the RON to re-voice \
+         the guessed presets.",
+    );
     ToolOutcome::Ok(summary)
 }
 
@@ -629,6 +833,7 @@ pub fn audio_diff(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Err(outcome) => return outcome,
     };
     let want_json = bool_or(args, "json", false);
+    let want_spectrogram = bool_or(args, "spectrogram", false);
 
     let resolved_a = match ctx.resolve_read(path_a, "audio_path_a") {
         Ok(p) => p,
@@ -672,6 +877,42 @@ pub fn audio_diff(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
             .unwrap_or_else(|err| format!("(failed to serialize compare report: {err})"));
         text.push_str("\n\n");
         text.push_str(&compare_json);
+    }
+
+    if want_spectrogram {
+        let mel = |audio: &cochlea_features::Audio| {
+            cochlea_spectro::mel_spectrogram(
+                &audio.samples,
+                audio.channels,
+                audio.sample_rate,
+                &cochlea_spectro::SpectroOpts::new(),
+            )
+        };
+        let img = match cochlea_spectro::render_diff_png(&mel(&audio_a), &mel(&audio_b)) {
+            Ok(img) => img,
+            Err(err) => {
+                return ToolOutcome::Failed(format!("rendering the difference spectrogram: {err}"));
+            }
+        };
+        let png = match cochlea_spectro::encode_png(&img) {
+            Ok(bytes) => bytes,
+            Err(err) => return ToolOutcome::Failed(format!("encoding PNG: {err}")),
+        };
+        if png.len() <= INLINE_PNG_CAP {
+            text.push_str(
+                "\ndiff spectrogram inline: red = louder in B, blue = quieter in B, black = \
+                 unchanged (saturates at 24 dB)",
+            );
+            return ToolOutcome::OkContent(vec![
+                json!({
+                    "type": "image",
+                    "data": base64_encode(&png),
+                    "mimeType": "image/png",
+                }),
+                json!({"type": "text", "text": text}),
+            ]);
+        }
+        text.push_str("\n(diff spectrogram exceeded the inline size cap; omitted)");
     }
     ToolOutcome::Ok(text)
 }
