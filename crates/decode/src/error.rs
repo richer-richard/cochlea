@@ -18,12 +18,12 @@ pub enum DecodeError {
     /// WAV decode failure, forwarded from `cochlea_features::Audio::from_wav`.
     #[error(transparent)]
     Wav(#[from] cochlea_features::AudioError),
-    /// FLAC probe/demux/decode failure.
-    #[error("decoding FLAC: {0}")]
+    /// Symphonia probe/demux/decode failure (FLAC, mp3, or ogg/vorbis).
+    #[error("decoding: {0}")]
     Flac(#[from] symphonia::core::errors::Error),
-    /// The file probed as FLAC but has no audio track — malformed input;
-    /// a well-formed FLAC file always has exactly one.
-    #[error("FLAC file has no audio track")]
+    /// The file probed as a recognized container but has no audio track —
+    /// malformed input.
+    #[error("audio file has no audio track")]
     NoAudioTrack,
     /// The FLAC stream's STREAMINFO block didn't report a bit depth. Not
     /// needed for sample normalization (see the `flac` module docs), but a
@@ -42,15 +42,21 @@ pub enum DecodeError {
     #[error("FLAC packet spec disagrees with the stream's STREAMINFO")]
     InconsistentStream,
     /// Defensive: the FLAC decoder is documented to always produce 32-bit
-    /// integer PCM buffers; this fires only if that internal contract ever
+    /// integer PCM buffers (and the lossy decoders one of the common
+    /// integer/float layouts); this fires only if that contract ever
     /// changes out from under us.
-    #[error("decoded FLAC buffer wasn't 32-bit integer PCM")]
+    #[error("decoded buffer sample format isn't one this crate converts")]
     UnexpectedSampleFormat,
+    /// A lossy decode produced a NaN or infinite sample — not audio, and
+    /// poison for downstream analyzers (mirrors the WAV path's rejection
+    /// in `cochlea_features::AudioError::NonFiniteSample`).
+    #[error("non-finite decoded sample (NaN or infinity) at sample index {index}")]
+    NonFiniteSample { index: usize },
     /// Neither the extension nor the file's leading magic bytes identify a
     /// format this crate decodes.
     #[error(
-        "unrecognized audio file: extension {0:?} and content match neither WAV nor FLAC \
-         (expected a \"wav\"/\"flac\" extension, or RIFF/fLaC magic bytes)"
+        "unrecognized audio file: extension {0:?} and content match none of WAV, FLAC, mp3, \
+         or ogg (expected a wav/flac/mp3/ogg extension, or their magic bytes)"
     )]
     UnsupportedExtension(String),
 }

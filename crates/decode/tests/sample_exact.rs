@@ -62,17 +62,28 @@ fn stereo_24bit_flac_matches_its_wav_twin() {
 #[test]
 fn unrecognized_extension_and_content_is_a_clear_error() {
     // An unknown extension falls back to content sniffing, so the error
-    // only fires when the bytes are unrecognizable too.
+    // only fires when the bytes are unrecognizable too. (.ogg stopped
+    // being an example of "unknown" when 0.3.0 added lossy decode — a
+    // recognized extension with garbage bytes now surfaces the decoder's
+    // own parse error instead, which the second half checks.)
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
     std::fs::create_dir_all(&dir).unwrap();
-    let garbage = dir.join("not_audio.ogg");
-    std::fs::write(&garbage, b"OggS this is not a format we decode").unwrap();
+    let garbage = dir.join("not_audio.xyz");
+    std::fs::write(&garbage, b"zzzz this is not a format we decode").unwrap();
 
-    let err = cochlea_decode::load(&garbage).expect_err(".ogg with non-WAV/FLAC bytes");
+    let err = cochlea_decode::load(&garbage).expect_err(".xyz with unrecognizable bytes");
     assert!(matches!(
         err,
-        cochlea_decode::DecodeError::UnsupportedExtension(ref ext) if ext == "ogg"
+        cochlea_decode::DecodeError::UnsupportedExtension(ref ext) if ext == "xyz"
     ));
+
+    let fake_ogg = dir.join("not_audio.ogg");
+    std::fs::write(&fake_ogg, b"OggS but not actually a vorbis stream").unwrap();
+    let err = cochlea_decode::load(&fake_ogg).expect_err(".ogg with garbage bytes");
+    assert!(
+        !matches!(err, cochlea_decode::DecodeError::UnsupportedExtension(_)),
+        "a recognized extension should reach the decoder, not fall through: {err}"
+    );
 }
 
 #[test]
