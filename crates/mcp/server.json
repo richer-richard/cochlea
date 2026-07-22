@@ -2,18 +2,18 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.richer-richard/cochlea-mcp",
   "title": "Cochlea",
-  "description": "Render, analyze, and verify audio (WAV/FLAC) offline and deterministically, exposed as MCP tools.",
+  "description": "Render, analyze, and verify audio (WAV/FLAC/mp3/ogg) offline and deterministically, exposed as MCP tools.",
   "repository": {
     "url": "https://github.com/richer-richard/cochlea",
     "source": "github"
   },
-  "version": "0.2.0",
+  "version": "0.3.0",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/richer-richard/cochlea/releases/download/cochlea-mcp-v0.2.0/cochlea-mcp.mcpb",
-      "version": "0.2.0",
-      "fileSha256": "b408d25594bf99a99833a22e8fdaa9d0e712d5dabe41fe455076558c39569852",
+      "identifier": "https://github.com/richer-richard/cochlea/releases/download/cochlea-mcp-v0.3.0/cochlea-mcp.mcpb",
+      "version": "0.3.0",
+      "fileSha256": "b0c852062ea2527ea04115c01ef2e0c98def5b06b1ac7a15381f6ac0ab83a88b",
       "transport": {
         "type": "stdio"
       }
