@@ -4,7 +4,7 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
-## [Unreleased]
+## [0.3.0] — 2026-07-22
 
 The hearing upgrade: melody as notes, timbre identity, triplet grids, a
 zoom lens over every read tool, annotated and diff spectrograms, a master

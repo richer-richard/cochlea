@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "cochlea-mcp",
   "display_name": "Cochlea",
-  "version": "0.1.0",
-  "description": "Render, analyze, and verify audio (WAV/FLAC) offline and deterministically, exposed as MCP tools.",
-  "long_description": "Cochlea is a headless, deterministic audio engine. This server exposes it as MCP tools: render a declarative score to byte-identical PCM, extract loudness/pitch/tempo/key/structure reports from any WAV or FLAC, generate spectrograms, and diff two renders against each other. No ffmpeg, no audio device, no realtime path.",
+  "version": "0.3.0",
+  "description": "Render, analyze, and verify audio (WAV/FLAC/mp3/ogg) offline and deterministically, exposed as MCP tools.",
+  "long_description": "Cochlea is a headless, deterministic audio engine. This server exposes it as MCP tools: render a declarative score to byte-identical PCM, extract loudness/pitch/melody/timbre/tempo/key/structure reports from any WAV, FLAC, mp3, or ogg file, generate plain or annotated spectrograms, diff two renders in feature space or as a spectral heat map, and import Standard MIDI Files as scores. No ffmpeg, no audio device, no realtime path.",
   "author": {
     "name": "richer-richard",
     "url": "https://github.com/richer-richard"
@@ -17,7 +17,7 @@
   "documentation": "https://richer-richard.github.io/cochlea/mcp.html",
   "support": "https://github.com/richer-richard/cochlea/issues",
   "license": "MIT OR Apache-2.0",
-  "keywords": ["audio", "dsp", "deterministic", "wav", "flac", "spectrogram"],
+  "keywords": ["audio", "dsp", "deterministic", "wav", "flac", "midi", "spectrogram"],
   "server": {
     "type": "binary",
     "entry_point": "server/bin/x86_64-unknown-linux-gnu/cochlea-mcp",
@@ -45,11 +45,11 @@
     },
     {
       "name": "probe_audio",
-      "description": "Extract the full feature report (loudness, onsets, pitch, key, tempo, stereo, structure) from a WAV or FLAC file."
+      "description": "Extract the full feature report (loudness, onsets, pitch and melody notes, MFCC timbre, key, tempo, rhythm grid, stereo, structure) from a WAV, FLAC, mp3, or ogg file, optionally windowed to a time range."
     },
     {
       "name": "spectrogram",
-      "description": "Render a mel spectrogram PNG, or a tiled contact sheet, from a WAV or FLAC file."
+      "description": "Render a mel spectrogram PNG — plain, annotated with detected beats/onsets/pitch, or as a tiled contact sheet — from a WAV, FLAC, mp3, or ogg file."
     },
     {
       "name": "lint_score",
@@ -57,11 +57,19 @@
     },
     {
       "name": "probe_digest",
-      "description": "A compact text digest of a WAV or FLAC file, sized for an LLM's context window."
+      "description": "A compact text digest of a WAV, FLAC, mp3, or ogg file, sized for an LLM's context window."
     },
     {
       "name": "audio_diff",
-      "description": "Compare two audio files in feature space and report byte-identical, tier-2 equivalent, or different."
+      "description": "Compare two audio files in feature space — byte-identical, tier-2 equivalent, or different — optionally with a signed spectral-difference heat map."
+    },
+    {
+      "name": "score_reference",
+      "description": "The complete score-authoring reference: RON grammar, live instrument-preset catalog, verify assertions, and a worked example."
+    },
+    {
+      "name": "import_midi",
+      "description": "Convert a Standard MIDI File (format 0/1) to a RON score with exact timing and preset-family mapping guesses listed for re-voicing."
     }
   ]
 }

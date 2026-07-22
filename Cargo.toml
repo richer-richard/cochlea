@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -28,13 +28,13 @@ categories = ["multimedia::audio"]
 unsafe_code = "forbid"
 
 [workspace.dependencies]
-cochlea-score = { version = "0.2.0", path = "crates/score" }
-cochlea-synth = { version = "0.2.0", path = "crates/synth" }
-cochlea-render = { version = "0.2.0", path = "crates/render" }
-cochlea-features = { version = "0.2.0", path = "crates/features" }
-cochlea-spectro = { version = "0.2.0", path = "crates/spectro" }
-cochlea-verify = { version = "0.2.0", path = "crates/verify" }
-cochlea-decode = { version = "0.2.0", path = "crates/decode" }
+cochlea-score = { version = "0.3.0", path = "crates/score" }
+cochlea-synth = { version = "0.3.0", path = "crates/synth" }
+cochlea-render = { version = "0.3.0", path = "crates/render" }
+cochlea-features = { version = "0.3.0", path = "crates/features" }
+cochlea-spectro = { version = "0.3.0", path = "crates/spectro" }
+cochlea-verify = { version = "0.3.0", path = "crates/verify" }
+cochlea-decode = { version = "0.3.0", path = "crates/decode" }
 
 # Resolved on crates.io 2026-07-03 (never pinned from memory).
 #
