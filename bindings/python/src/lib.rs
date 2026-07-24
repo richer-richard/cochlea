@@ -37,12 +37,9 @@ fn load_audio(path: &str) -> PyResult<cochlea_features::Audio> {
 #[pyfunction]
 #[pyo3(signature = (score_ron, out_path, bits = "float"))]
 fn render(score_ron: &str, out_path: &str, bits: &str) -> PyResult<()> {
-    let depth = match bits {
-        "float" | "f32" | "32" => cochlea_render::WavBitDepth::Float32,
-        "24" => cochlea_render::WavBitDepth::Int24,
-        "16" => cochlea_render::WavBitDepth::Int16,
-        other => return Err(value_err(format!("unknown bits {other:?}"))),
-    };
+    // Resolve through the render crate's shared `WavBitDepth` parser (same
+    // names the CLI and MCP front doors accept), so the three never drift.
+    let depth: cochlea_render::WavBitDepth = bits.parse().map_err(value_err)?;
     let score = cochlea_score::Score::from_ron(score_ron).map_err(value_err)?;
     let rendered = cochlea_render::render(&score).map_err(value_err)?;
     rendered

@@ -269,15 +269,10 @@ fn compare_files(
 }
 
 /// `--bits` validation: `float`/`32` → 32-bit float, `24`/`16` → integer PCM.
+/// Delegates to [`cochlea_render::WavBitDepth`]'s `FromStr`, the one place the
+/// encoding names are resolved (shared with the MCP and Python front doors).
 fn parse_bit_depth(s: &str) -> Result<cochlea_render::WavBitDepth, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "float" | "f32" | "32" => Ok(cochlea_render::WavBitDepth::Float32),
-        "24" => Ok(cochlea_render::WavBitDepth::Int24),
-        "16" => Ok(cochlea_render::WavBitDepth::Int16),
-        other => Err(format!(
-            "unknown bit depth {other:?} (expected float, 24, or 16)"
-        )),
-    }
+    s.parse()
 }
 
 /// Apply a `--from`/`--to` window to loaded audio: no-op (offset 0) when
@@ -681,7 +676,17 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
         }
 
         Cmd::Export { score, out } => {
-            if out == score {
+            // Refuse to clobber the source score. A raw path compare misses a
+            // different spelling of the same file (`--out ./score.ron` vs
+            // `score.ron`), so also compare canonicalized paths — `out`
+            // canonicalizes only when it already exists, which is exactly when
+            // overwriting it would lose data.
+            let would_overwrite_source = out == score
+                || matches!(
+                    (std::fs::canonicalize(&score), std::fs::canonicalize(&out)),
+                    (Ok(a), Ok(b)) if a == b
+                );
+            if would_overwrite_source {
                 anyhow::bail!("--out would overwrite the input score {out:?}");
             }
             let loaded = load_score(&score)?;

@@ -433,15 +433,14 @@ pub fn render_score(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     };
     let stems_dir = args.get("stems_dir").and_then(Value::as_str);
     let verify = bool_or(args, "verify", false);
+    // Missing → the lossless float default; otherwise resolve through the one
+    // shared `WavBitDepth` parser (same names the CLI and Python accept).
     let bits = match args.get("bits").and_then(Value::as_str) {
-        None | Some("float" | "f32" | "32") => cochlea_render::WavBitDepth::Float32,
-        Some("24") => cochlea_render::WavBitDepth::Int24,
-        Some("16") => cochlea_render::WavBitDepth::Int16,
-        Some(other) => {
-            return ToolOutcome::InvalidParams(format!(
-                "unknown bits {other:?} (expected \"float\", \"24\", or \"16\")"
-            ));
-        }
+        None => cochlea_render::WavBitDepth::Float32,
+        Some(s) => match s.parse::<cochlea_render::WavBitDepth>() {
+            Ok(depth) => depth,
+            Err(err) => return ToolOutcome::InvalidParams(err),
+        },
     };
 
     let score_resolved = match ctx.resolve_read(score_path, "score_path") {

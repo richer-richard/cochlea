@@ -97,3 +97,36 @@ fn full_scale_samples_clamp_without_wrapping() {
         );
     }
 }
+
+/// The `WavBitDepth` selector parser is the single source of truth the CLI,
+/// MCP, and Python front doors all route through, so its aliases,
+/// case-insensitivity, and round-trip with `Display` are pinned here.
+#[test]
+fn bit_depth_parses_all_aliases_case_insensitively() {
+    for (s, want) in [
+        ("float", WavBitDepth::Float32),
+        ("Float", WavBitDepth::Float32),
+        ("f32", WavBitDepth::Float32),
+        ("32", WavBitDepth::Float32),
+        ("  FLOAT  ", WavBitDepth::Float32),
+        ("24", WavBitDepth::Int24),
+        ("16", WavBitDepth::Int16),
+    ] {
+        assert_eq!(s.parse::<WavBitDepth>(), Ok(want), "parsing {s:?}");
+    }
+}
+
+#[test]
+fn unknown_bit_depth_is_a_clear_error() {
+    let err = "8".parse::<WavBitDepth>().unwrap_err();
+    assert!(err.contains("expected float, 24, or 16"), "{err}");
+    assert!("".parse::<WavBitDepth>().is_err());
+}
+
+#[test]
+fn canonical_name_round_trips_through_the_parser() {
+    for depth in [WavBitDepth::Float32, WavBitDepth::Int24, WavBitDepth::Int16] {
+        assert_eq!(depth.canonical_str().parse::<WavBitDepth>(), Ok(depth));
+        assert_eq!(depth.to_string().parse::<WavBitDepth>(), Ok(depth));
+    }
+}

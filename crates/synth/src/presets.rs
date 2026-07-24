@@ -420,7 +420,10 @@ impl Patch for FmBell {
         // sounds more clangorous but smears the pitch, which would break the
         // listen-and-assert loop this engine exists for.)
         let ratio = 2.0_f32;
-        let index = fd::shared(4.0);
+        // Rest at the declared `brightness` default (`params()` above) so an
+        // un-automated voice sounds exactly as the catalog advertises — the
+        // engine only overwrites this cell when the score automates the param.
+        let index = fd::shared(3.0);
         let note_len = ctx.note_len_secs();
         // Amplitude: sharp attack, no sustain, long ringing decay.
         let amp = Adsr {
@@ -555,5 +558,59 @@ impl Catalog for PatchBank {
 
     fn insert_names(&self) -> Vec<String> {
         self.inserts.keys().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cochlea_score::{SampleRate, Vel};
+
+    /// Invariant that the fm_bell brightness bug violated: every preset must
+    /// *rest* at the default it advertises. A patch declares a param's
+    /// `default` in `params()` (that value is what the catalog, the docs, and
+    /// the score reference promise), but the sound actually comes from the
+    /// `Shared` cell the voice builds — and the render engine only writes that
+    /// cell when the score *automates* the param
+    /// (`crates/render/src/engine.rs`). So a cell whose initial value differs
+    /// from the declared default makes an un-automated voice render at an
+    /// undocumented value. This checks the whole palette at once, and also
+    /// pins that every declared (non-engine) param is actually wired to a cell.
+    #[test]
+    fn every_preset_rests_at_its_declared_param_defaults() {
+        let bank = PatchBank::presets();
+        let ctx = VoiceCtx {
+            pitch: Pitch::A4,
+            vel: Vel(100),
+            sample_rate: SampleRate(48_000),
+            note_len_samples: 48_000,
+            seed: 1,
+        };
+        for name in bank.patch_names() {
+            let patch = bank.patch(name).expect("registered patch resolves");
+            let voice = patch.voice(&ctx);
+            for info in patch.params() {
+                let (_, shared) = voice
+                    .controls
+                    .iter()
+                    .find(|(param, _)| *param == info.param)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "preset {name:?} declares param {:?} but its voice exposes no \
+                             control cell for it — the param is advertised yet unwired",
+                            info.param
+                        )
+                    });
+                let resting = shared.value();
+                assert!(
+                    (resting - info.default).abs() < 1e-6,
+                    "preset {name:?} param {:?}: control cell rests at {resting} but the \
+                     declared default is {} — an un-automated voice would render at an \
+                     undocumented value",
+                    info.param,
+                    info.default,
+                );
+            }
+        }
     }
 }

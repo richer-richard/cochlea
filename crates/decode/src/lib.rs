@@ -122,12 +122,13 @@ fn check_shape(audio: Audio) -> Result<Audio, DecodeError> {
 /// WAV load with the sample cap applied to the header's *declared* length
 /// before any samples are read — WAV is uncompressed, so the data-chunk size
 /// bounds the true sample count and can't understate it. This refuses an
-/// oversized WAV up front instead of after allocating it, then delegates the
-/// actual conversion to the one place that owns it
-/// (`cochlea_features::Audio::from_wav`).
+/// oversized WAV up front instead of after allocating it. The file is opened
+/// once: the same reader that reports the declared length is handed straight
+/// to `Audio::from_wav_reader` for the conversion, so the header is parsed a
+/// single time.
 fn load_wav(path: &Path, limit: Option<u64>) -> Result<Audio, DecodeError> {
+    let reader = hound::WavReader::open(path).map_err(cochlea_features::AudioError::from)?;
     if let Some(limit) = limit {
-        let reader = hound::WavReader::open(path).map_err(cochlea_features::AudioError::from)?;
         let declared = u64::from(reader.len());
         if declared > limit {
             return Err(DecodeError::TooLong {
@@ -136,7 +137,7 @@ fn load_wav(path: &Path, limit: Option<u64>) -> Result<Audio, DecodeError> {
             });
         }
     }
-    Audio::from_wav(path).map_err(DecodeError::Wav)
+    Audio::from_wav_reader(reader).map_err(DecodeError::Wav)
 }
 
 /// A recognized leading magic-byte signature.

@@ -68,7 +68,17 @@ impl Audio {
     /// rejected with [`AudioError::NonFiniteSample`] rather than let loose
     /// on analyzers whose math silently misreads NaN as silence).
     pub fn from_wav(path: &Path) -> Result<Self, AudioError> {
-        let mut reader = hound::WavReader::open(path)?;
+        Self::from_wav_reader(hound::WavReader::open(path)?)
+    }
+
+    /// Convert an already-open [`hound::WavReader`] into [`Audio`]. Same
+    /// contract as [`Audio::from_wav`], but taking a reader so a caller that
+    /// has already opened the file (e.g. `cochlea_decode`'s length peek for
+    /// its read-path cap) can hand the reader straight through instead of
+    /// re-opening and re-parsing the header.
+    pub fn from_wav_reader<R: std::io::Read>(
+        mut reader: hound::WavReader<R>,
+    ) -> Result<Self, AudioError> {
         let spec = reader.spec();
 
         // Reject a degenerate header before reading samples: zero channels

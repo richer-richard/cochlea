@@ -138,6 +138,44 @@ pub enum WavBitDepth {
     Int16,
 }
 
+impl WavBitDepth {
+    /// The canonical selector name (`"float"`/`"24"`/`"16"`), the inverse of
+    /// [`FromStr`](std::str::FromStr) — `d.canonical_str().parse() == Ok(d)`
+    /// for every variant.
+    pub const fn canonical_str(self) -> &'static str {
+        match self {
+            WavBitDepth::Float32 => "float",
+            WavBitDepth::Int24 => "24",
+            WavBitDepth::Int16 => "16",
+        }
+    }
+}
+
+impl std::fmt::Display for WavBitDepth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.canonical_str())
+    }
+}
+
+impl std::str::FromStr for WavBitDepth {
+    type Err = String;
+
+    /// Parse a `--bits`-style selector, case-insensitively: `float`/`f32`/`32`
+    /// → [`Self::Float32`], `24` → [`Self::Int24`], `16` → [`Self::Int16`].
+    /// The one place every front door (CLI, MCP, Python) resolves the encoding
+    /// name, so they can't drift; surrounding whitespace is tolerated.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "float" | "f32" | "32" => Ok(WavBitDepth::Float32),
+            "24" => Ok(WavBitDepth::Int24),
+            "16" => Ok(WavBitDepth::Int16),
+            other => Err(format!(
+                "unknown bit depth {other:?} (expected float, 24, or 16)"
+            )),
+        }
+    }
+}
+
 fn write_wav(
     path: &Path,
     sample_rate: SampleRate,
