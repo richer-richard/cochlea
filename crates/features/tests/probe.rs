@@ -275,7 +275,7 @@ fn wav_round_trip_through_hound() {
     assert_eq!(audio.samples.len(), samples.len());
 
     let report = probe(&audio, &ProbeOpts::default());
-    assert_eq!(report.schema_version, 4);
+    assert_eq!(report.schema_version, 5);
     assert_eq!(report.source.samples, audio.frames());
 }
 

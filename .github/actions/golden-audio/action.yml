@@ -1,0 +1,38 @@
+name: 'cochlea golden-audio'
+description: >
+  Fail the build when generated audio regresses against a checked-in golden
+  set, using cochlea's deterministic feature-space diff. No human ear, no
+  flaky byte comparison — a Tier-2 feature-equivalence gate (or exact
+  byte-identity).
+inputs:
+  candidates:
+    description: 'Directory of candidate audio files (model/render outputs).'
+    required: true
+  references:
+    description: 'Directory of reference (golden) audio files, matched by filename.'
+    required: true
+  tier:
+    description: "'tier2' (feature-equivalent, the default) or 'exact' (byte-identical)."
+    required: false
+    default: 'tier2'
+  json:
+    description: 'Optional path to write the JSON eval report.'
+    required: false
+    default: ''
+runs:
+  using: 'composite'
+  steps:
+    - name: cochlea eval
+      shell: bash
+      run: |
+        set -euo pipefail
+        args=(eval --candidates "${{ inputs.candidates }}" --references "${{ inputs.references }}")
+        if [ "${{ inputs.tier }}" = "exact" ]; then args+=(--exact); fi
+        if [ -n "${{ inputs.json }}" ]; then args+=(--json "${{ inputs.json }}"); fi
+        # Prefer a `cochlea` already on PATH (e.g. installed from crates.io);
+        # fall back to building it from this checkout.
+        if command -v cochlea >/dev/null 2>&1; then
+          cochlea "${args[@]}"
+        else
+          cargo run --quiet -p cochlea -- "${args[@]}"
+        fi

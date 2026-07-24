@@ -35,9 +35,10 @@ pub fn digest_text(report: &Report, timeline: &SegmentTimeline) -> String {
 
     writeln!(
         out,
-        "loudness: integrated={}  momentary_max={}  true_peak={}  lra={}",
+        "loudness: integrated={}  momentary_max={}  short_term_max={}  true_peak={}  lra={}",
         fmt_lufs(report.loudness.integrated_lufs),
         fmt_lufs(report.loudness.momentary_max_lufs),
+        fmt_lufs(report.loudness.short_term_max_lufs),
         fmt_dash(report.loudness.true_peak_dbtp, 2),
         fmt_dash(report.loudness.lra, 2),
     )
@@ -78,6 +79,12 @@ pub fn digest_text(report: &Report, timeline: &SegmentTimeline) -> String {
     }
 
     writeln!(out, "{}", fmt_structure_line(&report.structure)).expect("String write is infallible");
+
+    // Omitted when nothing harmonic was found (no chord spans, no keyed
+    // section) — an empty harmony line would carry no information.
+    if let Some(line) = fmt_harmony_line(&report.harmony) {
+        writeln!(out, "{line}").expect("String write is infallible");
+    }
 
     let duration_s = report.source.duration_ms / 1000.0;
     let onset_rate = if duration_s > 0.0 {
@@ -365,6 +372,64 @@ fn fmt_structure_line(structure: &crate::StructureReport) -> String {
             times.join(", ")
         )
     }
+}
+
+/// Display cap for the chord-symbol list.
+const MAX_CHORD_SYMBOLS: usize = 16;
+
+/// `"harmony: 4 chords (cov 82%)  C G Am F  keys: C major, A minor"` — the
+/// chord progression in order (capped with a `(+N more)` tail) followed, when
+/// the piece has more than one structural section, by the per-section keys.
+///
+/// `None` when there's nothing to add beyond the global `key:` line: no chord
+/// spans, and at most one section (whose key would just restate the global
+/// one). Per-section keys are shown only for a genuinely multi-section piece,
+/// where they carry information the single global key can't.
+fn fmt_harmony_line(harmony: &crate::HarmonyReport) -> Option<String> {
+    let show_chords = !harmony.chords.is_empty();
+    let show_sections = harmony.sections.len() >= 2;
+    if !show_chords && !show_sections {
+        return None;
+    }
+
+    let mut line = String::from("harmony:");
+    if show_chords {
+        let noun = if harmony.chords.len() == 1 {
+            "chord"
+        } else {
+            "chords"
+        };
+        let symbols: Vec<&str> = harmony
+            .chords
+            .iter()
+            .take(MAX_CHORD_SYMBOLS)
+            .map(|c| c.symbol.as_str())
+            .collect();
+        let _ = write!(
+            line,
+            " {} {noun} (cov {:.0}%)  {}",
+            harmony.chords.len(),
+            harmony.chord_coverage * 100.0,
+            symbols.join(" "),
+        );
+        if harmony.chords.len() > MAX_CHORD_SYMBOLS {
+            let _ = write!(
+                line,
+                " (+{} more)",
+                harmony.chords.len() - MAX_CHORD_SYMBOLS
+            );
+        }
+    }
+    if show_sections {
+        let keys: Vec<String> = harmony
+            .sections
+            .iter()
+            .map(|s| format!("{} {}", s.tonic.name(), mode_name(s.mode)))
+            .collect();
+        let sep = if show_chords { "  keys: " } else { " keys: " };
+        let _ = write!(line, "{sep}{}", keys.join(", "));
+    }
+    Some(line)
 }
 
 fn fmt_median_pitch(v: Option<f64>) -> String {

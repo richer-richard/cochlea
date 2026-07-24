@@ -29,7 +29,11 @@ use symphonia::core::io::MediaSourceStream;
 
 use crate::error::DecodeError;
 
-pub(crate) fn decode(path: &Path, extension_hint: &str) -> Result<Audio, DecodeError> {
+pub(crate) fn decode(
+    path: &Path,
+    extension_hint: &str,
+    limit: Option<u64>,
+) -> Result<Audio, DecodeError> {
     let file = File::open(path).map_err(|source| DecodeError::Io {
         path: path.to_path_buf(),
         source,
@@ -91,6 +95,18 @@ pub(crate) fn decode(path: &Path, extension_hint: &str) -> Result<Audio, DecodeE
         }
 
         append_interleaved(&decoded, ch, &mut samples)?;
+
+        // Refuse a decompression bomb as it accumulates, before the whole
+        // buffer materializes — the overshoot past the cap is at most one
+        // decoded packet.
+        if let Some(limit) = limit
+            && samples.len() as u64 > limit
+        {
+            return Err(DecodeError::TooLong {
+                samples: samples.len() as u64,
+                limit,
+            });
+        }
     }
 
     let (Some(sample_rate), Some(channels)) = (sample_rate, channels) else {

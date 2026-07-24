@@ -17,6 +17,9 @@ impl Param {
     pub const GAIN: Param = Param(Cow::Borrowed("gain"));
     /// Stereo pan, −1.0 (left) ..= 1.0 (right).
     pub const PAN: Param = Param(Cow::Borrowed("pan"));
+    /// Timbre brightness — for the FM bell, the modulation index (more
+    /// sidebands, brighter/more metallic as it rises).
+    pub const BRIGHTNESS: Param = Param(Cow::Borrowed("brightness"));
 
     /// A parameter name outside the well-known set.
     pub fn custom(name: impl Into<String>) -> Param {

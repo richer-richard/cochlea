@@ -15,6 +15,7 @@ mod centroid;
 mod clipping;
 mod compare;
 mod digest;
+mod harmony;
 mod key;
 mod loudness;
 mod melody;
@@ -39,7 +40,12 @@ pub use compare::{
     TimbreDelta, Verdict, compare, compare_text, compare_with_identity, samples_identical,
 };
 pub use digest::digest_text;
-pub use loudness::loudness_range;
+pub use harmony::{
+    ChordQuality, ChordSpan, HarmonyOpts, HarmonyReport, SectionKey, analyze_harmony,
+};
+pub use loudness::{
+    LoudnessPoint, LoudnessTimeline, LoudnessTimelineOpts, loudness_range, loudness_timeline,
+};
 pub use melody::{MelodyNote, extract_melody};
 pub use report::{
     ClippingReport, KeyReport, LoudnessReport, Mode, OnsetsReport, PitchClass, PitchReport,
@@ -52,7 +58,7 @@ pub use segments::{
 };
 pub use stereo::{StereoReport, analyze_stereo};
 pub use structure::{StructureOpts, StructureReport, detect_structure};
-pub use tempo::{TempoCandidate, TempoOpts, TempoReport, estimate_tempo};
+pub use tempo::{DEFAULT_BEATS_PER_BAR, TempoCandidate, TempoOpts, TempoReport, estimate_tempo};
 pub use timbre::TimbreReport;
 
 /// Schema version of [`Report`]'s JSON form. Bump and document here on any
@@ -75,7 +81,11 @@ pub use timbre::TimbreReport;
 ///   events, [`MelodyNote`]); new top-level `timbre` section (MFCC digest,
 ///   [`TimbreReport`]); `source` gains `start_ms` (nonzero when the probe
 ///   covered a `--from/--to` window of the file).
-pub const SCHEMA_VERSION: u32 = 4;
+/// - `5`: the voice-and-ears upgrade. New top-level `harmony` section — a
+///   chord timeline (template-matched from chroma) plus per-section key
+///   ([`HarmonyReport`]), answering "what's the progression" and "what key is
+///   the bridge in", which the single global `key` couldn't.
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Run every extractor over `audio` and assemble the schema-versioned
 /// report. Infallible: undefined measurements (silence, no voiced frames,
@@ -90,13 +100,19 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
     // tripling the heaviest per-probe work for byte-identical results.
     let onset_stft = stft::Stft::compute(&mono, audio.sample_rate, onsets::FFT_SIZE, onsets::HOP);
 
+    // One chroma-grade STFT (large window, for low-octave frequency
+    // resolution) feeds both the global key estimate and the harmony
+    // (chord/per-section) analysis — the same sharing the onset STFT does for
+    // onsets+tempo, so the heavy transform is computed once, not twice.
+    let chroma_stft = stft::Stft::compute(&mono, audio.sample_rate, key::FFT_SIZE, key::HOP);
+
     let loudness = loudness::analyze(audio);
     let onsets = onsets::analyze_stft(&onset_stft);
     // One YIN pass feeds both the pitch summary and the melody events.
     let f0_track = pitch::f0_track(&mono, audio.sample_rate);
     let pitch = pitch::analyze_track(&f0_track, audio.sample_rate);
     let timbre = timbre::analyze(&mono, audio.sample_rate);
-    let key = key::analyze(&mono, audio.sample_rate);
+    let key = key::analyze_stft(&chroma_stft);
     let silence = silence::analyze(&mono, audio.sample_rate, opts.silence_floor_dbfs);
     let clipping = clipping::analyze(audio, loudness.true_peak_dbtp);
     let duration_s = mono.len() as f64 / f64::from(audio.sample_rate.max(1));
@@ -110,6 +126,14 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
     let tempo = summarize_tempo(full_tempo);
     let stereo = stereo::analyze_stereo(audio);
     let structure = structure::detect_structure(audio, &StructureOpts::default());
+    // Harmony reuses the shared chroma STFT and the structure boundaries just
+    // computed — no second STFT, no second structure pass.
+    let harmony = harmony::analyze_from_parts(
+        &chroma_stft,
+        &structure.boundaries_ms,
+        audio.duration_ms(),
+        &HarmonyOpts::default(),
+    );
 
     Report {
         schema_version: SCHEMA_VERSION,
@@ -131,6 +155,7 @@ pub fn probe(audio: &Audio, opts: &ProbeOpts) -> Report {
         rhythm,
         stereo,
         structure,
+        harmony,
     }
 }
 

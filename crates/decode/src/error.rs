@@ -59,4 +59,32 @@ pub enum DecodeError {
          or ogg (expected a wav/flac/mp3/ogg extension, or their magic bytes)"
     )]
     UnsupportedExtension(String),
+    /// The file decodes to more samples than the read-path cap allows. The
+    /// read path (probe/diff/spectrogram) has no natural output bound the way
+    /// render does, so without a cap a few-KB compressed file that expands to
+    /// hours of PCM (a "decompression bomb"), or a genuinely enormous file,
+    /// would drive unbounded allocation and a very long O(window²) pitch pass.
+    /// For a legitimately huge file, raise the ceiling with
+    /// [`crate::load_with_limit`]. `samples` is the interleaved count reached
+    /// when the cap tripped (for a compressed source it may be the point the
+    /// running decode crossed the line, not the file's true length).
+    #[error(
+        "audio is too long to analyze: {samples} samples exceeds the {limit}-sample cap \
+         (use load_with_limit to raise it for a genuinely large file)"
+    )]
+    TooLong { samples: u64, limit: u64 },
+    /// The decoded audio has a degenerate shape — zero channels, zero sample
+    /// rate, or an interleaved length not divisible by the channel count. A
+    /// correct decoder shouldn't emit this, but a malformed header could;
+    /// admitting it risks divide-by-zero and assertion panics in downstream
+    /// analyzers and the mel spectrogram, so it's refused at the door.
+    #[error(
+        "degenerate audio shape: {channels} channels, {sample_rate} Hz, {samples} interleaved \
+         samples"
+    )]
+    DegenerateShape {
+        channels: u16,
+        sample_rate: u32,
+        samples: usize,
+    },
 }

@@ -69,35 +69,171 @@ impl Rendered {
         (self.mix.len() / 2) as u64
     }
 
-    /// Writes the mix as a 32-bit float stereo WAV.
+    /// Writes the mix as a 32-bit float stereo WAV — the render verbatim,
+    /// lossless. For a smaller, ordinary integer-PCM file, see
+    /// [`Rendered::write_wav_as`].
     pub fn write_wav(&self, path: impl AsRef<Path>) -> Result<(), RenderError> {
-        write_wav(path.as_ref(), self.sample_rate, &self.mix)
+        write_wav(
+            path.as_ref(),
+            self.sample_rate,
+            &self.mix,
+            WavBitDepth::Float32,
+        )
     }
 
-    /// Writes one `<track>.wav` per stem into `dir` (created if missing).
+    /// Writes the mix as a stereo WAV in the chosen PCM encoding (see
+    /// [`WavBitDepth`]). `Float32` is the render's exact ground truth;
+    /// `Int24`/`Int16` are deterministically quantized for a small, ordinary
+    /// file a human or another tool can open.
+    pub fn write_wav_as(
+        &self,
+        path: impl AsRef<Path>,
+        depth: WavBitDepth,
+    ) -> Result<(), RenderError> {
+        write_wav(path.as_ref(), self.sample_rate, &self.mix, depth)
+    }
+
+    /// Writes one `<track>.wav` per stem into `dir` (created if missing), as
+    /// 32-bit float. See [`Rendered::write_stems_as`] for other encodings.
     pub fn write_stems(&self, dir: impl AsRef<Path>) -> Result<(), RenderError> {
+        self.write_stems_as(dir, WavBitDepth::Float32)
+    }
+
+    /// Writes one `<track>.wav` per stem into `dir` (created if missing), in
+    /// the chosen PCM encoding.
+    pub fn write_stems_as(
+        &self,
+        dir: impl AsRef<Path>,
+        depth: WavBitDepth,
+    ) -> Result<(), RenderError> {
         let dir = dir.as_ref();
         std::fs::create_dir_all(dir)?;
         for (name, stem) in &self.stems {
-            write_wav(&dir.join(format!("{name}.wav")), self.sample_rate, stem)?;
+            write_wav(
+                &dir.join(format!("{name}.wav")),
+                self.sample_rate,
+                stem,
+                depth,
+            )?;
         }
         Ok(())
     }
 }
 
-fn write_wav(path: &Path, sample_rate: SampleRate, samples: &[f32]) -> Result<(), RenderError> {
+/// PCM encoding for WAV output. The render's ground truth is the f32 mix, so
+/// `Float32` is the default and the only lossless choice; `Int24`/`Int16`
+/// exist to hand a small, ordinary file to a human or a tool that wants
+/// integer PCM. Integer conversion is deterministic: clamp to `[-1, 1]`,
+/// scale to full range, round to nearest (no dither — dither would trade
+/// determinism for a lower noise floor, the wrong trade for a byte-exact test
+/// engine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WavBitDepth {
+    /// 32-bit IEEE float — the mix verbatim (default, lossless).
+    #[default]
+    Float32,
+    /// 24-bit signed integer PCM.
+    Int24,
+    /// 16-bit signed integer PCM.
+    Int16,
+}
+
+impl WavBitDepth {
+    /// The canonical selector name (`"float"`/`"24"`/`"16"`), the inverse of
+    /// [`FromStr`](std::str::FromStr) — `d.canonical_str().parse() == Ok(d)`
+    /// for every variant.
+    pub const fn canonical_str(self) -> &'static str {
+        match self {
+            WavBitDepth::Float32 => "float",
+            WavBitDepth::Int24 => "24",
+            WavBitDepth::Int16 => "16",
+        }
+    }
+}
+
+impl std::fmt::Display for WavBitDepth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.canonical_str())
+    }
+}
+
+impl std::str::FromStr for WavBitDepth {
+    type Err = String;
+
+    /// Parse a `--bits`-style selector, case-insensitively: `float`/`f32`/`32`
+    /// → [`Self::Float32`], `24` → [`Self::Int24`], `16` → [`Self::Int16`].
+    /// The one place every front door (CLI, MCP, Python) resolves the encoding
+    /// name, so they can't drift; surrounding whitespace is tolerated.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "float" | "f32" | "32" => Ok(WavBitDepth::Float32),
+            "24" => Ok(WavBitDepth::Int24),
+            "16" => Ok(WavBitDepth::Int16),
+            other => Err(format!(
+                "unknown bit depth {other:?} (expected float, 24, or 16)"
+            )),
+        }
+    }
+}
+
+fn write_wav(
+    path: &Path,
+    sample_rate: SampleRate,
+    samples: &[f32],
+    depth: WavBitDepth,
+) -> Result<(), RenderError> {
+    let (bits_per_sample, sample_format) = match depth {
+        WavBitDepth::Float32 => (32, hound::SampleFormat::Float),
+        WavBitDepth::Int24 => (24, hound::SampleFormat::Int),
+        WavBitDepth::Int16 => (16, hound::SampleFormat::Int),
+    };
     let spec = hound::WavSpec {
         channels: 2,
         sample_rate: sample_rate.0,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
+        bits_per_sample,
+        sample_format,
     };
     let mut writer = hound::WavWriter::create(path, spec)?;
-    for &s in samples {
-        writer.write_sample(s)?;
+    match depth {
+        WavBitDepth::Float32 => {
+            for &s in samples {
+                writer.write_sample(s)?;
+            }
+        }
+        WavBitDepth::Int24 => {
+            for &s in samples {
+                writer.write_sample(quantize_int(s, 23))?;
+            }
+        }
+        WavBitDepth::Int16 => {
+            for &s in samples {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "quantize_int clamps into the 16-bit range, so the cast is exact"
+                )]
+                writer.write_sample(quantize_int(s, 15) as i16)?;
+            }
+        }
     }
     writer.finalize()?;
     Ok(())
+}
+
+/// Deterministic float→signed-integer PCM: clamp `s` to `[-1, 1]`, scale by
+/// `2^frac_bits`, round to nearest, and clamp into the signed range
+/// `[-2^frac_bits, 2^frac_bits - 1]`. Returned as `i32` (the 24-bit path
+/// writes it directly; the 16-bit path narrows the already-clamped value).
+fn quantize_int(s: f32, frac_bits: u32) -> i32 {
+    let scale = f64::from(1u32 << frac_bits);
+    let scaled = (f64::from(s).clamp(-1.0, 1.0) * scale).round();
+    let clamped = scaled.clamp(-scale, scale - 1.0);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "clamped into i32-representable signed range above"
+    )]
+    {
+        clamped as i32
+    }
 }
 
 fn render_inner(score: &Score, bank: &PatchBank, parallel: bool) -> Result<Rendered, RenderError> {

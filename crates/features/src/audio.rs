@@ -40,6 +40,22 @@ pub enum AudioError {
         /// Index into the interleaved sample stream of the first offender.
         index: usize,
     },
+    /// The header declares a degenerate shape: zero channels, zero sample
+    /// rate, or a sample count not divisible by the channel count. None of
+    /// these is analyzable audio, and admitting one risks divide-by-zero or
+    /// assertion panics downstream (the mel spectrogram and several analyzers
+    /// assume a well-formed shape) — rejected at the door.
+    #[error(
+        "degenerate WAV shape: {channels} channels, {sample_rate} Hz, {samples} interleaved samples"
+    )]
+    DegenerateShape {
+        /// Declared channel count.
+        channels: u16,
+        /// Declared sample rate, Hz.
+        sample_rate: u32,
+        /// Interleaved sample count actually read.
+        samples: usize,
+    },
 }
 
 impl Audio {
@@ -52,8 +68,29 @@ impl Audio {
     /// rejected with [`AudioError::NonFiniteSample`] rather than let loose
     /// on analyzers whose math silently misreads NaN as silence).
     pub fn from_wav(path: &Path) -> Result<Self, AudioError> {
-        let mut reader = hound::WavReader::open(path)?;
+        Self::from_wav_reader(hound::WavReader::open(path)?)
+    }
+
+    /// Convert an already-open [`hound::WavReader`] into [`Audio`]. Same
+    /// contract as [`Audio::from_wav`], but taking a reader so a caller that
+    /// has already opened the file (e.g. `cochlea_decode`'s length peek for
+    /// its read-path cap) can hand the reader straight through instead of
+    /// re-opening and re-parsing the header.
+    pub fn from_wav_reader<R: std::io::Read>(
+        mut reader: hound::WavReader<R>,
+    ) -> Result<Self, AudioError> {
         let spec = reader.spec();
+
+        // Reject a degenerate header before reading samples: zero channels
+        // would make the interleave stride (and several downstream analyzers)
+        // divide by zero, and a zero sample rate has no time base.
+        if spec.channels == 0 || spec.sample_rate == 0 {
+            return Err(AudioError::DegenerateShape {
+                channels: spec.channels,
+                sample_rate: spec.sample_rate,
+                samples: 0,
+            });
+        }
 
         let samples = match spec.sample_format {
             hound::SampleFormat::Float if spec.bits_per_sample == 32 => {
@@ -77,6 +114,17 @@ impl Audio {
                 });
             }
         };
+
+        // A ragged read (interleaved length not a whole number of frames)
+        // means a truncated or malformed data chunk — refuse rather than let
+        // a partial final frame skew every per-frame analyzer.
+        if !samples.len().is_multiple_of(usize::from(spec.channels)) {
+            return Err(AudioError::DegenerateShape {
+                channels: spec.channels,
+                sample_rate: spec.sample_rate,
+                samples: samples.len(),
+            });
+        }
 
         Ok(Self {
             samples,

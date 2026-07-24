@@ -46,7 +46,7 @@ use crate::error::DecodeError;
 /// convention (see this module's docs).
 const FULL_SCALE_I32: f64 = 2_147_483_648.0;
 
-pub(crate) fn decode(path: &Path) -> Result<Audio, DecodeError> {
+pub(crate) fn decode(path: &Path, limit: Option<u64>) -> Result<Audio, DecodeError> {
     let file = File::open(path).map_err(|source| DecodeError::Io {
         path: path.to_path_buf(),
         source,
@@ -132,6 +132,17 @@ pub(crate) fn decode(path: &Path) -> Result<Audio, DecodeError> {
                     .expect("ch is within 0..channels, matching buf.num_planes()");
                 samples.push((f64::from(plane[frame]) / FULL_SCALE_I32) as f32);
             }
+        }
+
+        // Refuse a bomb as it accumulates, before the whole buffer
+        // materializes — the overshoot past the cap is at most one packet.
+        if let Some(limit) = limit
+            && samples.len() as u64 > limit
+        {
+            return Err(DecodeError::TooLong {
+                samples: samples.len() as u64,
+                limit,
+            });
         }
     }
 

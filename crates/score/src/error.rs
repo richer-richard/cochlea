@@ -53,6 +53,16 @@ pub enum ScoreError {
     #[error("a note needs a positive duration")]
     ZeroDuration,
 
+    #[error(
+        "{what} resolves to tick {tick}, past the maximum authored position {max} \
+         (positions this far out cannot be rendered — the longest render is one hour)"
+    )]
+    PositionTooFar {
+        what: &'static str,
+        tick: u64,
+        max: u64,
+    },
+
     #[error("automation needs at least one key")]
     EmptyKeys,
 

@@ -46,11 +46,10 @@ impl ProbeOpts {
     }
 }
 
-/// Top-level probe report, `schema_version: 3`. Mirrors the JSON sketch in
-/// `docs/plan.md` (`crates/features`) field-for-field, plus the analyzers
-/// added since the initial sketch (`tempo`/`stereo`/`structure`/`rhythm`,
-/// and `loudness.lra`) — see [`crate::SCHEMA_VERSION`]'s docs for the
-/// version history.
+/// Top-level probe report. Mirrors the JSON sketch in `docs/plan.md`
+/// (`crates/features`) field-for-field, plus the analyzers added since the
+/// initial sketch (`tempo`/`stereo`/`structure`/`rhythm`, `loudness.lra`, and
+/// `harmony`) — see [`crate::SCHEMA_VERSION`]'s docs for the version history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
     /// Report schema version; see [`crate::SCHEMA_VERSION`].
@@ -86,6 +85,9 @@ pub struct Report {
     /// Self-similarity structural section boundaries. Added in
     /// `schema_version: 2`.
     pub structure: crate::StructureReport,
+    /// Chord timeline and per-section key — the harmony the single global
+    /// `key` can't express. Added in `schema_version: 5`.
+    pub harmony: crate::HarmonyReport,
 }
 
 /// Compact tempo summary embedded in [`Report`]. Deliberately not the full
@@ -146,6 +148,11 @@ pub struct LoudnessReport {
     pub integrated_lufs: Option<f64>,
     /// Running max of 400 ms momentary-loudness readings, LUFS.
     pub momentary_max_lufs: Option<f64>,
+    /// Running max of 3 s short-term-loudness readings, LUFS (EBU R128
+    /// short-term window). `None` for buffers shorter than one short-term
+    /// window or entirely below the gate. Added in `schema_version: 5`.
+    #[serde(default)]
+    pub short_term_max_lufs: Option<f64>,
     /// True peak (rate-dependent oversampled), dBTP.
     pub true_peak_dbtp: Option<f64>,
     /// Sample peak (no oversampling), dBFS.
@@ -218,7 +225,7 @@ pub struct KeyReport {
 }
 
 /// A pitch class, serialized as its note name (`"C"`, `"C#"`, ...).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PitchClass {
     /// C
     #[serde(rename = "C")]

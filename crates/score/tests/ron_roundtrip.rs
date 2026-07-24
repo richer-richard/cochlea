@@ -133,6 +133,63 @@ fn unknown_fields_are_rejected_not_ignored() {
 }
 
 #[test]
+fn far_future_tempo_tick_is_refused_at_load_not_panicked_on() {
+    // Adversarial review, Finding 1: a crafted tempo tick near u64::MAX used
+    // to reach unchecked `mul_div` in tempo_map() and panic the renderer.
+    // It must now fail cleanly at load, before any arithmetic runs.
+    let text = r#"Score(version: 1, sample_rate: 48000, ppq: 960,
+        tempo: [(tick: 0, bpm: 120.0), (tick: 18446744073709551000, bpm: 120.0)],
+        tracks: [Track(name: "lead", instrument: Preset("sine"),
+                       notes: [Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96)])])"#;
+    assert!(matches!(
+        Score::from_ron(text),
+        Err(ScoreError::PositionTooFar {
+            what: "tempo change",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_tempo_tick_at_the_bound_is_accepted_and_its_map_never_overflows() {
+    // Exactly at the ceiling: allowed, and building the tempo map (the code
+    // that used to panic) completes without overflow. It exceeds the one-hour
+    // render cap, but that's the render layer's job to report, not a panic.
+    let at_bound = Ticks::MAX.0;
+    let score = Score::new(SampleRate(48_000), Ppq(960))
+        .try_tempo(Ticks(0), Bpm(120.0))
+        .unwrap()
+        .try_tempo(Ticks(at_bound), Bpm(90.0))
+        .unwrap();
+    let map = score.tempo_map();
+    // Worst-case-ish arithmetic actually runs: no panic, finite sample index.
+    let _ = map.sample_at(Ticks(at_bound));
+
+    // One past the ceiling is refused.
+    assert!(matches!(
+        Score::new(SampleRate(48_000), Ppq(960)).try_tempo(Ticks(at_bound + 1), Bpm(120.0)),
+        Err(ScoreError::PositionTooFar { .. })
+    ));
+}
+
+#[test]
+fn a_raw_tick_note_past_the_bound_is_refused() {
+    // The note path is normally bounded by (u32 bar, u32 beat), but a raw-tick
+    // position or a huge raw-tick duration must not slip past the same guard.
+    let huge = Ticks::MAX.0;
+    assert!(matches!(
+        Score::new(SampleRate(48_000), Ppq(960))
+            .try_track("t", Instrument::preset("sine"))
+            .unwrap()
+            .try_note("t", Ticks(huge), Dur::ticks(4_096), Pitch::A4, Vel(96)),
+        Err(ScoreError::PositionTooFar {
+            what: "note end",
+            ..
+        })
+    ));
+}
+
+#[test]
 fn raw_tick_durations_survive_the_data_form() {
     // 961 ticks is off every musical grid; it canonicalizes to a reduced
     // fraction of the whole note and reloads to the same tick count.

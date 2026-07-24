@@ -145,6 +145,7 @@ fn tools_list_shape() {
             "score_reference",
             "audio_diff",
             "import_midi",
+            "export_midi",
         ]
     );
     for tool in tools {

@@ -7,7 +7,7 @@
 //! `demos/<name>/expected/spectro.png`; without it, images must match the
 //! committed sentinel within tolerance.
 
-use cochlea_features::{Audio, Mode, PitchClass, ProbeOpts, probe};
+use cochlea_features::{Audio, ChordQuality, Mode, PitchClass, ProbeOpts, probe};
 use cochlea_render::{Rendered, render};
 use cochlea_score::*;
 use cochlea_verify::VerifyExt;
@@ -119,6 +119,82 @@ fn chord_pad_harmony_reads_as_written() {
     let report = probe(&audio_of(&rendered), &ProbeOpts::default());
     assert_eq!(report.key.tonic, PitchClass::C, "{:?}", report.key);
     assert_eq!(report.key.mode, Mode::Major, "{:?}", report.key);
+
+    // The score is a I-IV-V-I in C major (C, F, G, C whole notes). The chord
+    // detector must read that *root progression* back off the rendered audio.
+    // Roots are the musically robust claim; exact triad-vs-seventh quality is
+    // genuinely ambiguous on harmonic-rich synth audio (a triad's upper
+    // partials activate the matching seventh), so we assert the roots, not the
+    // qualities.
+    let chords = &report.harmony.chords;
+    assert!(!chords.is_empty(), "no chords detected: {chords:?}");
+    let roots: std::collections::HashSet<PitchClass> = chords.iter().map(|c| c.root).collect();
+    for expected in [PitchClass::C, PitchClass::F, PitchClass::G] {
+        assert!(
+            roots.contains(&expected),
+            "expected root {expected:?} in the I-IV-V-I, detected roots {roots:?}"
+        );
+    }
+    // The detected chords are all major-family (major triad or its sevenths),
+    // never minor — the progression is diatonic major.
+    for c in chords {
+        assert!(
+            matches!(
+                c.quality,
+                ChordQuality::Major | ChordQuality::Major7 | ChordQuality::Dominant7
+            ),
+            "unexpected non-major chord {}: {c:?}",
+            c.symbol
+        );
+    }
+    // Almost the whole 8 s is a held chord — coverage should be high.
+    assert!(
+        report.harmony.chord_coverage > 0.7,
+        "chord coverage = {}",
+        report.harmony.chord_coverage
+    );
+}
+
+#[test]
+fn fm_bell_reads_back_at_the_played_pitch() {
+    // The new non-subtractive voice must still read back on the note it
+    // played — harmonic FM + a decaying modulation index keep the sustained
+    // pitch unambiguous, so the listen-and-assert loop still works on it.
+    let score = Score::new(SampleRate(48_000), Ppq(960))
+        .track("bell", Instrument::preset("fm_bell"))
+        .note("bell", bar(1), Dur::half(), Pitch::A4, Vel(110));
+    let rendered = render(&score).unwrap();
+    let report = probe(&audio_of(&rendered), &ProbeOpts::default());
+    let note = report
+        .pitch
+        .melody
+        .first()
+        .expect("fm_bell should produce a pitched note");
+    assert_eq!(note.name, "A4", "fm_bell A4 read back as {}", note.name);
+    assert!(
+        note.cents_off.abs() < 40.0,
+        "fm_bell A4 is {:+.0} cents off",
+        note.cents_off
+    );
+
+    // The brightness param is exposed for automation and validates.
+    let automated = Score::new(SampleRate(48_000), Ppq(960))
+        .track("bell", Instrument::preset("fm_bell"))
+        .note("bell", bar(1), Dur::half(), Pitch::A4, Vel(110))
+        .automate(
+            "bell",
+            Param::BRIGHTNESS,
+            keys![(bar(1), 8.0), (bar(1).beat(3), 1.0)],
+        );
+    let errors: Vec<_> = automated
+        .validate(&cochlea_synth::PatchBank::presets())
+        .into_iter()
+        .filter(|f| f.severity == cochlea_score::Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "brightness automation must validate: {errors:?}"
+    );
 }
 
 #[test]

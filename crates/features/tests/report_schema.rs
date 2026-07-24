@@ -4,7 +4,10 @@
 //! here with `libm`, never a synth dependency — mirrors `tests/probe.rs`'s
 //! style.
 
-use cochlea_features::{Analysis, Audio, ProbeOpts, SegmentOpts, compare, probe, segment_timeline};
+use cochlea_features::{
+    Analysis, Audio, LoudnessTimelineOpts, ProbeOpts, SegmentOpts, compare, loudness_timeline,
+    probe, segment_timeline,
+};
 
 mod common;
 use common::*;
@@ -24,10 +27,10 @@ fn stereo_audio(left: Vec<f32>, right: Vec<f32>, sample_rate: u32) -> Audio {
 }
 
 #[test]
-fn schema_version_is_4() {
+fn schema_version_is_5() {
     let audio = mono_audio(sine_wave(440.0, 0.5, 1.0, SR), SR);
     let report = probe(&audio, &ProbeOpts::default());
-    assert_eq!(report.schema_version, 4);
+    assert_eq!(report.schema_version, 5);
 }
 
 #[test]
@@ -85,6 +88,42 @@ fn report_loudness_lra_is_defined_and_responds_to_dynamics() {
         .lra
         .expect("a 25 s stepped-loudness file should have an LRA");
     assert!(lra > 5.0, "lra = {lra}");
+}
+
+#[test]
+fn loudness_timeline_and_short_term_track_a_level_step() {
+    // 6 s quiet then 6 s loud (a 20 dB step): both the short-term report
+    // field and the timeline curve must see the lift.
+    let quiet = libm::pow(10.0, -30.0 / 20.0);
+    let loud = libm::pow(10.0, -10.0 / 20.0);
+    let mut samples = sine_wave(997.0, quiet, 6.0, SR);
+    samples.extend(sine_wave(997.0, loud, 6.0, SR));
+    let audio = mono_audio(samples, SR);
+
+    let report = probe(&audio, &ProbeOpts::default());
+    let st = report
+        .loudness
+        .short_term_max_lufs
+        .expect("12 s of audio should have a short-term reading");
+    // The loud tail is around -13 LUFS short-term; the max must reflect it.
+    assert!(st > -20.0, "short_term_max = {st}");
+
+    let tl = loudness_timeline(&audio, &LoudnessTimelineOpts::default());
+    assert!(!tl.points.is_empty(), "timeline should have points");
+    let first = tl
+        .points
+        .iter()
+        .find_map(|p| p.momentary_lufs)
+        .expect("some early point is defined");
+    let last = tl
+        .points
+        .last()
+        .and_then(|p| p.momentary_lufs)
+        .expect("the final point is defined");
+    assert!(
+        last > first + 10.0,
+        "the loud region should read markedly louder: {first} -> {last}"
+    );
 }
 
 #[test]
