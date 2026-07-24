@@ -4,6 +4,78 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
+## [Unreleased]
+
+The voice-and-ears upgrade, and a hardening pass from an adversarial review:
+close the two reproduced crashes and the read-path DoS, then answer harmony,
+loudness-over-time, integer-PCM and MIDI export, a golden-audio eval harness,
+and Python bindings.
+
+### Hardening (adversarial review)
+
+- **No tool can take the MCP server down.** `cochlea-mcp` now wraps every
+  tool dispatch in `catch_unwind`, so a panic anywhere in the pipeline becomes
+  a contained `isError` result instead of unwinding the single-threaded serve
+  loop and killing the long-lived process (and every in-flight and future
+  request in the session). Regression-tested with a poison call followed by a
+  harmless one.
+- **Far-future positions can't panic the renderer.** Authored ticks (tempo
+  changes, note ends, automation keys) are bounded at load by `Ticks::MAX`
+  (2³²) — chosen to keep the exact tick→sample/ns rational arithmetic from
+  overflowing `u64` while still exceeding any one-hour render — so a crafted
+  tempo tick that used to reach unchecked `mul_div` and panic now fails cleanly
+  with `PositionTooFar`. Covers the programmatic builder, the RON loader, and
+  MIDI import.
+- **The read path is bounded.** `cochlea_decode::load` caps total decoded
+  samples (`DEFAULT_MAX_SAMPLES`, overridable via `load_with_limit`),
+  refusing a decompression bomb *as it accumulates* and an oversized WAV from
+  its header — closing the unbounded-allocation / O(window²)-compute DoS that
+  render's one-hour cap didn't cover.
+- **Degenerate audio is refused at the door.** Zero channels, zero sample
+  rate, or a ragged interleave are rejected by both `Audio::from_wav` and the
+  decode boundary, so the mel spectrogram and per-frame analyzers can never be
+  reached with a shape that would divide by zero or trip an assertion.
+
+### Added — hearing (Report schema v5)
+
+- **`harmony`** (`HarmonyReport`): a chord timeline plus per-section key — the
+  two questions ("what's the progression", "what key is the bridge in") the
+  single global `key` couldn't answer. Chords are template-matched from the
+  same chroma the key estimate uses (major/minor/7ths/dim/aug/sus4 in all
+  twelve roots), with a presence gate and a simplicity bias so a bare triad
+  isn't over-read as a seventh or a lone note as a chord. Per-section key
+  reuses the Krumhansl-Schmuckler correlation over structure-segmented chroma.
+  Standalone `analyze_harmony`; a `harmony:` line in the digest.
+- **`loudness.short_term_max_lufs`** and a standalone `loudness_timeline`
+  (momentary + short-term LUFS sampled over time) — the dynamics view the
+  single integrated/LRA summary can't give.
+
+### Added — I/O
+
+- **16- and 24-bit integer WAV output** alongside the lossless 32-bit float
+  (`Rendered::write_wav_as`/`WavBitDepth`; CLI `render --bits 16|24|float`;
+  MCP `render_score` `bits`). Deterministic round-to-nearest quantization,
+  clamped, no dither.
+- **MIDI export** (`export_midi`): a Score → Standard MIDI File (format 1)
+  writer, the inverse of the importer — timing (ticks, tempo map, time
+  signature) exports exactly, instruments become rough GM labels. CLI
+  `export`, MCP `export_midi`; round-trip tested against the importer.
+- **Python bindings** (`bindings/python`, pyo3 + maturin): `probe`, `diff`,
+  `render`, `spectrogram`, `probe_digest`, `samples_identical`, plus an
+  `assert_audio(...)` fluent API and a pytest `assert_audio` fixture. The
+  deterministic core stays pure Rust; this is a thin reach layer (a detached
+  crate, kept out of the determinism-critical build).
+
+### Added — golden-audio harness
+
+- **`cochlea eval`**: score a directory of candidate audio files against a
+  directory of references (matched by filename), deterministically — a
+  per-file verdict table, an aggregate pass rate, exit 1 on any regression or
+  missing reference, optional JSON. The generative-model / reference-render
+  regression oracle.
+- A **GitHub composite action** (`.github/actions/golden-audio`) wrapping it,
+  and a [golden-audio testing guide](docs/golden-audio.md).
+
 ## [0.3.0] — 2026-07-22
 
 The hearing upgrade: melody as notes, timbre identity, triplet grids, a

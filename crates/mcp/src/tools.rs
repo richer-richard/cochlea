@@ -140,7 +140,13 @@ pub fn schemas() -> Vec<Value> {
                     },
                     "out_path": {
                         "type": "string",
-                        "description": "Where to write the rendered mix (32-bit float stereo WAV)."
+                        "description": "Where to write the rendered mix (stereo WAV)."
+                    },
+                    "bits": {
+                        "type": "string",
+                        "enum": ["float", "24", "16"],
+                        "description": "PCM encoding for the WAV: 'float' (32-bit, lossless, the render's ground truth — default), '24', or '16' (integer, for a small ordinary file).",
+                        "default": "float"
                     },
                     "stems_dir": {
                         "type": "string",
@@ -157,7 +163,7 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "probe_audio",
-            "description": "Extract the full feature report (integrated LUFS/true peak/LRA, onsets, YIN pitch track plus quantized melody notes, MFCC timbre digest, chroma/key, tempo with octave-alternative candidates and stability, rhythm with grid alignment and a straight-vs-triplet grid call, stereo image, structural sections, silence, clipping — schema v4) from any WAV, FLAC, mp3, or ogg file, no score needed. Use this to 'listen' to audio through numbers: check loudness targets, confirm onset timing or tempo, or read back the melody you composed. Pass from_s/to_s to zoom into a time window instead of probing the whole file (report times are then relative to the cut; source.start_ms anchors them).",
+            "description": "Extract the full feature report (integrated LUFS/true peak/LRA, onsets, YIN pitch track plus quantized melody notes, MFCC timbre digest, chroma/key, a chord timeline and per-section key (harmony), tempo with octave-alternative candidates and stability, rhythm with grid alignment and a straight-vs-triplet grid call, stereo image, structural sections, silence, clipping — schema v5) from any WAV, FLAC, mp3, or ogg file, no score needed. Use this to 'listen' to audio through numbers: check loudness targets, confirm onset timing or tempo, read back the melody you composed, or see the chord progression. Pass from_s/to_s to zoom into a time window instead of probing the whole file (report times are then relative to the cut; source.start_ms anchors them).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -316,6 +322,24 @@ pub fn schemas() -> Vec<Value> {
                 "required": ["midi_path", "out_path"]
             }
         }),
+        json!({
+            "name": "export_midi",
+            "description": "Convert a cochlea RON score into a Standard MIDI File (format 1) — the inverse of import_midi. Timing exports exactly (score ticks become SMF ticks, the tempo map and time signature carry over); instruments become rough General MIDI program labels, since a synth preset isn't a GM instrument. Use this to hand a composed score to a DAW or notation tool, or to round-trip through external MIDI editing.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "score_path": {
+                        "type": "string",
+                        "description": "Path to a RON score file (data form version 1)."
+                    },
+                    "out_path": {
+                        "type": "string",
+                        "description": "Where to write the Standard MIDI File (.mid)."
+                    }
+                },
+                "required": ["score_path", "out_path"]
+            }
+        }),
     ]
 }
 
@@ -409,6 +433,16 @@ pub fn render_score(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     };
     let stems_dir = args.get("stems_dir").and_then(Value::as_str);
     let verify = bool_or(args, "verify", false);
+    let bits = match args.get("bits").and_then(Value::as_str) {
+        None | Some("float" | "f32" | "32") => cochlea_render::WavBitDepth::Float32,
+        Some("24") => cochlea_render::WavBitDepth::Int24,
+        Some("16") => cochlea_render::WavBitDepth::Int16,
+        Some(other) => {
+            return ToolOutcome::InvalidParams(format!(
+                "unknown bits {other:?} (expected \"float\", \"24\", or \"16\")"
+            ));
+        }
+    };
 
     let score_resolved = match ctx.resolve_read(score_path, "score_path") {
         Ok(p) => p,
@@ -448,11 +482,11 @@ pub fn render_score(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(rendered) => rendered,
         Err(err) => return ToolOutcome::Failed(format!("rendering {score_path}: {err}")),
     };
-    if let Err(err) = rendered.write_wav(&out_resolved) {
+    if let Err(err) = rendered.write_wav_as(&out_resolved, bits) {
         return ToolOutcome::Failed(format!("writing {out_path}: {err}"));
     }
     if let Some(dir) = &stems_resolved
-        && let Err(err) = rendered.write_stems(dir)
+        && let Err(err) = rendered.write_stems_as(dir, bits)
     {
         return ToolOutcome::Failed(format!("writing stems to {}: {err}", dir.display()));
     }
@@ -737,6 +771,58 @@ pub fn import_midi(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
          the guessed presets.",
     );
     ToolOutcome::Ok(summary)
+}
+
+/// `export_midi`: mirrors `cochlea export` (`crates/cli/src/main.rs`
+/// `Cmd::Export`) — RON score in, Standard MIDI File out. Timing exports
+/// exactly; instruments become rough GM labels (the inverse of the importer).
+pub fn export_midi(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
+    let score_path = match require_str(args, "score_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let out_path = match require_str(args, "out_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+
+    let score_resolved = match ctx.resolve_read(score_path, "score_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let out_resolved = match ctx.resolve_write(out_path, "out_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    if out_resolved == score_resolved {
+        return ToolOutcome::InvalidParams(
+            "out_path must not alias score_path (the MIDI write would overwrite the score)"
+                .to_string(),
+        );
+    }
+
+    let text = match std::fs::read_to_string(&score_resolved) {
+        Ok(text) => text,
+        Err(err) => return ToolOutcome::Failed(format!("reading {score_path}: {err}")),
+    };
+    let score = match cochlea_score::Score::from_ron(&text) {
+        Ok(score) => score,
+        Err(err) => return ToolOutcome::Failed(format!("parsing {score_path}: {err}")),
+    };
+    let bytes = match cochlea_score::export_midi(&score) {
+        Ok(bytes) => bytes,
+        Err(err) => return ToolOutcome::Failed(format!("exporting {score_path}: {err}")),
+    };
+    if let Err(err) = std::fs::write(&out_resolved, bytes) {
+        return ToolOutcome::Failed(format!("writing {out_path}: {err}"));
+    }
+
+    ToolOutcome::Ok(format!(
+        "exported {} tracks, {} tempo changes -> {out_path}\nnote: timing is exact; instruments \
+         are rough General MIDI labels — re-voice in your MIDI tool as needed.",
+        score.tracks().len(),
+        score.tempo_changes().count(),
+    ))
 }
 
 /// `score_reference`: the self-describing half of the compose loop — the

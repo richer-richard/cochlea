@@ -71,7 +71,7 @@ fn render_probe_spectrogram_round_trip() {
     let response = call_tool(&server, 2, "probe_audio", json!({"audio_path": wav}));
     assert_eq!(response["result"]["isError"], false, "{response}");
     let report: Value = serde_json::from_str(tool_text(&response)).unwrap();
-    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["schema_version"], 5);
     assert_eq!(report["source"]["sample_rate"], 48_000);
     assert_eq!(report["source"]["channels"], 2);
 
@@ -158,7 +158,7 @@ fn probe_audio_and_digest_read_flac() {
     let response = call_tool(&server, 1, "probe_audio", json!({"audio_path": flac}));
     assert_eq!(response["result"]["isError"], false, "{response}");
     let report: Value = serde_json::from_str(tool_text(&response)).unwrap();
-    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["schema_version"], 5);
     assert_eq!(report["source"]["channels"], 1);
 
     let response = call_tool(&server, 2, "probe_digest", json!({"audio_path": flac}));

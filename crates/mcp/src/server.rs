@@ -138,16 +138,21 @@ impl Server {
         let empty = json!({});
         let args = params.get("arguments").unwrap_or(&empty);
 
-        let outcome = match name {
-            "render_score" => tools::render_score(&self.ctx, args),
-            "probe_audio" => tools::probe_audio(&self.ctx, args),
-            "spectrogram" => tools::spectrogram(&self.ctx, args),
-            "lint_score" => tools::lint_score(&self.ctx, args),
-            "probe_digest" => tools::probe_digest(&self.ctx, args),
-            "audio_diff" => tools::audio_diff(&self.ctx, args),
-            "import_midi" => tools::import_midi(&self.ctx, args),
-            "score_reference" => tools::score_reference(),
-            other => return Err((INVALID_PARAMS, format!("unknown tool: {other}"))),
+        // A tool must never be able to take the server down. This is a
+        // long-lived stdio process; an unwinding panic from any tool would
+        // tear it down and lose every in-flight and future request in the
+        // session, not just fail the one call. `catch_unwind` contains a
+        // panic and turns it into an ordinary `isError: true` result.
+        // `AssertUnwindSafe` is sound here: `self.ctx` is read-only and
+        // `args` is borrowed immutably, so a contained panic leaves no
+        // half-mutated state observable to later calls. The individual
+        // panics are still worth fixing at their source — this is the
+        // defense-in-depth backstop, not a substitute.
+        let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.run_tool(name, args)
+        })) {
+            Ok(outcome) => outcome,
+            Err(payload) => ToolOutcome::Failed(panic_message(name, payload.as_ref())),
         };
 
         Ok(match outcome {
@@ -166,6 +171,44 @@ impl Server {
             ToolOutcome::InvalidParams(message) => return Err((INVALID_PARAMS, message)),
         })
     }
+
+    /// The tool-name dispatch, split out so [`tools_call`] can run it under
+    /// `catch_unwind`. An unknown tool becomes `InvalidParams` (the wrapping
+    /// match turns that back into the JSON-RPC error the caller expects).
+    fn run_tool(&self, name: &str, args: &Value) -> ToolOutcome {
+        match name {
+            "render_score" => tools::render_score(&self.ctx, args),
+            "probe_audio" => tools::probe_audio(&self.ctx, args),
+            "spectrogram" => tools::spectrogram(&self.ctx, args),
+            "lint_score" => tools::lint_score(&self.ctx, args),
+            "probe_digest" => tools::probe_digest(&self.ctx, args),
+            "audio_diff" => tools::audio_diff(&self.ctx, args),
+            "import_midi" => tools::import_midi(&self.ctx, args),
+            "export_midi" => tools::export_midi(&self.ctx, args),
+            "score_reference" => tools::score_reference(),
+            // Test-only arm: a guaranteed panic to prove the `catch_unwind`
+            // backstop keeps the server alive, independent of whichever real
+            // panics happen to be reachable at any given time.
+            #[cfg(test)]
+            "__panic_for_test" => panic!("intentional panic for the containment test"),
+            other => ToolOutcome::InvalidParams(format!("unknown tool: {other}")),
+        }
+    }
+}
+
+/// Render a caught panic payload into a caller-facing message. The payload
+/// of a `panic!` is a `&str` or `String`; anything else is reported
+/// generically. The message states plainly that the server survived.
+fn panic_message(tool: &str, payload: &(dyn std::any::Any + Send)) -> String {
+    let detail = payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic payload".to_string());
+    format!(
+        "internal error: the {tool} tool panicked and was contained ({detail}). \
+         This is a bug in cochlea; the server is still running and can take further requests."
+    )
 }
 
 /// Runs the newline-delimited JSON-RPC loop over an arbitrary reader/writer
@@ -224,5 +267,59 @@ pub fn serve<R: BufRead, W: Write>(
             writeln!(writer, "{response}")?;
             writer.flush()?;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn tool_call_line(id: u64, tool: &str) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"{tool}"}}}}"#
+        )
+    }
+
+    /// Finding 2 regression: a panicking tool must be contained as an
+    /// `isError` result, and the *next* request on the same long-lived
+    /// server must still be answered — the panic must not unwind the serve
+    /// loop and kill the process.
+    #[test]
+    fn a_tool_panic_is_contained_and_the_server_keeps_serving() {
+        let server = Server::new();
+        let input = format!(
+            "{}\n{}\n",
+            tool_call_line(1, "__panic_for_test"),
+            tool_call_line(2, "score_reference"),
+        );
+        let mut out = Vec::new();
+        serve(&server, Cursor::new(input.into_bytes()), &mut out).expect("serve must not error");
+
+        let out = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2, "both requests must be answered:\n{out}");
+
+        // id:1 — the panic came back as a contained tool error, not a dead
+        // process.
+        let r1: Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(r1["id"], 1);
+        assert_eq!(
+            r1["result"]["isError"], true,
+            "a panicking tool must report isError"
+        );
+        let text = r1["result"]["content"][0]["text"].as_str().unwrap_or("");
+        assert!(
+            text.contains("panicked"),
+            "panic surfaced to caller: {text}"
+        );
+
+        // id:2 — the very next call still works: the server survived.
+        let r2: Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(r2["id"], 2);
+        assert_eq!(
+            r2["result"]["isError"], false,
+            "the server must keep serving after a contained panic"
+        );
     }
 }

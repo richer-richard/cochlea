@@ -16,16 +16,18 @@ use crate::report::{KeyReport, Mode, PitchClass};
 use crate::stft::Stft;
 
 /// FFT size in samples: large, for low-octave frequency resolution (see
-/// the module docs). At 48 kHz, ~171 ms / ~5.9 Hz per bin.
-const FFT_SIZE: usize = 8192;
+/// the module docs). At 48 kHz, ~171 ms / ~5.9 Hz per bin. `pub(crate)` so
+/// [`crate::probe`] can compute this transform once and feed both the key
+/// estimate and [`crate::harmony`], which wants the same chroma resolution.
+pub(crate) const FFT_SIZE: usize = 8192;
 /// Hop size in samples (75% overlap at `FFT_SIZE = 8192`).
-const HOP: usize = 2048;
+pub(crate) const HOP: usize = 2048;
 
 /// Ignore STFT bins outside this range when building chroma: below is
 /// mostly sub-bass/DC leakage, above is thin, aliased-into-pitch-class
 /// harmonic content that mostly adds noise to the chroma weighting.
-const CHROMA_MIN_HZ: f64 = 55.0;
-const CHROMA_MAX_HZ: f64 = 5000.0;
+pub(crate) const CHROMA_MIN_HZ: f64 = 55.0;
+pub(crate) const CHROMA_MAX_HZ: f64 = 5000.0;
 
 /// Krumhansl-Kessler major-key profile, index 0 = tonic.
 const MAJOR_PROFILE: [f64; 12] = [
@@ -36,34 +38,44 @@ const MINOR_PROFILE: [f64; 12] = [
     6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17,
 ];
 
-pub(crate) fn analyze(mono: &[f32], sample_rate: u32) -> KeyReport {
-    let stft = Stft::compute(mono, sample_rate, FFT_SIZE, HOP);
-    let chroma = chroma_vector(&stft);
+/// Key estimate off an already-computed chroma-grade STFT (`FFT_SIZE`/`HOP`).
+/// [`crate::probe`] computes that STFT once and shares it with
+/// [`crate::harmony`] rather than transforming twice.
+pub(crate) fn analyze_stft(stft: &Stft) -> KeyReport {
+    let chroma = chroma_vector(stft);
+    let (tonic, mode, confidence) = correlate(&chroma);
+    KeyReport {
+        tonic,
+        mode,
+        confidence,
+        chroma,
+    }
+}
 
+/// Krumhansl-Schmuckler key correlation: return the `(tonic, mode)` whose
+/// rotated Krumhansl-Kessler profile best correlates (Pearson) with `chroma`,
+/// and that correlation. Shared by the global [`analyze`] and by
+/// [`crate::harmony`]'s per-section key estimate, so both read a key off a
+/// chroma vector the exact same way (only the chroma's time span differs).
+pub(crate) fn correlate(chroma: &[f64; 12]) -> (PitchClass, Mode, f64) {
     let mut best_tonic = PitchClass::C;
     let mut best_mode = Mode::Major;
     let mut best_corr = f64::MIN;
     for (t, &tonic) in PitchClass::ALL.iter().enumerate() {
-        let major_corr = pearson(&chroma, &rotate(&MAJOR_PROFILE, t));
+        let major_corr = pearson(chroma, &rotate(&MAJOR_PROFILE, t));
         if major_corr > best_corr {
             best_corr = major_corr;
             best_tonic = tonic;
             best_mode = Mode::Major;
         }
-        let minor_corr = pearson(&chroma, &rotate(&MINOR_PROFILE, t));
+        let minor_corr = pearson(chroma, &rotate(&MINOR_PROFILE, t));
         if minor_corr > best_corr {
             best_corr = minor_corr;
             best_tonic = tonic;
             best_mode = Mode::Minor;
         }
     }
-
-    KeyReport {
-        tonic: best_tonic,
-        mode: best_mode,
-        confidence: best_corr,
-        chroma,
-    }
+    (best_tonic, best_mode, best_corr)
 }
 
 /// Accumulate STFT-magnitude energy into 12 pitch-class bins by mapping

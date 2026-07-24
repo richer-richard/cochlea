@@ -23,6 +23,7 @@
 mod data;
 mod error;
 mod midi;
+mod midi_export;
 mod param;
 mod pitch;
 mod reference;
@@ -35,6 +36,7 @@ mod verify_spec;
 pub use data::DATA_VERSION;
 pub use error::ScoreError;
 pub use midi::{MidiImport, import_midi};
+pub use midi_export::export_midi;
 pub use param::Param;
 pub use pitch::Pitch;
 pub use reference::authoring_reference;

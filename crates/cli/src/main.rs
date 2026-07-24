@@ -28,9 +28,13 @@ enum Cmd {
     Render {
         /// The score (RON data form, version 1).
         score: PathBuf,
-        /// Output WAV path (32-bit float stereo).
+        /// Output WAV path.
         #[arg(long)]
         out: PathBuf,
+        /// PCM encoding: `float` (32-bit, lossless, the render's ground
+        /// truth), `24`, or `16` (integer, for a small ordinary file).
+        #[arg(long, default_value = "float", value_parser = parse_bit_depth)]
+        bits: cochlea_render::WavBitDepth,
         /// Also write one WAV per track into this directory.
         #[arg(long)]
         stems: Option<PathBuf>,
@@ -102,6 +106,27 @@ enum Cmd {
         #[arg(long, value_parser = parse_seconds)]
         to: Option<f64>,
     },
+    /// Score a directory of candidate audio files against a directory of
+    /// reference (golden) files, matched by filename — the golden-audio /
+    /// generative-model regression harness. Prints a per-file verdict table
+    /// and exits 1 if any pair regressed or a reference is missing.
+    Eval {
+        /// Directory of candidate audio files (model/render outputs).
+        #[arg(long)]
+        candidates: PathBuf,
+        /// Directory of reference (golden) audio files, matched by filename.
+        #[arg(long)]
+        references: PathBuf,
+        /// Require byte-identity instead of Tier-2 feature-equivalence.
+        #[arg(long)]
+        exact: bool,
+        /// Write the JSON eval report here.
+        #[arg(long)]
+        json: Option<PathBuf>,
+        /// Window length for the per-pair comparison, milliseconds.
+        #[arg(long, default_value_t = 1000.0, value_parser = parse_window_ms)]
+        window_ms: f64,
+    },
     /// Statically validate a score against the preset catalog.
     Lint {
         /// The score (RON data form, version 1).
@@ -148,6 +173,16 @@ enum Cmd {
         #[arg(long, default_value_t = 48_000)]
         sample_rate: u32,
     },
+    /// Export a RON score to a Standard MIDI File (format 1). Timing is
+    /// exact; instruments become rough General MIDI labels — the inverse of
+    /// `import`.
+    Export {
+        /// Input RON score (data form, version 1).
+        score: PathBuf,
+        /// Output MIDI file path (.mid).
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Print the score-authoring reference (RON grammar, instrument
     /// catalog, verify assertions, worked example) — the same text the
     /// MCP `score_reference` tool serves.
@@ -187,6 +222,64 @@ fn parse_seconds(s: &str) -> Result<f64, String> {
     Ok(v)
 }
 
+/// Whether a path has a decodable audio extension (the `eval` file filter).
+fn is_audio_ext(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .is_some_and(|e| matches!(e.as_str(), "wav" | "wave" | "flac" | "mp3" | "ogg" | "oga"))
+}
+
+/// The serde/display name of a [`cochlea_features::Verdict`].
+fn verdict_name(v: cochlea_features::Verdict) -> &'static str {
+    match v {
+        cochlea_features::Verdict::ByteIdentical => "byte_identical",
+        cochlea_features::Verdict::Tier2Equivalent => "tier2_equivalent",
+        cochlea_features::Verdict::Different { .. } => "different",
+    }
+}
+
+/// Feature-space compare of two audio files, returning just the verdict — the
+/// per-pair unit of `eval` (mirrors `diff`'s comparison, minus the outputs).
+fn compare_files(
+    a: &Path,
+    b: &Path,
+    opts: &cochlea_features::SegmentOpts,
+) -> anyhow::Result<cochlea_features::Verdict> {
+    let audio_a = cochlea_decode::load(a).with_context(|| format!("reading {}", a.display()))?;
+    let audio_b = cochlea_decode::load(b).with_context(|| format!("reading {}", b.display()))?;
+    let probe_opts = cochlea_features::ProbeOpts::default();
+    let report_a = cochlea_features::probe(&audio_a, &probe_opts);
+    let report_b = cochlea_features::probe(&audio_b, &probe_opts);
+    let timeline_a = cochlea_features::segment_timeline(&audio_a, opts);
+    let timeline_b = cochlea_features::segment_timeline(&audio_b, opts);
+    let identical = cochlea_features::samples_identical(&audio_a, &audio_b);
+    let result = cochlea_features::compare_with_identity(
+        cochlea_features::Analysis {
+            report: &report_a,
+            timeline: &timeline_a,
+        },
+        cochlea_features::Analysis {
+            report: &report_b,
+            timeline: &timeline_b,
+        },
+        identical,
+    );
+    Ok(result.verdict)
+}
+
+/// `--bits` validation: `float`/`32` → 32-bit float, `24`/`16` → integer PCM.
+fn parse_bit_depth(s: &str) -> Result<cochlea_render::WavBitDepth, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "float" | "f32" | "32" => Ok(cochlea_render::WavBitDepth::Float32),
+        "24" => Ok(cochlea_render::WavBitDepth::Int24),
+        "16" => Ok(cochlea_render::WavBitDepth::Int16),
+        other => Err(format!(
+            "unknown bit depth {other:?} (expected float, 24, or 16)"
+        )),
+    }
+}
+
 /// Apply a `--from`/`--to` window to loaded audio: no-op (offset 0) when
 /// neither flag is set; an inverted or empty result is a usage error, not
 /// a silent empty analysis.
@@ -217,6 +310,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
         Cmd::Render {
             score,
             out,
+            bits,
             stems,
             verify,
             report,
@@ -224,7 +318,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             let score = load_score(&score)?;
             let rendered = cochlea_render::render(&score)?;
             rendered
-                .write_wav(&out)
+                .write_wav_as(&out, bits)
                 .with_context(|| format!("writing {}", out.display()))?;
             eprintln!(
                 "rendered {} frames at {} Hz -> {}",
@@ -234,7 +328,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             );
             if let Some(dir) = stems {
                 rendered
-                    .write_stems(&dir)
+                    .write_stems_as(&dir, bits)
                     .with_context(|| format!("writing stems to {}", dir.display()))?;
             }
             if verify {
@@ -425,6 +519,94 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             Ok(std::process::ExitCode::SUCCESS)
         }
 
+        Cmd::Eval {
+            candidates,
+            references,
+            exact,
+            json,
+            window_ms,
+        } => {
+            // Enumerate candidate audio files, sorted for a deterministic
+            // report order regardless of directory-read order.
+            let mut cands: Vec<PathBuf> = std::fs::read_dir(&candidates)
+                .with_context(|| format!("reading {}", candidates.display()))?
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| is_audio_ext(p))
+                .collect();
+            cands.sort();
+
+            let opts = cochlea_features::SegmentOpts::default().with_window_ms(window_ms);
+            let mut cases = Vec::new();
+            for cand in &cands {
+                let name = cand
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let reference = references.join(&name);
+                let (verdict, passed) = if !reference.exists() {
+                    ("missing_reference".to_string(), false)
+                } else {
+                    match compare_files(cand, &reference, &opts) {
+                        Ok(v) => {
+                            let pass = if exact {
+                                matches!(v, cochlea_features::Verdict::ByteIdentical)
+                            } else {
+                                matches!(
+                                    v,
+                                    cochlea_features::Verdict::ByteIdentical
+                                        | cochlea_features::Verdict::Tier2Equivalent
+                                )
+                            };
+                            (verdict_name(v).to_string(), pass)
+                        }
+                        Err(e) => (format!("error: {e}"), false),
+                    }
+                };
+                println!(
+                    "{:>4}  {name:<28}  {verdict}",
+                    if passed { "ok" } else { "FAIL" }
+                );
+                cases.push(serde_json::json!({
+                    "name": name,
+                    "verdict": verdict,
+                    "passed": passed,
+                }));
+            }
+
+            let passed = cases.iter().filter(|c| c["passed"] == true).count();
+            let total = cases.len();
+            eprintln!(
+                "eval: {passed}/{total} passed ({} tolerance)",
+                if exact { "exact" } else { "tier-2" }
+            );
+            if total == 0 {
+                eprintln!(
+                    "warning: no candidate audio files in {}",
+                    candidates.display()
+                );
+            }
+
+            if let Some(path) = &json {
+                let report = serde_json::json!({
+                    "candidates": candidates.display().to_string(),
+                    "references": references.display().to_string(),
+                    "tier": if exact { "exact" } else { "tier2" },
+                    "passed": passed,
+                    "total": total,
+                    "cases": cases,
+                });
+                std::fs::write(path, serde_json::to_string_pretty(&report)?)
+                    .with_context(|| format!("writing {}", path.display()))?;
+            }
+
+            if total > 0 && passed == total {
+                Ok(std::process::ExitCode::SUCCESS)
+            } else {
+                Ok(std::process::ExitCode::from(1))
+            }
+        }
+
         Cmd::Lint { score } => {
             let score = load_score(&score)?;
             let findings = score.validate(&PatchBank::presets());
@@ -495,6 +677,22 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             if errors > 0 {
                 anyhow::bail!("imported score fails lint with {errors} error(s)");
             }
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+
+        Cmd::Export { score, out } => {
+            if out == score {
+                anyhow::bail!("--out would overwrite the input score {out:?}");
+            }
+            let loaded = load_score(&score)?;
+            let bytes = cochlea_score::export_midi(&loaded)?;
+            std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
+            eprintln!(
+                "exported {} tracks, {} tempo changes -> {}",
+                loaded.tracks().len(),
+                loaded.tempo_changes().count(),
+                out.display()
+            );
             Ok(std::process::ExitCode::SUCCESS)
         }
 

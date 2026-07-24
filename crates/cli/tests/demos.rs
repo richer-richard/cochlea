@@ -7,7 +7,7 @@
 //! `demos/<name>/expected/spectro.png`; without it, images must match the
 //! committed sentinel within tolerance.
 
-use cochlea_features::{Audio, Mode, PitchClass, ProbeOpts, probe};
+use cochlea_features::{Audio, ChordQuality, Mode, PitchClass, ProbeOpts, probe};
 use cochlea_render::{Rendered, render};
 use cochlea_score::*;
 use cochlea_verify::VerifyExt;
@@ -119,6 +119,40 @@ fn chord_pad_harmony_reads_as_written() {
     let report = probe(&audio_of(&rendered), &ProbeOpts::default());
     assert_eq!(report.key.tonic, PitchClass::C, "{:?}", report.key);
     assert_eq!(report.key.mode, Mode::Major, "{:?}", report.key);
+
+    // The score is a I-IV-V-I in C major (C, F, G, C whole notes). The chord
+    // detector must read that *root progression* back off the rendered audio.
+    // Roots are the musically robust claim; exact triad-vs-seventh quality is
+    // genuinely ambiguous on harmonic-rich synth audio (a triad's upper
+    // partials activate the matching seventh), so we assert the roots, not the
+    // qualities.
+    let chords = &report.harmony.chords;
+    assert!(!chords.is_empty(), "no chords detected: {chords:?}");
+    let roots: std::collections::HashSet<PitchClass> = chords.iter().map(|c| c.root).collect();
+    for expected in [PitchClass::C, PitchClass::F, PitchClass::G] {
+        assert!(
+            roots.contains(&expected),
+            "expected root {expected:?} in the I-IV-V-I, detected roots {roots:?}"
+        );
+    }
+    // The detected chords are all major-family (major triad or its sevenths),
+    // never minor — the progression is diatonic major.
+    for c in chords {
+        assert!(
+            matches!(
+                c.quality,
+                ChordQuality::Major | ChordQuality::Major7 | ChordQuality::Dominant7
+            ),
+            "unexpected non-major chord {}: {c:?}",
+            c.symbol
+        );
+    }
+    // Almost the whole 8 s is a held chord — coverage should be high.
+    assert!(
+        report.harmony.chord_coverage > 0.7,
+        "chord coverage = {}",
+        report.harmony.chord_coverage
+    );
 }
 
 #[test]

@@ -49,6 +49,48 @@ fn fixtures() -> &'static (PathBuf, PathBuf) {
 }
 
 #[test]
+fn eval_passes_matching_and_fails_regressed_or_missing() {
+    let (metronome, chord_pad) = fixtures();
+    let cand = tmp_path("eval_cand");
+    let refs = tmp_path("eval_ref");
+    std::fs::create_dir_all(&cand).unwrap();
+    std::fs::create_dir_all(&refs).unwrap();
+
+    let eval = |c: &Path, r: &Path| -> Option<i32> {
+        cochlea()
+            .args([
+                "eval",
+                "--candidates",
+                c.to_str().unwrap(),
+                "--references",
+                r.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap()
+            .code()
+    };
+
+    // A matching pair (identical file both sides) passes -> exit 0.
+    std::fs::copy(chord_pad, cand.join("a.wav")).unwrap();
+    std::fs::copy(chord_pad, refs.join("a.wav")).unwrap();
+    assert_eq!(eval(&cand, &refs), Some(0), "matching pair should pass");
+
+    // A regressed reference (a different render) fails -> exit 1.
+    std::fs::copy(metronome, refs.join("a.wav")).unwrap();
+    assert_eq!(eval(&cand, &refs), Some(1), "regressed pair should fail");
+
+    // A candidate with no matching reference fails -> exit 1.
+    let cand2 = tmp_path("eval_cand_orphan");
+    std::fs::create_dir_all(&cand2).unwrap();
+    std::fs::copy(chord_pad, cand2.join("orphan.wav")).unwrap();
+    assert_eq!(
+        eval(&cand2, &refs),
+        Some(1),
+        "a missing reference should fail"
+    );
+}
+
+#[test]
 fn probe_digest_prints_a_digest_not_json() {
     let (a, _b) = fixtures();
     let output = cochlea()
@@ -110,7 +152,7 @@ fn probe_digest_and_json_together_write_both() {
     // ...full JSON report to the file, both present, no conflict.
     let report: Value =
         serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], 4);
+    assert_eq!(report["schema_version"], 5);
 }
 
 #[test]
