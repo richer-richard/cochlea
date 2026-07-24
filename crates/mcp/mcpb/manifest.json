@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "cochlea-mcp",
   "display_name": "Cochlea",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Render, analyze, and verify audio (WAV/FLAC/mp3/ogg) offline and deterministically, exposed as MCP tools.",
   "long_description": "Cochlea is a headless, deterministic audio engine. This server exposes it as MCP tools: render a declarative score to byte-identical PCM, extract loudness/pitch/melody/timbre/tempo/key/structure reports from any WAV, FLAC, mp3, or ogg file, generate plain or annotated spectrograms, diff two renders in feature space or as a spectral heat map, and import Standard MIDI Files as scores. No ffmpeg, no audio device, no realtime path.",
   "author": {
@@ -45,7 +45,7 @@
     },
     {
       "name": "probe_audio",
-      "description": "Extract the full feature report (loudness, onsets, pitch and melody notes, MFCC timbre, key, tempo, rhythm grid, stereo, structure) from a WAV, FLAC, mp3, or ogg file, optionally windowed to a time range."
+      "description": "Extract the full feature report (loudness, onsets, pitch and melody notes, MFCC timbre, key, a chord timeline and per-section key, tempo, rhythm grid, stereo, structure) from a WAV, FLAC, mp3, or ogg file, optionally windowed to a time range."
     },
     {
       "name": "spectrogram",
@@ -70,6 +70,10 @@
     {
       "name": "import_midi",
       "description": "Convert a Standard MIDI File (format 0/1) to a RON score with exact timing and preset-family mapping guesses listed for re-voicing."
+    },
+    {
+      "name": "export_midi",
+      "description": "Convert a cochlea RON score to a Standard MIDI File (format 1) — the inverse of import_midi, with exact timing and rough General MIDI instrument labels."
     }
   ]
 }

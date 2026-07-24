@@ -4,7 +4,7 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
-## [Unreleased]
+## [0.4.0] — 2026-07-24
 
 The voice-and-ears upgrade, and a hardening pass from an adversarial review:
 close the two reproduced crashes and the read-path DoS, then answer harmony,
