@@ -19,6 +19,12 @@ categories.workspace = true
 
 [dependencies]
 cochlea-features.workspace = true
+# For the WAV header peek in `load_wav`: a compressed decompression bomb is
+# caught mid-decode, but an oversized *uncompressed* WAV is cheaper to refuse
+# from its declared data-chunk length before any samples are read. hound is
+# already the WAV reader under `cochlea_features::Audio::from_wav`; this is a
+# direct, header-only use of the same crate.
+hound.workspace = true
 symphonia.workspace = true
 thiserror.workspace = true
 

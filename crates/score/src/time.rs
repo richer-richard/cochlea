@@ -13,6 +13,23 @@ pub struct Ticks(pub u64);
 impl Ticks {
     /// Tick zero — the start of the score.
     pub const ZERO: Ticks = Ticks(0);
+
+    /// The largest tick an authored position (note, tempo change, or
+    /// automation key) may resolve to. `2^32` ticks.
+    ///
+    /// This is the domain bound that keeps the exact rational tick→sample
+    /// and tick→nanosecond arithmetic in `tempo.rs` from ever overflowing
+    /// `u64`. The worst case is the slowest tempo (1 BPM ⇒ 6·10¹⁰ ns/quarter)
+    /// at the coarsest grid (24 PPQ): `MAX · 6e10 / 24 ≈ 1.07·10¹⁹` ns, still
+    /// under `u64::MAX ≈ 1.84·10¹⁹`. It also comfortably exceeds the most
+    /// ticks a one-hour render can contain (~3.69·10⁹ at 4000 BPM / 15360
+    /// PPQ), so no renderable score is ever refused for being *authored* too
+    /// far out — anything between here and the one-hour cap is caught cleanly
+    /// at render time instead. Positions past this bound are refused at
+    /// authoring/load time with [`ScoreError::PositionTooFar`]; before this
+    /// bound existed, a crafted far-future tempo tick reached unchecked
+    /// `mul_div` and panicked the renderer (adversarial review, Finding 1).
+    pub const MAX: Ticks = Ticks(1 << 32);
 }
 
 impl std::ops::Add for Ticks {
