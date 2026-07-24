@@ -58,7 +58,7 @@ pub use segments::{
 };
 pub use stereo::{StereoReport, analyze_stereo};
 pub use structure::{StructureOpts, StructureReport, detect_structure};
-pub use tempo::{TempoCandidate, TempoOpts, TempoReport, estimate_tempo};
+pub use tempo::{DEFAULT_BEATS_PER_BAR, TempoCandidate, TempoOpts, TempoReport, estimate_tempo};
 pub use timbre::TimbreReport;
 
 /// Schema version of [`Report`]'s JSON form. Bump and document here on any

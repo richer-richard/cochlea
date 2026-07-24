@@ -1,4 +1,4 @@
-//! The eight shipped presets and the reverb insert, plus the `PatchBank`
+//! The nine shipped presets and the reverb insert, plus the `PatchBank`
 //! registry that resolves names and backs score validation via `Catalog`.
 //!
 //! Determinism rules in force here (docs/determinism.md): fundsp graphs use
@@ -380,6 +380,76 @@ impl Patch for Pluck {
     }
 }
 
+/// FM bell: a single-operator FM voice with an inharmonic modulator ratio
+/// (metallic, bell-like partials), a near-instant attack, no sustain, and a
+/// long decay to silence, plus an automatable `brightness` (the modulation
+/// index — more sidebands as it rises). The palette's one non-subtractive
+/// voice: it widens the timbral range past the saws/squares the critique
+/// called narrow, and shows the score IR carrying a *timbre* knob an agent
+/// can sweep, not just a filter cutoff.
+struct FmBell;
+
+impl Patch for FmBell {
+    fn name(&self) -> &'static str {
+        "fm_bell"
+    }
+
+    fn params(&self) -> Vec<ParamInfo> {
+        vec![ParamInfo {
+            param: Param::BRIGHTNESS,
+            unit: "index",
+            min: 0.0,
+            max: 12.0,
+            default: 3.0,
+        }]
+    }
+
+    fn polyphony(&self) -> Polyphony {
+        Polyphony::Poly(12)
+    }
+
+    fn release_secs(&self) -> f64 {
+        0.6
+    }
+
+    fn voice(&self, ctx: &VoiceCtx) -> Voice {
+        let carrier = freq32(ctx.pitch);
+        // A *harmonic* modulator ratio keeps every FM sideband a harmonic of
+        // the carrier, so the perceived fundamental — and the pitch a probe
+        // reads back — stays exactly on the played note. (An inharmonic ratio
+        // sounds more clangorous but smears the pitch, which would break the
+        // listen-and-assert loop this engine exists for.)
+        let ratio = 2.0_f32;
+        let index = fd::shared(4.0);
+        let note_len = ctx.note_len_secs();
+        // Amplitude: sharp attack, no sustain, long ringing decay.
+        let amp = Adsr {
+            attack: 0.002,
+            decay: 0.9,
+            sustain: 0.0,
+            release: 0.6,
+        };
+        // The modulation index decays faster than the amplitude, so the strike
+        // is bright/metallic and the tail settles toward a clean carrier tone
+        // — the classic FM-bell gesture, and what keeps the sustained pitch
+        // unambiguous.
+        let index_decay = Adsr {
+            attack: 0.001,
+            decay: 0.28,
+            sustain: 0.0,
+            release: 0.28,
+        };
+        // Single-operator FM: instantaneous freq = carrier + depth·modulator,
+        // where depth = brightness · carrier · index_env (Hz), fed into a
+        // frequency-input sine.
+        let depth = fd::var(&index) * fd::dc(carrier) * adsr_node(index_decay, note_len, 1.0);
+        let modulator = fd::sine_hz(carrier * ratio) * depth;
+        let fm = (modulator + fd::dc(carrier)) >> fd::sine();
+        let graph = (fm * adsr_node(amp, note_len, 0.26 * ctx.amp())) >> fd::pan(0.0);
+        boxed_voice(ctx, vec![(Param::BRIGHTNESS, index)], graph)
+    }
+}
+
 /// The reverb insert: the in-repo Schroeder (docs/determinism.md explains
 /// why fundsp's FDN reverbs are off-limits).
 struct ReverbInsert;
@@ -415,7 +485,7 @@ pub struct PatchBank {
 }
 
 impl PatchBank {
-    /// The eight shipped presets and the reverb insert.
+    /// The nine shipped presets and the reverb insert.
     pub fn presets() -> PatchBank {
         let mut patches: BTreeMap<String, Arc<dyn Patch>> = BTreeMap::new();
         for patch in [
@@ -427,6 +497,7 @@ impl PatchBank {
             Arc::new(Pluck),
             Arc::new(Kick),
             Arc::new(Snare),
+            Arc::new(FmBell),
         ] {
             patches.insert(patch.name().to_owned(), patch);
         }

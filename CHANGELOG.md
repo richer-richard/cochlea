@@ -49,6 +49,18 @@ and Python bindings.
 - **`loudness.short_term_max_lufs`** and a standalone `loudness_timeline`
   (momentary + short-term LUFS sampled over time) — the dynamics view the
   single integrated/LRA summary can't give.
+- **Downbeat / bar-relative reporting**: `TempoReport` gains `beats_per_bar`
+  and `downbeats_ms` (the bar-opening beats, by onset-energy phase under an
+  assumed meter), plus `TempoReport::bar_beat_at(ms)` — "beat 3 of bar 2"
+  instead of a raw millisecond offset.
+
+### Added — generation
+
+- **`fm_bell` preset**: a single-operator FM voice (harmonic ratio so the
+  pitch reads back on the played note, a decaying modulation index for the
+  bright metallic strike) with an automatable `brightness` param — the
+  palette's first non-subtractive voice, widening the timbral range and
+  showing the IR carry a timbre knob an agent can sweep, not just a cutoff.
 
 ### Added — I/O
 

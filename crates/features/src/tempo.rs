@@ -170,6 +170,45 @@ pub struct TempoReport {
     pub stability: Option<f64>,
     /// Beat grid, milliseconds, ascending. Empty when `bpm` is `None`.
     pub beats_ms: Vec<f64>,
+    /// Assumed beats per bar for the downbeat estimate. Fixed at
+    /// [`DEFAULT_BEATS_PER_BAR`] — arbitrary audio carries no time signature,
+    /// so the *phase* (which beat opens the bar) is estimated but the meter
+    /// is assumed. A caller that knows the real meter can re-derive bars from
+    /// `beats_ms`.
+    pub beats_per_bar: usize,
+    /// Bar-start (downbeat) times, milliseconds — a subset of `beats_ms`, the
+    /// beats whose phase (mod `beats_per_bar`) carries the most onset energy.
+    /// Empty when there's no beat grid. A heuristic under a fixed meter, not a
+    /// meter-detecting downbeat tracker.
+    pub downbeats_ms: Vec<f64>,
+}
+
+/// Assumed meter for downbeat estimation (see [`TempoReport::beats_per_bar`]).
+pub const DEFAULT_BEATS_PER_BAR: usize = 4;
+
+impl TempoReport {
+    /// Bar and beat (both 1-based) at `time_ms`, from the estimated downbeat
+    /// grid — the bar-relative position an agent actually reasons with ("the
+    /// snare is on beat 3 of bar 2") instead of a raw millisecond offset.
+    /// `None` before the first downbeat, or when there's no grid. Under the
+    /// assumed [`Self::beats_per_bar`] meter (see that field's caveat).
+    pub fn bar_beat_at(&self, time_ms: f64) -> Option<(u32, u32)> {
+        const EPS: f64 = 1e-6;
+        let bar_idx = self.downbeats_ms.iter().rposition(|&d| d <= time_ms + EPS)?;
+        let bar_start = self.downbeats_ms[bar_idx];
+        // Beats from this bar's downbeat up to and including `time_ms`.
+        let beat = self
+            .beats_ms
+            .iter()
+            .filter(|&&b| b >= bar_start - EPS && b <= time_ms + EPS)
+            .count()
+            .max(1);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "bar/beat indices are small counts, well within u32"
+        )]
+        Some((bar_idx as u32 + 1, beat as u32))
+    }
 }
 
 pub(crate) fn degenerate_report() -> TempoReport {
@@ -179,6 +218,8 @@ pub(crate) fn degenerate_report() -> TempoReport {
         candidates: Vec::new(),
         stability: None,
         beats_ms: Vec::new(),
+        beats_per_bar: DEFAULT_BEATS_PER_BAR,
+        downbeats_ms: Vec::new(),
     }
 }
 
@@ -268,9 +309,21 @@ pub(crate) fn estimate_from_parts(
         })
         .collect();
 
-    let beats_ms: Vec<f64> = beat_grid(&flux, period_frames, BEAT_DP_LAMBDA)
-        .into_iter()
-        .map(|t| frame_center_ms(t, sample_rate))
+    let beat_frames = beat_grid(&flux, period_frames, BEAT_DP_LAMBDA);
+    let beats_ms: Vec<f64> = beat_frames
+        .iter()
+        .map(|&t| frame_center_ms(t, sample_rate))
+        .collect();
+
+    // Downbeat phase: the bar-opening beat carries the most onset energy on
+    // average, so pick the phase (mod DEFAULT_BEATS_PER_BAR) whose beats sum
+    // to the highest flux.
+    let downbeat_phase = downbeat_phase(&flux, &beat_frames, DEFAULT_BEATS_PER_BAR);
+    let downbeats_ms: Vec<f64> = beat_frames
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % DEFAULT_BEATS_PER_BAR == downbeat_phase)
+        .map(|(_, &t)| frame_center_ms(t, sample_rate))
         .collect();
 
     let stability = stability_of(&flux, min_lag, max_lag, frame_rate, period_frames);
@@ -281,7 +334,32 @@ pub(crate) fn estimate_from_parts(
         candidates,
         stability,
         beats_ms,
+        beats_per_bar: DEFAULT_BEATS_PER_BAR,
+        downbeats_ms,
     }
+}
+
+/// The beat-phase (`0..beats_per_bar`) whose beats carry the most summed onset
+/// flux — the estimated downbeat position. Ties resolve to the earliest phase.
+fn downbeat_phase(flux: &[f64], beat_frames: &[usize], beats_per_bar: usize) -> usize {
+    if beats_per_bar == 0 || beat_frames.is_empty() {
+        return 0;
+    }
+    let mut best_phase = 0;
+    let mut best_energy = f64::MIN;
+    for phase in 0..beats_per_bar {
+        let energy: f64 = beat_frames
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i % beats_per_bar == phase)
+            .map(|(_, &f)| flux.get(f).copied().unwrap_or(0.0))
+            .sum();
+        if energy > best_energy {
+            best_energy = energy;
+            best_phase = phase;
+        }
+    }
+    best_phase
 }
 
 /// The winning lag plus up to [`MAX_CANDIDATES`] distinct peak lags, each
@@ -528,4 +606,48 @@ fn beat_grid(flux: &[f64], period_frames: usize, lambda: f64) -> Vec<usize> {
 fn frame_center_ms(frame: usize, sample_rate: u32) -> f64 {
     (frame as f64 * onsets::HOP as f64 + onsets::FFT_SIZE as f64 / 2.0) / f64::from(sample_rate)
         * 1000.0
+}
+
+#[cfg(test)]
+mod downbeat_tests {
+    use super::*;
+
+    #[test]
+    fn phase_lands_on_the_accented_beat() {
+        // Beats every 10 frames; the 0th, 4th, 8th... carry extra flux.
+        let beat_frames: Vec<usize> = (0..12).map(|i| i * 10).collect();
+        let mut flux = vec![1.0; 120];
+        for i in (0..beat_frames.len()).step_by(4) {
+            flux[beat_frames[i]] = 5.0; // accent bar-openings at phase 0
+        }
+        assert_eq!(downbeat_phase(&flux, &beat_frames, 4), 0);
+
+        // Shift the accent to phase 2 and it should follow.
+        let mut flux2 = vec![1.0; 120];
+        for i in (2..beat_frames.len()).step_by(4) {
+            flux2[beat_frames[i]] = 5.0;
+        }
+        assert_eq!(downbeat_phase(&flux2, &beat_frames, 4), 2);
+    }
+
+    #[test]
+    fn bar_beat_at_reads_bar_and_beat() {
+        // Two 4/4 bars, one beat every 500 ms starting at 0.
+        let beats_ms: Vec<f64> = (0..8).map(|i| i as f64 * 500.0).collect();
+        let downbeats_ms = vec![0.0, 2000.0];
+        let report = TempoReport {
+            bpm: Some(120.0),
+            confidence: 1.0,
+            candidates: Vec::new(),
+            stability: None,
+            beats_ms,
+            beats_per_bar: 4,
+            downbeats_ms,
+        };
+        assert_eq!(report.bar_beat_at(0.0), Some((1, 1)));
+        assert_eq!(report.bar_beat_at(1000.0), Some((1, 3))); // bar 1, beat 3
+        assert_eq!(report.bar_beat_at(2000.0), Some((2, 1))); // downbeat of bar 2
+        assert_eq!(report.bar_beat_at(3500.0), Some((2, 4)));
+        assert_eq!(report.bar_beat_at(-1.0), None); // before the first downbeat
+    }
 }
