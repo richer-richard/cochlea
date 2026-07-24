@@ -342,10 +342,7 @@ fn best_chord(chroma: &[f64; 12]) -> ChordLabel {
         }
     }
 
-    let best_cosine = scored
-        .iter()
-        .map(|&(_, _, c)| c)
-        .fold(f64::MIN, f64::max);
+    let best_cosine = scored.iter().map(|&(_, _, c)| c).fold(f64::MIN, f64::max);
     if best_cosine < MIN_CHORD_COSINE {
         return None;
     }
@@ -358,9 +355,7 @@ fn best_chord(chroma: &[f64; 12]) -> ChordLabel {
         .filter(|&(_, _, c)| c >= best_cosine - SIMPLICITY_MARGIN)
         .min_by(|a, b| {
             let tones = |q: ChordQuality| q.intervals().len();
-            tones(a.1)
-                .cmp(&tones(b.1))
-                .then(b.2.total_cmp(&a.2))
+            tones(a.1).cmp(&tones(b.1)).then(b.2.total_cmp(&a.2))
         })
 }
 

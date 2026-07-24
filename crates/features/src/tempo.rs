@@ -194,7 +194,10 @@ impl TempoReport {
     /// assumed [`Self::beats_per_bar`] meter (see that field's caveat).
     pub fn bar_beat_at(&self, time_ms: f64) -> Option<(u32, u32)> {
         const EPS: f64 = 1e-6;
-        let bar_idx = self.downbeats_ms.iter().rposition(|&d| d <= time_ms + EPS)?;
+        let bar_idx = self
+            .downbeats_ms
+            .iter()
+            .rposition(|&d| d <= time_ms + EPS)?;
         let bar_start = self.downbeats_ms[bar_idx];
         // Beats from this bar's downbeat up to and including `time_ms`.
         let beat = self

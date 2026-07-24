@@ -191,7 +191,10 @@ fn fm_bell_reads_back_at_the_played_pitch() {
         .into_iter()
         .filter(|f| f.severity == cochlea_score::Severity::Error)
         .collect();
-    assert!(errors.is_empty(), "brightness automation must validate: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "brightness automation must validate: {errors:?}"
+    );
 }
 
 #[test]
