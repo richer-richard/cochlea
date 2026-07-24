@@ -7,13 +7,13 @@
     "url": "https://github.com/richer-richard/cochlea",
     "source": "github"
   },
-  "version": "0.3.0",
+  "version": "0.4.0",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/richer-richard/cochlea/releases/download/cochlea-mcp-v0.3.0/cochlea-mcp.mcpb",
-      "version": "0.3.0",
-      "fileSha256": "b0c852062ea2527ea04115c01ef2e0c98def5b06b1ac7a15381f6ac0ab83a88b",
+      "identifier": "https://github.com/richer-richard/cochlea/releases/download/cochlea-mcp-v0.4.0/cochlea-mcp.mcpb",
+      "version": "0.4.0",
+      "fileSha256": "5b3d23031e93a07863079a560b792b1b7412832f041fcbfe0ce32ac31f560122",
       "transport": {
         "type": "stdio"
       }
