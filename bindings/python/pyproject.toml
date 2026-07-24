@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "cochlea"
+version = "0.4.0"
+description = "Deterministic ears and golden-audio tests for agents and audio pipelines"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT OR Apache-2.0" }
+keywords = ["audio", "dsp", "testing", "golden", "deterministic", "pytest"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+# The pytest plugin (an `assert_audio` fixture) is auto-registered when both
+# cochlea and pytest are installed.
+[project.entry-points.pytest11]
+cochlea = "cochlea.pytest_plugin"
+
+[tool.maturin]
+python-source = "python"
+module-name = "cochlea._cochlea"
+features = ["pyo3/extension-module"]
