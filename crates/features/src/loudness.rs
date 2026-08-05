@@ -202,7 +202,13 @@ pub fn loudness_timeline(audio: &Audio, opts: &LoudnessTimelineOpts) -> Loudness
     };
 
     let channels = audio.channels as usize;
-    let hop_frames = ((hop_ms / 1000.0 * f64::from(audio.sample_rate)).round() as usize).max(1);
+    let frames = audio.samples.len() / channels;
+    // Clamp the hop to [1 frame, the whole clip]: a hop past the end yields a
+    // single point, and the upper bound keeps `hop_len` from overflowing
+    // `usize` on an absurd (but finite) `hop_ms` — `as usize` saturates the
+    // float to `usize::MAX`, and `* channels` would then wrap.
+    let hop_frames =
+        ((hop_ms / 1000.0 * f64::from(audio.sample_rate)).round() as usize).clamp(1, frames.max(1));
     let hop_len = hop_frames * channels;
 
     let mut points = Vec::new();

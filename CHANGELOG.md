@@ -25,7 +25,8 @@ versions all crates together.
   drops. The same two are new MCP tools (`loudness_timeline`, `beat_grid`),
   returning JSON inline — the dynamics view and per-beat detail an agent
   couldn't previously get short of rendering a spectrogram. MCP is now eleven
-  tools.
+  tools. Both describe the whole file, with times measured from its start (the
+  MCP tools take no window; `probe --loudness/--beats` ignore `--from/--to`).
 
 ### Fixed
 

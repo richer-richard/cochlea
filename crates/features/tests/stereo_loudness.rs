@@ -2,7 +2,9 @@
 //! `cochlea_features::loudness_range`. Fixtures are synthesized here with
 //! `libm`, never a synth dependency — mirrors `tests/probe.rs`'s style.
 
-use cochlea_features::{Audio, analyze_stereo, loudness_range};
+use cochlea_features::{
+    Audio, LoudnessTimelineOpts, analyze_stereo, loudness_range, loudness_timeline,
+};
 
 mod common;
 use common::*;
@@ -152,4 +154,18 @@ fn short_file_has_a_defined_near_zero_range_not_an_error() {
 fn empty_audio_has_no_loudness_range() {
     let audio = mono_audio(Vec::new(), SR);
     assert_eq!(loudness_range(&audio), None);
+}
+
+// ------------------------------------------------------------ loudness curve
+
+#[test]
+fn loudness_timeline_survives_an_absurd_hop() {
+    // A finite-but-enormous hop_ms saturates hop_frames to usize::MAX before
+    // the clamp; hop_frames * channels would then overflow. The clamp to the
+    // clip length must keep it safe — an over-long hop degrades to a single
+    // point over the whole clip, never a panic or a wrapped, degenerate curve.
+    let tone = sine_wave(440.0, 0.5, 1.0, SR);
+    let audio = stereo_audio(tone.clone(), tone, SR);
+    let curve = loudness_timeline(&audio, &LoudnessTimelineOpts::default().with_hop_ms(1e18));
+    assert_eq!(curve.points.len(), 1, "an over-long hop yields one point");
 }

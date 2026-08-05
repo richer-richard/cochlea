@@ -73,6 +73,37 @@ fn render_refuses_to_write_the_report_over_the_mix() {
 }
 
 #[test]
+fn render_refuses_a_stem_that_would_overwrite_the_mix() {
+    // --out lands inside --stems with the mix filename matching a track's stem
+    // (the score's one track is "lead"): the per-track stem write would clobber
+    // the mixdown. The guard must refuse before rendering.
+    let dir = case_dir("stem_collision");
+    let score = dir.join("score.ron");
+    std::fs::write(&score, SCORE).unwrap();
+    let stems = dir.join("stems");
+    std::fs::create_dir_all(&stems).unwrap();
+    let out = stems.join("lead.wav"); // == the "lead" track's stem path
+
+    let code = cochlea()
+        .args([
+            "render",
+            score.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--stems",
+            stems.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap()
+        .code();
+    assert_ne!(code, Some(0), "a stem overwriting the mix must be refused");
+    assert!(
+        !out.exists(),
+        "the guard should fire before rendering, writing nothing"
+    );
+}
+
+#[test]
 fn probe_refuses_to_overwrite_its_input_via_an_aliased_path() {
     let dir = case_dir("probe_alias");
     let wav = render_wav(&dir);

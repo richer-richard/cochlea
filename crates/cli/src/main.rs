@@ -67,12 +67,14 @@ enum Cmd {
         segments: Option<PathBuf>,
         /// Write the loudness-over-time curve (`LoudnessTimeline` JSON:
         /// momentary + short-term LUFS every 100 ms) here — the dynamics
-        /// view the single integrated/LRA summary can't give.
+        /// view the single integrated/LRA summary can't give. Covers the
+        /// whole file, times from its start (ignores --from/--to).
         #[arg(long)]
         loudness: Option<PathBuf>,
         /// Write the full beat grid (`TempoReport` JSON: every beat time,
         /// downbeats, candidates, stability) here — the detail the compact
-        /// `tempo` summary in the main report drops.
+        /// `tempo` summary in the main report drops. Covers the whole file,
+        /// times from its start (ignores --from/--to).
         #[arg(long)]
         beats: Option<PathBuf>,
         /// Window length for `--digest`/`--segments`, milliseconds.
@@ -358,6 +360,30 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                 anyhow::bail!("--report and --out point at the same path {out:?}");
             }
             let score = load_score(&score)?;
+            // A per-track stem (`<dir>/<track>.wav`) must not land on the mix
+            // (--out) or the report either — the same overwrite class, but one
+            // path per track, so it needs the loaded track names to check.
+            if let Some(dir) = stems.as_ref() {
+                for track in score.tracks() {
+                    let stem = dir.join(format!("{}.wav", track.name));
+                    if same_file(&out, &stem) {
+                        anyhow::bail!(
+                            "the stem for track {:?} would overwrite the mix --out {}",
+                            track.name,
+                            out.display()
+                        );
+                    }
+                    if let Some(rp) = report.as_ref()
+                        && same_file(rp, &stem)
+                    {
+                        anyhow::bail!(
+                            "the stem for track {:?} would overwrite --report {}",
+                            track.name,
+                            stem.display()
+                        );
+                    }
+                }
+            }
             let rendered = cochlea_render::render(&score)?;
             rendered
                 .write_wav_as(&out, bits)
@@ -433,6 +459,14 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
 
             let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
+            // --loudness/--beats describe the whole file, with times measured
+            // from the start of the file (like the MCP loudness_timeline /
+            // beat_grid tools) — so they read the pre-window audio. Only clone
+            // it when a --from/--to window is also active; otherwise the
+            // windowed `audio` below is already the whole file.
+            let need_full =
+                (from.is_some() || to.is_some()) && (loudness.is_some() || beats.is_some());
+            let whole_file = need_full.then(|| audio.clone());
             let (audio, start_ms) = apply_window(audio, from, to)?;
             let report = cochlea_features::probe(
                 &audio,
@@ -472,7 +506,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
 
             if let Some(path) = &loudness {
                 let curve = cochlea_features::loudness_timeline(
-                    &audio,
+                    whole_file.as_ref().unwrap_or(&audio),
                     &cochlea_features::LoudnessTimelineOpts::default(),
                 );
                 std::fs::write(path, serde_json::to_string_pretty(&curve)?)
@@ -481,7 +515,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
 
             if let Some(path) = &beats {
                 let tempo = cochlea_features::estimate_tempo(
-                    &audio,
+                    whole_file.as_ref().unwrap_or(&audio),
                     &cochlea_features::TempoOpts::default(),
                 );
                 std::fs::write(path, serde_json::to_string_pretty(&tempo)?)
