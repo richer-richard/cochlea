@@ -370,3 +370,36 @@ existing rules — but each addition deserves its line in this ledger:
   subtraction of two already-computed spectrograms. `MelSpec::hz_band`
   uses the same HTK mel formula as the filterbank (`libm`), so overlay
   placement is as deterministic as the spectrogram itself.
+
+## 0.4.0 additions (2026-07-24)
+
+- **Harmony (chords + per-section key).** Reads the same shared chroma
+  STFT the key estimate already builds. Chord detection is a cosine match
+  against L2-normalized binary templates in fixed order; the per-section
+  key runs the exact Krumhansl-Schmuckler correlation the global key uses.
+  Only `libm::log2` and the exempt std `sqrt` — no new transcendental call
+  sites, fixed summation order throughout.
+- **Loudness timeline + short-term max.** ebur128 is fed in fixed-size
+  chunks and polled at a fixed hop; the running maxima are tracked in
+  order. Same audit as integrated LUFS — `-inf`/undefined maps to `null`,
+  never a non-finite float.
+- **Integer PCM output (`WavBitDepth`).** 16/24-bit WAV is a deterministic
+  clamp to `[-1, 1]`, scale by `2^frac`, round to nearest, clamp to the
+  signed range — no dither (dither would trade determinism for a lower
+  noise floor, the wrong trade here). Float32 stays the render's ground
+  truth; the integer paths are a lossy convenience, not a second source of
+  truth.
+- **`fm_bell` preset.** Harmonic FM (a `sine` frequency-modulated by a
+  harmonic-ratio `sine`), amplitude and modulation-index both driven by
+  the same control-rate ADSR envelopes every other voice uses — pure
+  arithmetic per sample, `libm` only at construction. It uses none of the
+  patches `first_light`/`drum_groove` play, so both golden hashes are
+  unchanged (the same incidental cross-check the drum presets got).
+- **MIDI export.** Score ticks become SMF ticks verbatim (PPQ is the file
+  division); only the tempo value is microsecond-quantized, which is all
+  SMF can carry. Delta-times are integer VLQ. No float time anywhere in
+  the writer — the exact inverse of the import path's integer arithmetic.
+- **Hardening.** The authored-tick bound (`Ticks::MAX`) is a pure integer
+  comparison; the decode sample caps are integer counts checked as they
+  accumulate; the MCP `catch_unwind` backstop wraps dispatch only and
+  never touches the render fold. None of the three affects rendered bytes.

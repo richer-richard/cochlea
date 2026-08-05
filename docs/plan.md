@@ -569,3 +569,35 @@ instruments (external sample bytes vs the score-is-the-audio contract —
 needs content-hash pinning and a resampling determinism decision before
 any code), tempo ramps, time-signature changes, sample-accurate
 automation, bus/send routing, realtime anything.
+
+## 0.4.0 deviations from this plan (2026-07-24)
+
+- **Harmony (schema v5).** A top-level `harmony` section: a chord timeline
+  (template-matched from the shared chroma STFT) plus per-section key —
+  the two questions the single global `key` can't answer ("what's the
+  progression", "what key is the bridge in"). Also `loudness.short_term_max_lufs`
+  and a standalone `loudness_timeline` (the dynamics curve), and downbeat
+  fields on the full `TempoReport` (`beats_per_bar`, `downbeats_ms`,
+  `bar_beat_at`).
+- **MIDI export.** The other half of import: `export_midi` / `cochlea
+  export` / the MCP `export_midi` tool. "MIDI import/export, out of scope
+  for v1" is now fully lifted — timing exports exactly, instruments become
+  rough GM labels (the inverse of the importer's family mapping).
+- **Integer PCM output.** 16/24-bit WAV via `--bits` (`WavBitDepth`), for a
+  small ordinary file; float32 stays the lossless ground truth.
+- **`fm_bell` preset.** The palette's ninth voice and its first
+  non-subtractive one — harmonic FM with an automatable `brightness`
+  (modulation index), answering the "rich ears, thin voice" critique that
+  every prior voice was a filtered saw/square.
+- **Python bindings.** `bindings/python` (pyo3 + maturin): an `assert_audio`
+  fluent API and a pytest plugin. A detached crate, deliberately outside the
+  determinism build.
+- **Golden-audio eval.** `cochlea eval` scores a directory of candidate
+  renders against a directory of goldens by filename, exit 1 on any
+  regression — the generative-model regression harness, plus a GitHub
+  composite action.
+- **Hardening (adversarial-review fixes).** Authored ticks are bounded at
+  `Ticks::MAX`, the read path caps decoded samples and rejects degenerate
+  audio shape, and the MCP server contains any tool panic with
+  `catch_unwind` instead of dying.
+- **MCP**: nine tools (`export_midi` added).

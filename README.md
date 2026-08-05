@@ -84,13 +84,13 @@ The economics are the point, not an afterthought. The `first_light` render
 above is 7 seconds of 48 kHz/32-bit-float PCM and weighs 2.7 MB; a
 3-minute piece at the same settings is ~66 MB — not something to hand an
 agent as text, let alone read sample-by-sample. Its probe report is a few
-KB of JSON (schema v4, trimmed here to the interesting fields — note
+KB of JSON (schema v5, trimmed here to the interesting fields — note
 `pitch.melody`: the piece's bass line and melody read back as *note
 events*, the compose loop's read-back half):
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "source": { "sample_rate": 48000, "channels": 2, "duration_ms": 7035.708333333333, "start_ms": 0.0 },
   "loudness": { "integrated_lufs": -22.700454879284784, "true_peak_dbtp": -15.910817022082783, "lra": 10.607660373688798 },
   "onsets": { "count": 6, "times_ms": [1077.33, 2149.33, 2346.67, 3221.33, 4538.67, 5034.67] },
@@ -216,8 +216,9 @@ or an agent can catch a regression without ever reading a raw sample.
 ## Agents as MCP clients
 
 `cochlea-mcp` is a stdio MCP server over the same libraries the CLI uses —
-eight tools (`render_score`, `probe_audio`, `spectrogram`, `lint_score`,
-`probe_digest`, `audio_diff`, `import_midi`, `score_reference`), each a
+nine tools (`render_score`, `probe_audio`, `spectrogram`, `lint_score`,
+`probe_digest`, `audio_diff`, `import_midi`, `export_midi`,
+`score_reference`), each a
 thin wrapper over the matching library call, so any MCP client gets the
 same compose → render → probe → spectrogram → verify loop as tool calls
 instead of shelled-out subprocesses:
@@ -279,10 +280,11 @@ cd cochlea && cargo install --path crates/cli`.
   arithmetic (via `fenestra-anim`'s `mul_div`) applied once at
   event-schedule time. No accumulated floating-point seconds, no wall
   clock, property-tested drift-free over 10⁹ ticks.
-- **Synth** (`cochlea-synth`): eight presets over [fundsp] — `sine`,
+- **Synth** (`cochlea-synth`): nine presets over [fundsp] — `sine`,
   `saw_lead`, `square_bass`, `chord_pad` (genuinely stereo: its detuned
-  saws pan apart), `noise_hat`, `pluck`, `kick`, `snare` — plus a
-  `reverb` insert. Instruments declare typed automatable params (name,
+  saws pan apart), `noise_hat`, `pluck`, `kick`, `snare`, `fm_bell` (an FM
+  voice with an automatable `brightness` — the palette's one non-subtractive
+  timbre) — plus a `reverb` insert. Instruments declare typed automatable params (name,
   unit, range, default); scores are validated against that registry, and
   the same registry generates the self-describing authoring reference.
   All noise is a counter-based RNG keyed `(seed, sample_index)` — random
@@ -457,7 +459,7 @@ despite a spot-on BPM).
 ```
 crates/
   score      # IR: ticks, tempo map, bar/beat math, notes, automation, master, RON form, MIDI import
-  synth      # Patch trait over fundsp, eight presets, param registry, counter RNG
+  synth      # Patch trait over fundsp, nine presets, param registry, counter RNG
   render     # block engine, voices, stems, f64 master sum + gain/limiter, WAV out
   features   # LUFS/true peak, onsets, pitch+melody, timbre, chroma/key, tempo, rhythm, stereo, structure
   decode     # WAV + FLAC (bit-exact) + mp3 + ogg (analysis) -> Audio, pure Rust
