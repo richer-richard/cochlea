@@ -352,10 +352,12 @@ fn percussion_voice(key: u8) -> (&'static str, Pitch) {
 /// GM program number → the roughest reasonable preset family.
 fn program_preset(program: u8) -> &'static str {
     match program {
-        32..=39 => "square_bass",                    // basses
-        16..=23 | 40..=55 | 88..=103 => "chord_pad", // organs, strings, pads, fx
-        56..=87 => "saw_lead",                       // brass, reeds, pipes, synth leads
-        0..=15 | 24..=31 | 104..=119 => "pluck",     // keys, guitars, ethnic, percussive
+        12 => "marimba",                                   // GM marimba (its exact voice)
+        16 => "organ",                                     // GM drawbar organ (its exact voice)
+        32..=39 => "square_bass",                          // basses
+        17..=23 | 40..=55 | 88..=103 => "chord_pad",       // other organs, strings, pads, fx
+        56..=87 => "saw_lead",                             // brass, reeds, pipes, synth leads
+        0..=11 | 13..=15 | 24..=31 | 104..=119 => "pluck", // keys, guitars, ethnic, percussive
         _ => "sine",
     }
 }

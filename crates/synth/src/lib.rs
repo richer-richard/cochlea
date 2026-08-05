@@ -1,5 +1,5 @@
 //! Instrument layer over fundsp: the [`Patch`] trait (typed param registry,
-//! fresh voice graph per note), six presets, the reverb insert, and the
+//! fresh voice graph per note), eleven presets, the reverb insert, and the
 //! counter-based `(seed, sample_index)` RNG — the workspace's only
 //! randomness.
 //!

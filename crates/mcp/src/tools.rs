@@ -342,7 +342,7 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "loudness_timeline",
-            "description": "The loudness-over-time curve of a WAV, FLAC, mp3, or ogg file, as JSON: momentary (400 ms) and short-term (3 s) LUFS sampled every ~100 ms. This is the dynamics view the single integrated-LUFS / LRA summary in probe_audio can't give — where a mix gets loud, where a gate opens, how the level moves through a build or a chorus. Use it to check whether a change actually moved the dynamics, or to find the loudest moment. Pass from_s/to_s to zoom into a window.",
+            "description": "The loudness-over-time curve of a whole WAV, FLAC, mp3, or ogg file, as JSON: momentary (400 ms) and short-term (3 s) LUFS sampled every ~100 ms. This is the dynamics view the single integrated-LUFS / LRA summary in probe_audio can't give — where a mix gets loud, where a gate opens, how the level moves through a build or a chorus. Use it to check whether a change actually moved the dynamics, or to find the loudest moment. Every point's time is measured from the start of the file. (For a windowed analysis with an anchored offset, use probe_audio with from_s/to_s.)",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -354,14 +354,6 @@ pub fn schemas() -> Vec<Value> {
                         "type": "number",
                         "description": "Spacing between timeline points, milliseconds. Default 100 (the EBU R128 momentary update rate).",
                         "default": 100
-                    },
-                    "from_s": {
-                        "type": "number",
-                        "description": "Optional: analyze only from this time (seconds into the file)."
-                    },
-                    "to_s": {
-                        "type": "number",
-                        "description": "Optional: analyze only up to this time (seconds into the file)."
                     }
                 },
                 "required": ["audio_path"]
@@ -369,21 +361,13 @@ pub fn schemas() -> Vec<Value> {
         }),
         json!({
             "name": "beat_grid",
-            "description": "The full beat grid of a WAV, FLAC, mp3, or ogg file, as JSON: every detected beat time (ms), the estimated downbeats, the tempo with its octave-alternative candidates, and a windowed stability score. This is the detail the compact `tempo` summary inside probe_audio drops — that one keeps only the count and mean interval to stay small. Use it to line events up to the beat, see where the downbeats fall, or weigh a half/double-tempo alternative. Pass from_s/to_s to zoom into a window.",
+            "description": "The full beat grid of a whole WAV, FLAC, mp3, or ogg file, as JSON: every detected beat time (ms), the estimated downbeats, the tempo with its octave-alternative candidates, and a windowed stability score. This is the detail the compact `tempo` summary inside probe_audio drops — that one keeps only the count and mean interval to stay small. Use it to line events up to the beat, see where the downbeats fall, or weigh a half/double-tempo alternative. All times are measured from the start of the file.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "audio_path": {
                         "type": "string",
                         "description": "Path to a WAV, FLAC, mp3, or ogg file."
-                    },
-                    "from_s": {
-                        "type": "number",
-                        "description": "Optional: analyze only from this time (seconds into the file)."
-                    },
-                    "to_s": {
-                        "type": "number",
-                        "description": "Optional: analyze only up to this time (seconds into the file)."
                     }
                 },
                 "required": ["audio_path"]
@@ -972,10 +956,6 @@ pub fn loudness_timeline(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
-    let (audio, _start_ms) = match apply_window(audio, args) {
-        Ok(pair) => pair,
-        Err(outcome) => return outcome,
-    };
     let curve = cochlea_features::loudness_timeline(
         &audio,
         &cochlea_features::LoudnessTimelineOpts::default().with_hop_ms(hop_ms),
@@ -1001,10 +981,6 @@ pub fn beat_grid(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     let audio = match cochlea_decode::load(&resolved) {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
-    };
-    let (audio, _start_ms) = match apply_window(audio, args) {
-        Ok(pair) => pair,
-        Err(outcome) => return outcome,
     };
     let tempo = cochlea_features::estimate_tempo(&audio, &cochlea_features::TempoOpts::default());
     match serde_json::to_string_pretty(&tempo) {

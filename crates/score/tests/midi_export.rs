@@ -75,3 +75,32 @@ fn export_starts_with_a_valid_header() {
     assert_eq!(u16::from_be_bytes(bytes[8..10].try_into().unwrap()), 1);
     assert_eq!(u16::from_be_bytes(bytes[10..12].try_into().unwrap()), 3);
 }
+
+#[test]
+fn marimba_and_organ_survive_the_gm_round_trip() {
+    // Most presets are a lossy GM label, but marimba and organ have exact GM
+    // equivalents (program 12 = Marimba, 16 = Drawbar Organ), so they must
+    // re-import as themselves rather than the roughest family default.
+    let score = Score::new(SampleRate(48_000), Ppq(480))
+        .track("mallet", Instrument::preset("marimba"))
+        .note("mallet", bar(1), Dur::quarter(), Pitch::C5, Vel(100))
+        .track("keys", Instrument::preset("organ"))
+        .note("keys", bar(1), Dur::half(), Pitch::A2, Vel(90));
+    let bytes = export_midi(&score).expect("export");
+    let back = import_midi(&bytes, SampleRate(48_000)).expect("re-import");
+
+    let presets: std::collections::HashSet<&str> = back
+        .score
+        .tracks()
+        .iter()
+        .map(|t| t.instrument.name())
+        .collect();
+    assert!(
+        presets.contains("marimba"),
+        "marimba should round-trip through GM 12, got {presets:?}"
+    );
+    assert!(
+        presets.contains("organ"),
+        "organ should round-trip through GM 16, got {presets:?}"
+    );
+}

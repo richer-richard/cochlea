@@ -47,6 +47,32 @@ fn render_wav(dir: &std::path::Path) -> PathBuf {
 }
 
 #[test]
+fn render_refuses_to_write_the_report_over_the_mix() {
+    // `render --out mix.wav --report mix.wav` writes the WAV, then the verify
+    // report is written afterward and would silently clobber it (exit 0). The
+    // pairwise output guard must refuse this, like probe/diff already do.
+    let dir = case_dir("render_collision");
+    let score = dir.join("score.ron");
+    let out = dir.join("mix.wav");
+    std::fs::write(&score, SCORE).unwrap();
+
+    let code = cochlea()
+        .args([
+            "render",
+            score.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--verify",
+            "--report",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap()
+        .code();
+    assert_ne!(code, Some(0), "--report onto --out must be refused");
+}
+
+#[test]
 fn probe_refuses_to_overwrite_its_input_via_an_aliased_path() {
     let dir = case_dir("probe_alias");
     let wav = render_wav(&dir);

@@ -403,3 +403,16 @@ existing rules — but each addition deserves its line in this ledger:
   comparison; the decode sample caps are integer counts checked as they
   accumulate; the MCP `catch_unwind` backstop wraps dispatch only and
   never touches the render fold. None of the three affects rendered bytes.
+
+## Unreleased additions (post-0.4.0)
+
+- **`marimba` and `organ` presets.** Both are pure arithmetic over exact
+  harmonics: `marimba` sums modal sine partials under `1/(1+t/tau)²` decays
+  (plus a short linear fade before retirement, the same guard `pluck` uses);
+  `organ` is a weighted sine sum under the piecewise-linear ADSR. No new
+  transcendental call sites, no fundsp `feedback`/`fdn`/`process`. Golden
+  hashes are unchanged — no flagship score plays them.
+- **Loudness/beat-grid surfaces.** No new DSP — they reuse the existing
+  `loudness_timeline` and `estimate_tempo` analyzers (ebur128 polled at a
+  fixed hop; the shared scalar-FFT tempo path), served over new CLI flags and
+  MCP tools.

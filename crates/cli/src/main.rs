@@ -350,6 +350,13 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                     anyhow::bail!("{flag} would overwrite the input score {p:?}");
                 }
             }
+            // ...and --report must not clobber the WAV --out just wrote (the
+            // report is written after the mix, so it would silently win).
+            if let Some(rp) = report.as_ref()
+                && same_file(&out, rp)
+            {
+                anyhow::bail!("--report and --out point at the same path {out:?}");
+            }
             let score = load_score(&score)?;
             let rendered = cochlea_render::render(&score)?;
             rendered

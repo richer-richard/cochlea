@@ -601,3 +601,17 @@ automation, bus/send routing, realtime anything.
   audio shape, and the MCP server contains any tool panic with
   `catch_unwind` instead of dying.
 - **MCP**: nine tools (`export_midi` added).
+
+## Unreleased (post-0.4.0)
+
+- **Two non-subtractive voices.** `marimba` (modal — a struck bar as a
+  fundamental plus tuned octave partials, faded out before retirement so the
+  ring never clicks) and `organ` (additive — a drawbar harmonic stack). The
+  palette is now eleven presets, three of them non-subtractive (with `fm_bell`).
+- **Timeline surfaces.** `cochlea probe --loudness/--beats` and the MCP
+  `loudness_timeline` / `beat_grid` tools expose the loudness-over-time curve
+  and the full beat grid (every beat, downbeats, candidates, stability) — the
+  per-time detail the compact report summaries drop. MCP is now eleven tools.
+- **Overwrite guard generalized.** One shared `same_file` (raw-or-canonical)
+  now backs every CLI write guard (probe/diff/import/export/render), closing an
+  aliased-path data-loss hole the old raw-string compare left open.

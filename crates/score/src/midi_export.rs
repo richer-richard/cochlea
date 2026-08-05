@@ -101,6 +101,8 @@ fn preset_voice(preset: &str) -> (u8, u8, Option<u8>) {
         "chord_pad" => (0, 48, None),    // strings -> 40..=55 (pad)
         "saw_lead" => (0, 81, None),     // saw lead -> 56..=87 (lead)
         "pluck" => (0, 24, None),        // nylon guitar -> 0..=15|24..=31 (pluck)
+        "marimba" => (0, 12, None),      // GM marimba (chromatic percussion)
+        "organ" => (0, 16, None),        // GM drawbar organ
         "kick" => (9, 0, Some(36)),      // bass drum 1
         "snare" => (9, 0, Some(38)),     // acoustic snare
         "noise_hat" => (9, 0, Some(42)), // closed hi-hat
