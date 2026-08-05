@@ -4,6 +4,39 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
+## [Unreleased]
+
+### Added
+
+- **Two non-subtractive voices: `marimba` and `organ`** (the palette grows to
+  eleven presets). `marimba` is modal synthesis — a struck bar as a fundamental
+  plus tuned octave partials (1 : 4 : 8), each a sine under a fast squared
+  rational-decay envelope, so the strike is wooden and the pitch reads straight
+  back. `organ` is additive — a Hammond-ish drawbar registration (harmonics
+  1, 2, 3, 4, 6, 8 at tapering levels) under a soft attack/release, sustained
+  and filterless. With `fm_bell` that's now three non-subtractive timbres,
+  widening the palette past "everything is a filtered saw". Pure arithmetic over
+  exact harmonics — the golden PCM hashes are unchanged (neither flagship score
+  uses them).
+- **`loudness_timeline` and `beat_grid`, over the CLI and MCP.** `cochlea probe
+  --loudness <path>` writes the momentary + short-term LUFS dynamics curve;
+  `--beats <path>` writes the full beat grid (every beat time, downbeats, tempo
+  candidates, stability) that the compact `tempo` summary in the main report
+  drops. The same two are new MCP tools (`loudness_timeline`, `beat_grid`),
+  returning JSON inline — the dynamics view and per-beat detail an agent
+  couldn't previously get short of rendering a spectrogram. MCP is now eleven
+  tools.
+
+### Fixed
+
+- **The read subcommands can no longer overwrite their own input through an
+  aliased path.** `probe`/`diff`/`import` guarded against clobbering the input
+  with a raw path compare, which a different spelling of the same file (`probe
+  in.wav --json ./in.wav`) slipped past: the output write landed on the input
+  and the command still exited 0. Every write guard — including a new one on
+  `render` — now routes through one shared `same_file` helper that canonicalizes
+  before comparing, the check only `export` previously had. Regression-tested.
+
 ## [0.4.0] — 2026-07-24
 
 The voice-and-ears upgrade, and a hardening pass from an adversarial review:

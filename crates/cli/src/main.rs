@@ -65,6 +65,16 @@ enum Cmd {
         /// Composable with any other flag.
         #[arg(long)]
         segments: Option<PathBuf>,
+        /// Write the loudness-over-time curve (`LoudnessTimeline` JSON:
+        /// momentary + short-term LUFS every 100 ms) here — the dynamics
+        /// view the single integrated/LRA summary can't give.
+        #[arg(long)]
+        loudness: Option<PathBuf>,
+        /// Write the full beat grid (`TempoReport` JSON: every beat time,
+        /// downbeats, candidates, stability) here — the detail the compact
+        /// `tempo` summary in the main report drops.
+        #[arg(long)]
+        beats: Option<PathBuf>,
         /// Window length for `--digest`/`--segments`, milliseconds.
         #[arg(long, default_value_t = 1000.0, value_parser = parse_window_ms)]
         window_ms: f64,
@@ -275,6 +285,27 @@ fn parse_bit_depth(s: &str) -> Result<cochlea_render::WavBitDepth, String> {
     s.parse()
 }
 
+/// Whether `a` and `b` name the same file on disk — the one rule every "don't
+/// clobber my input" guard in this binary shares. A raw path compare first
+/// (the common case, and the only thing decidable for an output that doesn't
+/// exist yet), then a canonical compare so a *different spelling* of an
+/// existing file — `./x.wav` vs `x.wav`, a symlink, an absolute-vs-relative
+/// mix — is caught too. `canonicalize` only succeeds for a path that already
+/// exists, which is exactly the case where overwriting it would destroy data;
+/// a not-yet-created output falls back cleanly to the raw compare.
+///
+/// This lives in one place on purpose: the guard used to be open-coded per
+/// subcommand, and only `export` had the canonical half, so `probe`/`diff`/
+/// `import` could be tricked into overwriting their own input through an
+/// aliased path while still exiting 0. Now every write path routes here.
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+            (Ok(ca), Ok(cb)) if ca == cb
+        )
+}
+
 /// Apply a `--from`/`--to` window to loaded audio: no-op (offset 0) when
 /// neither flag is set; an inverted or empty result is a usage error, not
 /// a silent empty analysis.
@@ -310,6 +341,15 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             verify,
             report,
         } => {
+            // The WAV and (optional) report writes must not land on the RON
+            // score they read from — same guard the other subcommands use.
+            for (flag, path) in [("--out", Some(&out)), ("--report", report.as_ref())] {
+                if let Some(p) = path
+                    && same_file(p, &score)
+                {
+                    anyhow::bail!("{flag} would overwrite the input score {p:?}");
+                }
+            }
             let score = load_score(&score)?;
             let rendered = cochlea_render::render(&score)?;
             rendered
@@ -350,6 +390,8 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             spectro,
             digest,
             segments,
+            loudness,
+            beats,
             window_ms,
             from,
             to,
@@ -360,11 +402,13 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                 ("--json", json.as_deref()),
                 ("--segments", segments.as_deref()),
                 ("--spectro", spectro.as_deref()),
+                ("--loudness", loudness.as_deref()),
+                ("--beats", beats.as_deref()),
             ];
             for (i, (flag_a, path_a)) in outputs.iter().enumerate() {
                 for (flag_b, path_b) in &outputs[i + 1..] {
                     if let (Some(pa), Some(pb)) = (path_a, path_b)
-                        && pa == pb
+                        && same_file(pa, pb)
                     {
                         anyhow::bail!("{flag_a} and {flag_b} point at the same path {pa:?}");
                     }
@@ -374,7 +418,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             // would silently destroy the audio being probed (exit 0).
             for (flag, path) in &outputs {
                 if let Some(p) = path
-                    && *p == input.as_path()
+                    && same_file(p, &input)
                 {
                     anyhow::bail!("{flag} would overwrite the input file {p:?}");
                 }
@@ -419,6 +463,24 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                     .with_context(|| format!("writing {}", path.display()))?;
             }
 
+            if let Some(path) = &loudness {
+                let curve = cochlea_features::loudness_timeline(
+                    &audio,
+                    &cochlea_features::LoudnessTimelineOpts::default(),
+                );
+                std::fs::write(path, serde_json::to_string_pretty(&curve)?)
+                    .with_context(|| format!("writing {}", path.display()))?;
+            }
+
+            if let Some(path) = &beats {
+                let tempo = cochlea_features::estimate_tempo(
+                    &audio,
+                    &cochlea_features::TempoOpts::default(),
+                );
+                std::fs::write(path, serde_json::to_string_pretty(&tempo)?)
+                    .with_context(|| format!("writing {}", path.display()))?;
+            }
+
             if let Some(path) = spectro {
                 write_spectro(&audio, &path, false, 0)?;
             }
@@ -439,13 +501,13 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             // JSON over either input would destroy a file being compared.
             for (flag, path) in [("--json", &json), ("--spectro", &spectro)] {
                 if let Some(path) = path
-                    && (path == &a || path == &b)
+                    && (same_file(path, &a) || same_file(path, &b))
                 {
                     anyhow::bail!("{flag} would overwrite the input file {path:?}");
                 }
             }
             if let (Some(pa), Some(pb)) = (&json, &spectro)
-                && pa == pb
+                && same_file(pa, pb)
             {
                 anyhow::bail!("--json and --spectro point at the same path {pa:?}");
             }
@@ -642,7 +704,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             out,
             sample_rate,
         } => {
-            if out == input {
+            if same_file(&out, &input) {
                 anyhow::bail!("--out would overwrite the input file {out:?}");
             }
             let bytes =
@@ -676,17 +738,9 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
         }
 
         Cmd::Export { score, out } => {
-            // Refuse to clobber the source score. A raw path compare misses a
-            // different spelling of the same file (`--out ./score.ron` vs
-            // `score.ron`), so also compare canonicalized paths — `out`
-            // canonicalizes only when it already exists, which is exactly when
-            // overwriting it would lose data.
-            let would_overwrite_source = out == score
-                || matches!(
-                    (std::fs::canonicalize(&score), std::fs::canonicalize(&out)),
-                    (Ok(a), Ok(b)) if a == b
-                );
-            if would_overwrite_source {
+            // Refuse to clobber the source score, including a different
+            // spelling of the same file (`--out ./score.ron` vs `score.ron`).
+            if same_file(&out, &score) {
                 anyhow::bail!("--out would overwrite the input score {out:?}");
             }
             let loaded = load_score(&score)?;

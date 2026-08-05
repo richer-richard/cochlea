@@ -17,10 +17,10 @@ tools (render a score, extract a report, write a PNG) need none. Every
 response is a pure function of its request: no wall clock, no session
 state.
 
-Nine tools: `render_score`, `probe_audio`, `spectrogram`, `lint_score`,
-`probe_digest`, `audio_diff`, `import_midi`, `export_midi`,
-`score_reference` — accepting WAV, FLAC, mp3, or ogg wherever audio input
-applies, with
+Eleven tools: `render_score`, `probe_audio`, `spectrogram`, `lint_score`,
+`probe_digest`, `loudness_timeline`, `beat_grid`, `audio_diff`,
+`import_midi`, `export_midi`, `score_reference` — accepting WAV, FLAC, mp3,
+or ogg wherever audio input applies, with
 `from_s`/`to_s` window parameters on the read tools for zooming into a
 time range. `score_reference` makes the server
 self-describing: the full RON score grammar, the live instrument-preset

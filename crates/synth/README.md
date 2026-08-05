@@ -1,11 +1,12 @@
 # cochlea-synth
 
 Instruments for [cochlea](https://github.com/richer-richard/cochlea)'s
-deterministic offline renderer: nine presets over
+deterministic offline renderer: eleven presets over
 [fundsp](https://crates.io/crates/fundsp) (`sine`, `saw_lead`,
 `square_bass`, a genuinely stereo `chord_pad`, `noise_hat`, `pluck`,
-`kick`, `snare`, and an `fm_bell` with an automatable `brightness`) plus an
-in-repo Schroeder reverb insert, a typed
+`kick`, `snare`, and three non-subtractive voices — an `fm_bell` with an
+automatable `brightness`, a modal `marimba`, and an additive `organ`) plus
+an in-repo Schroeder reverb insert, a typed
 automatable-parameter registry, and a counter-based RNG keyed
 `(seed, sample_index)` so all noise is random-access.
 

@@ -1,4 +1,4 @@
-//! The nine shipped presets and the reverb insert, plus the `PatchBank`
+//! The eleven shipped presets and the reverb insert, plus the `PatchBank`
 //! registry that resolves names and backs score validation via `Catalog`.
 //!
 //! Determinism rules in force here (docs/determinism.md): fundsp graphs use
@@ -453,6 +453,110 @@ impl Patch for FmBell {
     }
 }
 
+/// Marimba: a struck wooden bar rendered as modal synthesis — the
+/// fundamental plus tuned octave partials (a real marimba bar is voiced so
+/// its strong overtone sits two octaves up), each a sine with its own fast
+/// rational-decay envelope (pure arithmetic, like the drums — no per-sample
+/// transcendentals). Higher partials decay faster, so the strike is a bright
+/// wooden "tok" that settles onto a clean fundamental, and the played pitch
+/// reads straight back. Non-subtractive: no filter anywhere, unlike the
+/// saw/square voices. Score it mid-register (marimba range, ~C3–C7).
+struct Marimba;
+
+impl Patch for Marimba {
+    fn name(&self) -> &'static str {
+        "marimba"
+    }
+
+    fn params(&self) -> Vec<ParamInfo> {
+        Vec::new()
+    }
+
+    fn polyphony(&self) -> Polyphony {
+        Polyphony::Poly(12)
+    }
+
+    fn release_secs(&self) -> f64 {
+        0.4
+    }
+
+    fn voice(&self, ctx: &VoiceCtx) -> Voice {
+        let f0 = ctx.pitch.hz();
+        let amp = f64::from(ctx.amp());
+        // One modal partial: a sine at `ratio * f0` under a squared rational
+        // decay (`1/(1+t/tau)`) with a ~1 ms attack. The fundamental is loud
+        // and rings; the octave partials are quiet and quick — the wooden
+        // transient over an unambiguous pitch.
+        let partial = |ratio: f64, level: f64, tau: f64| {
+            let a = amp * level;
+            let env = fd::envelope(move |t| {
+                let attack = (t / 0.0008).clamp(0.0, 1.0);
+                let decay = 1.0 / (1.0 + t / tau);
+                a * attack * decay * decay
+            });
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "audio-band partial fits f32"
+            )]
+            let hz = (f0 * ratio) as f32;
+            fd::sine_hz(hz) * env
+        };
+        // Ratios 1 : 4 : 8 (all exact harmonics, so pitch stays clean); the
+        // 4× "bar overtone" is the marimba's timbral signature.
+        let bar = partial(1.0, 0.5, 0.55) + partial(4.0, 0.28, 0.14) + partial(8.0, 0.10, 0.05);
+        let graph = bar >> fd::pan(0.0);
+        boxed_voice(ctx, Vec::new(), graph)
+    }
+}
+
+/// Drawbar organ: additive synthesis — a fixed set of exact harmonics summed
+/// at tapering levels (a Hammond-ish registration) under a soft attack/
+/// release envelope, no filter at all. Sustained and hollow where the saw
+/// voices are bright and buzzy — the palette's additive counterpart to the
+/// subtractive leads, and (with `marimba` and `fm_bell`) part of widening it
+/// past "everything is a filtered saw". All partials are harmonics, so the
+/// tone is richly pitched and reads back cleanly.
+struct Organ;
+
+impl Patch for Organ {
+    fn name(&self) -> &'static str {
+        "organ"
+    }
+
+    fn params(&self) -> Vec<ParamInfo> {
+        Vec::new()
+    }
+
+    fn polyphony(&self) -> Polyphony {
+        Polyphony::Poly(16)
+    }
+
+    fn release_secs(&self) -> f64 {
+        0.12
+    }
+
+    fn voice(&self, ctx: &VoiceCtx) -> Voice {
+        let adsr = Adsr {
+            attack: 0.01,
+            decay: 0.0,
+            sustain: 1.0,
+            release: 0.12,
+        };
+        let f = freq32(ctx.pitch);
+        // Drawbar harmonics 1, 2, 3, 4, 6, 8 at tapering levels — the classic
+        // additive organ registration, summed then shaped by one envelope.
+        let partials = fd::sine_hz(f)
+            + fd::sine_hz(f * 2.0) * 0.7
+            + fd::sine_hz(f * 3.0) * 0.5
+            + fd::sine_hz(f * 4.0) * 0.4
+            + fd::sine_hz(f * 6.0) * 0.25
+            + fd::sine_hz(f * 8.0) * 0.2;
+        let graph =
+            (partials * adsr_node(adsr, ctx.note_len_secs(), 0.13 * ctx.amp())) >> fd::pan(0.0);
+        boxed_voice(ctx, Vec::new(), graph)
+    }
+}
+
 /// The reverb insert: the in-repo Schroeder (docs/determinism.md explains
 /// why fundsp's FDN reverbs are off-limits).
 struct ReverbInsert;
@@ -478,7 +582,7 @@ impl InsertFx for ReverbInsert {
     }
 }
 
-/// Name → patch/insert registry. `PatchBank::presets()` holds the six
+/// Name → patch/insert registry. `PatchBank::presets()` holds the eleven
 /// shipped patches plus the reverb insert; custom patches join via
 /// [`PatchBank::with_patch`]. Implements [`Catalog`] so `Score::validate`
 /// can check params and polyphony against reality.
@@ -488,7 +592,7 @@ pub struct PatchBank {
 }
 
 impl PatchBank {
-    /// The nine shipped presets and the reverb insert.
+    /// The eleven shipped presets and the reverb insert.
     pub fn presets() -> PatchBank {
         let mut patches: BTreeMap<String, Arc<dyn Patch>> = BTreeMap::new();
         for patch in [
@@ -501,6 +605,8 @@ impl PatchBank {
             Arc::new(Kick),
             Arc::new(Snare),
             Arc::new(FmBell),
+            Arc::new(Marimba),
+            Arc::new(Organ),
         ] {
             patches.insert(patch.name().to_owned(), patch);
         }

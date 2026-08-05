@@ -216,9 +216,9 @@ or an agent can catch a regression without ever reading a raw sample.
 ## Agents as MCP clients
 
 `cochlea-mcp` is a stdio MCP server over the same libraries the CLI uses —
-nine tools (`render_score`, `probe_audio`, `spectrogram`, `lint_score`,
-`probe_digest`, `audio_diff`, `import_midi`, `export_midi`,
-`score_reference`), each a
+eleven tools (`render_score`, `probe_audio`, `spectrogram`, `lint_score`,
+`probe_digest`, `loudness_timeline`, `beat_grid`, `audio_diff`,
+`import_midi`, `export_midi`, `score_reference`), each a
 thin wrapper over the matching library call, so any MCP client gets the
 same compose → render → probe → spectrogram → verify loop as tool calls
 instead of shelled-out subprocesses:
@@ -280,11 +280,12 @@ cd cochlea && cargo install --path crates/cli`.
   arithmetic (via `fenestra-anim`'s `mul_div`) applied once at
   event-schedule time. No accumulated floating-point seconds, no wall
   clock, property-tested drift-free over 10⁹ ticks.
-- **Synth** (`cochlea-synth`): nine presets over [fundsp] — `sine`,
+- **Synth** (`cochlea-synth`): eleven presets over [fundsp] — `sine`,
   `saw_lead`, `square_bass`, `chord_pad` (genuinely stereo: its detuned
-  saws pan apart), `noise_hat`, `pluck`, `kick`, `snare`, `fm_bell` (an FM
-  voice with an automatable `brightness` — the palette's one non-subtractive
-  timbre) — plus a `reverb` insert. Instruments declare typed automatable params (name,
+  saws pan apart), `noise_hat`, `pluck`, `kick`, `snare`, plus three
+  non-subtractive voices: `fm_bell` (harmonic FM with an automatable
+  `brightness`), `marimba` (a modal struck bar), and `organ` (an additive
+  drawbar) — plus a `reverb` insert. Instruments declare typed automatable params (name,
   unit, range, default); scores are validated against that registry, and
   the same registry generates the self-describing authoring reference.
   All noise is a counter-based RNG keyed `(seed, sample_index)` — random
@@ -459,7 +460,7 @@ despite a spot-on BPM).
 ```
 crates/
   score      # IR: ticks, tempo map, bar/beat math, notes, automation, master, RON form, MIDI import
-  synth      # Patch trait over fundsp, nine presets, param registry, counter RNG
+  synth      # Patch trait over fundsp, eleven presets, param registry, counter RNG
   render     # block engine, voices, stems, f64 master sum + gain/limiter, WAV out
   features   # LUFS/true peak, onsets, pitch+melody, timbre, chroma/key, tempo, rhythm, stereo, structure
   decode     # WAV + FLAC (bit-exact) + mp3 + ogg (analysis) -> Audio, pure Rust

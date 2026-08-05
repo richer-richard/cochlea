@@ -340,6 +340,55 @@ pub fn schemas() -> Vec<Value> {
                 "required": ["score_path", "out_path"]
             }
         }),
+        json!({
+            "name": "loudness_timeline",
+            "description": "The loudness-over-time curve of a WAV, FLAC, mp3, or ogg file, as JSON: momentary (400 ms) and short-term (3 s) LUFS sampled every ~100 ms. This is the dynamics view the single integrated-LUFS / LRA summary in probe_audio can't give — where a mix gets loud, where a gate opens, how the level moves through a build or a chorus. Use it to check whether a change actually moved the dynamics, or to find the loudest moment. Pass from_s/to_s to zoom into a window.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "audio_path": {
+                        "type": "string",
+                        "description": "Path to a WAV, FLAC, mp3, or ogg file."
+                    },
+                    "hop_ms": {
+                        "type": "number",
+                        "description": "Spacing between timeline points, milliseconds. Default 100 (the EBU R128 momentary update rate).",
+                        "default": 100
+                    },
+                    "from_s": {
+                        "type": "number",
+                        "description": "Optional: analyze only from this time (seconds into the file)."
+                    },
+                    "to_s": {
+                        "type": "number",
+                        "description": "Optional: analyze only up to this time (seconds into the file)."
+                    }
+                },
+                "required": ["audio_path"]
+            }
+        }),
+        json!({
+            "name": "beat_grid",
+            "description": "The full beat grid of a WAV, FLAC, mp3, or ogg file, as JSON: every detected beat time (ms), the estimated downbeats, the tempo with its octave-alternative candidates, and a windowed stability score. This is the detail the compact `tempo` summary inside probe_audio drops — that one keeps only the count and mean interval to stay small. Use it to line events up to the beat, see where the downbeats fall, or weigh a half/double-tempo alternative. Pass from_s/to_s to zoom into a window.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "audio_path": {
+                        "type": "string",
+                        "description": "Path to a WAV, FLAC, mp3, or ogg file."
+                    },
+                    "from_s": {
+                        "type": "number",
+                        "description": "Optional: analyze only from this time (seconds into the file)."
+                    },
+                    "to_s": {
+                        "type": "number",
+                        "description": "Optional: analyze only up to this time (seconds into the file)."
+                    }
+                },
+                "required": ["audio_path"]
+            }
+        }),
     ]
 }
 
@@ -899,6 +948,69 @@ pub fn probe_digest(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         &cochlea_features::SegmentOpts::default().with_window_ms(window_ms),
     );
     ToolOutcome::Ok(cochlea_features::digest_text(&report, &timeline))
+}
+
+/// `loudness_timeline`: mirrors `cochlea probe --loudness` — the momentary
+/// and short-term LUFS curve returned as JSON inline (an agent wants the
+/// data, not a file), the dynamics view the integrated/LRA summary can't give.
+pub fn loudness_timeline(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
+    let audio_path = match require_str(args, "audio_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let hop_ms = f64_or(args, "hop_ms", 100.0);
+    if !hop_ms.is_finite() || hop_ms < 1.0 {
+        return ToolOutcome::InvalidParams(format!(
+            "hop_ms must be a finite value of at least 1: {hop_ms}"
+        ));
+    }
+    let resolved = match ctx.resolve_read(audio_path, "audio_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let audio = match cochlea_decode::load(&resolved) {
+        Ok(audio) => audio,
+        Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
+    };
+    let (audio, _start_ms) = match apply_window(audio, args) {
+        Ok(pair) => pair,
+        Err(outcome) => return outcome,
+    };
+    let curve = cochlea_features::loudness_timeline(
+        &audio,
+        &cochlea_features::LoudnessTimelineOpts::default().with_hop_ms(hop_ms),
+    );
+    match serde_json::to_string_pretty(&curve) {
+        Ok(text) => ToolOutcome::Ok(text),
+        Err(err) => ToolOutcome::Failed(format!("serializing loudness timeline: {err}")),
+    }
+}
+
+/// `beat_grid`: mirrors `cochlea probe --beats` — the full [`TempoReport`]
+/// (every beat time, downbeats, candidates, stability) as JSON inline, the
+/// per-beat detail the compact `tempo` summary in `probe_audio` drops.
+pub fn beat_grid(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
+    let audio_path = match require_str(args, "audio_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let resolved = match ctx.resolve_read(audio_path, "audio_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let audio = match cochlea_decode::load(&resolved) {
+        Ok(audio) => audio,
+        Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
+    };
+    let (audio, _start_ms) = match apply_window(audio, args) {
+        Ok(pair) => pair,
+        Err(outcome) => return outcome,
+    };
+    let tempo = cochlea_features::estimate_tempo(&audio, &cochlea_features::TempoOpts::default());
+    match serde_json::to_string_pretty(&tempo) {
+        Ok(text) => ToolOutcome::Ok(text),
+        Err(err) => ToolOutcome::Failed(format!("serializing beat grid: {err}")),
+    }
 }
 
 /// `audio_diff`: feature-space comparison of two WAVs. A `Different`

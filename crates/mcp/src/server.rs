@@ -182,6 +182,8 @@ impl Server {
             "spectrogram" => tools::spectrogram(&self.ctx, args),
             "lint_score" => tools::lint_score(&self.ctx, args),
             "probe_digest" => tools::probe_digest(&self.ctx, args),
+            "loudness_timeline" => tools::loudness_timeline(&self.ctx, args),
+            "beat_grid" => tools::beat_grid(&self.ctx, args),
             "audio_diff" => tools::audio_diff(&self.ctx, args),
             "import_midi" => tools::import_midi(&self.ctx, args),
             "export_midi" => tools::export_midi(&self.ctx, args),

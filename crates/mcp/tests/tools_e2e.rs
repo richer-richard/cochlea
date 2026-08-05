@@ -142,6 +142,39 @@ fn render_probe_spectrogram_round_trip() {
         "{}",
         tool_text(&response)
     );
+
+    // 6. loudness_timeline on the same file — the dynamics curve as JSON.
+    let response = call_tool(&server, 7, "loudness_timeline", json!({"audio_path": wav}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let curve: Value = serde_json::from_str(tool_text(&response)).unwrap();
+    assert_eq!(curve["hop_ms"], 100.0, "{curve}");
+    assert!(
+        curve["points"].as_array().is_some_and(|p| !p.is_empty()),
+        "loudness timeline should have points: {curve}"
+    );
+    // A bad hop is an Invalid Params error, not a silently empty curve.
+    let bad = call_tool(
+        &server,
+        8,
+        "loudness_timeline",
+        json!({"audio_path": wav, "hop_ms": 0}),
+    );
+    assert_eq!(bad["error"]["code"], -32602, "{bad}");
+
+    // 7. beat_grid on the same file — the full TempoReport with the beat grid.
+    let response = call_tool(&server, 9, "beat_grid", json!({"audio_path": wav}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let grid: Value = serde_json::from_str(tool_text(&response)).unwrap();
+    // TempoReport shape: the per-beat grid the compact summary omits.
+    assert!(grid["beats_ms"].is_array(), "beat grid present: {grid}");
+    assert!(
+        grid.get("downbeats_ms").is_some(),
+        "downbeats present: {grid}"
+    );
+    assert!(
+        grid.get("candidates").is_some(),
+        "candidates present: {grid}"
+    );
 }
 
 /// FLAC goes through the same tools as WAV (`cochlea_decode::load`

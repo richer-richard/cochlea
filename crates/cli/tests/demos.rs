@@ -198,6 +198,37 @@ fn fm_bell_reads_back_at_the_played_pitch() {
 }
 
 #[test]
+fn marimba_and_organ_read_back_at_the_played_pitch() {
+    // The two new non-subtractive voices (modal marimba, additive organ)
+    // must still land on the note they played — both are built from exact
+    // harmonics, so the listen-and-assert loop reads the pitch straight back,
+    // the same contract fm_bell holds above.
+    for preset in ["marimba", "organ"] {
+        let score = Score::new(SampleRate(48_000), Ppq(960))
+            .track("v", Instrument::preset(preset))
+            .note("v", bar(1), Dur::half(), Pitch::A4, Vel(110));
+        let rendered = render(&score).unwrap();
+        let report = probe(&audio_of(&rendered), &ProbeOpts::default());
+
+        // Non-silent: the voice actually sounds.
+        let peak = rendered.mix().iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        assert!(peak > 0.02, "{preset} rendered near-silent (peak {peak})");
+
+        let note = report
+            .pitch
+            .melody
+            .first()
+            .unwrap_or_else(|| panic!("{preset} should produce a pitched note"));
+        assert_eq!(note.name, "A4", "{preset} A4 read back as {}", note.name);
+        assert!(
+            note.cents_off.abs() < 35.0,
+            "{preset} A4 is {:+.0} cents off",
+            note.cents_off
+        );
+    }
+}
+
+#[test]
 fn title_cue_hits_its_targets() {
     let rendered = run_demo("title_cue");
     // The RON verify block covers LUFS / true peak / monotone sweep /

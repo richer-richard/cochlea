@@ -146,6 +146,8 @@ fn tools_list_shape() {
             "audio_diff",
             "import_midi",
             "export_midi",
+            "loudness_timeline",
+            "beat_grid",
         ]
     );
     for tool in tools {
