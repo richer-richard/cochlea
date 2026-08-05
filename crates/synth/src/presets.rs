@@ -477,7 +477,9 @@ impl Patch for Marimba {
     }
 
     fn release_secs(&self) -> f64 {
-        0.4
+        // Long enough that the bar rings well past note-off (the fundamental's
+        // tau is 0.55 s) before the fade in `voice` retires it.
+        1.5
     }
 
     fn voice(&self, ctx: &VoiceCtx) -> Voice {
@@ -504,7 +506,15 @@ impl Patch for Marimba {
         // Ratios 1 : 4 : 8 (all exact harmonics, so pitch stays clean); the
         // 4× "bar overtone" is the marimba's timbral signature.
         let bar = partial(1.0, 0.5, 0.55) + partial(4.0, 0.28, 0.14) + partial(8.0, 0.10, 0.05);
-        let graph = bar >> fd::pan(0.0);
+        // The fundamental's decay is deliberately slow (tau 0.55) so the bar
+        // rings — it is nowhere near silent when the voice is retired at
+        // `note_len + release_secs`. Fade the last 50 ms so that still-ringing
+        // tail is never hard-cut into a click. (The same guard `pluck` uses;
+        // the drum presets don't need it because their taus are a small
+        // fraction of their release.)
+        let end = ctx.note_len_secs() + self.release_secs();
+        let fade = fd::envelope(move |t| ((end - t) / 0.05).clamp(0.0, 1.0));
+        let graph = (bar * fade) >> fd::pan(0.0);
         boxed_voice(ctx, Vec::new(), graph)
     }
 }

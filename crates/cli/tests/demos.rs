@@ -229,6 +229,35 @@ fn marimba_and_organ_read_back_at_the_played_pitch() {
 }
 
 #[test]
+fn marimba_fades_out_without_a_click_on_retirement() {
+    // The marimba's fundamental rings well past note-off (decay tau 0.55 s), so
+    // the voice must fade before it is retired or the still-ringing bar is
+    // hard-cut into a broadband click. Render a short (staccato) note — the
+    // worst case, and how a mallet is typically played — and assert the final
+    // millisecond has faded to near silence, which a hard cut at the envelope's
+    // amplitude (~0.13 there) would violate.
+    let score = Score::new(SampleRate(48_000), Ppq(960))
+        .track("m", Instrument::preset("marimba"))
+        .note("m", bar(1), Dur::sixteenth(), Pitch::A4, Vel(110));
+    let rendered = render(&score).unwrap();
+    let mix = rendered.mix();
+
+    // Last 1 ms = 48 stereo frames = 96 interleaved samples.
+    let tail_start = mix.len().saturating_sub(48 * 2);
+    let tail_peak = mix[tail_start..]
+        .iter()
+        .fold(0.0f32, |m, &s| m.max(s.abs()));
+    assert!(
+        tail_peak < 0.02,
+        "marimba tail should fade to near silence, but the final 1 ms peaks at \
+         {tail_peak} — a hard cut of the ringing bar would leave a click here"
+    );
+    // Sanity: the note actually sounded, well above that faded tail.
+    let peak = mix.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+    assert!(peak > 0.05, "marimba should sound (peak {peak})");
+}
+
+#[test]
 fn title_cue_hits_its_targets() {
     let rendered = run_demo("title_cue");
     // The RON verify block covers LUFS / true peak / monotone sweep /
