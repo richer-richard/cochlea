@@ -57,6 +57,16 @@ impl ToolCtx {
     /// canonicalize (the file itself usually doesn't exist yet), and the
     /// resulting parent-canonical + file-name path must sit inside the
     /// root. Rejects paths with no file name (`..`, a bare directory).
+    ///
+    /// When the target *does* already exist it is canonicalized the rest of
+    /// the way, because the final component can itself be a symlink and
+    /// `fs::write` follows it. Without that step a write path stays
+    /// unresolved while [`Self::resolve_read`] resolves fully, so the two
+    /// disagree about the same file: `audio_path = out_path = take.wav`
+    /// (a symlink to `master.wav`) compared unequal, slipped past the
+    /// aliasing guard, and the RON write destroyed the audio. It also means
+    /// `--root` confinement now sees where a symlink actually lands rather
+    /// than where it sits.
     fn resolve_write(&self, raw: &str, what: &str) -> Result<PathBuf, ToolOutcome> {
         let path = Path::new(raw);
         let Some(name) = path.file_name() else {
@@ -71,7 +81,11 @@ impl ToolCtx {
         let canonical_parent = parent
             .canonicalize()
             .map_err(|err| ToolOutcome::Failed(format!("resolving {what} {raw}: {err}")))?;
-        let canonical = canonical_parent.join(name);
+        let joined = canonical_parent.join(name);
+        // `canonicalize` only succeeds for an existing path; for the usual
+        // not-yet-created output the joined parent-canonical form is already
+        // fully resolved.
+        let canonical = joined.canonicalize().unwrap_or(joined);
         self.check_root(&canonical, raw, what)?;
         Ok(canonical)
     }
@@ -430,21 +444,6 @@ fn bool_or(args: &Value, key: &str, default: bool) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
 
-fn usize_or(args: &Value, key: &str, default: usize) -> usize {
-    // `as_u64` alone would silently ignore a JSON number lexed with a
-    // decimal point — serde_json stores `8.0` as a float — so also accept
-    // integral non-negative floats rather than dropping to the default.
-    args.get(key)
-        .and_then(|v| {
-            v.as_u64().or_else(|| {
-                v.as_f64()
-                    .filter(|f| f.fract() == 0.0 && *f >= 0.0)
-                    .map(|f| f as u64)
-            })
-        })
-        .map_or(default, |v| v as usize)
-}
-
 fn f64_or(args: &Value, key: &str, default: f64) -> f64 {
     args.get(key).and_then(Value::as_f64).unwrap_or(default)
 }
@@ -478,8 +477,28 @@ fn u32_or_invalid(args: &Value, key: &str, default: u32) -> Result<u32, ToolOutc
         Some(n) => u32::try_from(n).map_err(|_| {
             ToolOutcome::InvalidParams(format!("{key} {n} is out of range (max {})", u32::MAX))
         }),
-        None => Err(ToolOutcome::InvalidParams(format!(
-            "{key} must be a non-negative whole number"
+        // Distinguish "not a whole number" from "a whole number too large
+        // to represent" — a float spelling of an out-of-range integer is
+        // still an integer, and saying otherwise contradicts the value the
+        // caller can see in front of them.
+        None => Err(ToolOutcome::InvalidParams(match value.as_f64() {
+            Some(f) if f.fract() == 0.0 && f >= 0.0 => {
+                format!("{key} {f} is out of range (max {})", u32::MAX)
+            }
+            _ => format!("{key} must be a non-negative whole number"),
+        })),
+    }
+}
+
+/// A string argument that rejects a present-but-wrong-typed value instead of
+/// silently substituting the default, matching [`u32_or_invalid`]. A JSON
+/// `null` means "not set".
+fn str_or_invalid(args: &Value, key: &str, default: &str) -> Result<String, ToolOutcome> {
+    match args.get(key).filter(|v| !v.is_null()) {
+        None => Ok(default.to_owned()),
+        Some(Value::String(s)) => Ok(s.clone()),
+        Some(_) => Err(ToolOutcome::InvalidParams(format!(
+            "{key} must be a string"
         ))),
     }
 }
@@ -693,7 +712,10 @@ pub fn spectrogram(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     };
     let out_path = args.get("out_path").and_then(Value::as_str);
     let sheet = bool_or(args, "sheet", false);
-    let bars_per_tile = usize_or(args, "bars_per_tile", 8);
+    let bars_per_tile = match u32_or_invalid(args, "bars_per_tile", 8) {
+        Ok(n) => n as usize,
+        Err(outcome) => return outcome,
+    };
     let annotate = bool_or(args, "annotate", false);
     if annotate && sheet {
         return ToolOutcome::InvalidParams(
@@ -953,7 +975,10 @@ pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(g) => g,
         Err(outcome) => return outcome,
     };
-    let bpm_arg = match args.get("bpm") {
+    // An explicit JSON `null` means "not set" here, as it does for every
+    // other optional argument on this server — clients that serialize unset
+    // optionals as null are the common case, not an error.
+    let bpm_arg = match args.get("bpm").filter(|v| !v.is_null()) {
         Some(v) => {
             let Some(b) = v.as_f64() else {
                 return ToolOutcome::InvalidParams("bpm must be a number".to_string());
@@ -969,16 +994,34 @@ pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    let preset = args
-        .get("preset")
-        .and_then(Value::as_str)
-        .unwrap_or("sine")
-        .to_owned();
-    let track_name = args
-        .get("track_name")
-        .and_then(Value::as_str)
-        .unwrap_or("lead")
-        .to_owned();
+    let preset = match str_or_invalid(args, "preset", "sine") {
+        Ok(s) => s,
+        Err(outcome) => return outcome,
+    };
+    let track_name = match str_or_invalid(args, "track_name", "lead") {
+        Ok(s) => s,
+        Err(outcome) => return outcome,
+    };
+
+    // Everything checkable without the audio is checked before the decode
+    // and the analysis passes — and, critically, before anything is
+    // written. This mirrors `cochlea transcribe`'s flag-boundary checks.
+    let ppq_typed = cochlea_score::Ppq(ppq);
+    if let Err(err) = cochlea_score::Score::try_new(cochlea_score::SampleRate(48_000), ppq_typed) {
+        return ToolOutcome::InvalidParams(format!("ppq {err}"));
+    }
+    if let Some(g) = grid
+        && let Err(err) = g.resolve(ppq_typed)
+    {
+        return ToolOutcome::InvalidParams(format!("grid does not resolve at ppq {ppq}: {err}"));
+    }
+    let bank = cochlea_synth::PatchBank::presets();
+    if !bank.patch_names().contains(&preset.as_str()) {
+        return ToolOutcome::InvalidParams(format!(
+            "unknown preset {preset:?} — known presets: {}",
+            bank.patch_names().join(", ")
+        ));
+    }
 
     let audio_resolved = match ctx.resolve_read(audio_path, "audio_path") {
         Ok(p) => p,
@@ -999,6 +1042,17 @@ pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(audio) => audio,
         Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
     };
+    // The score IR's sample-rate bounds are narrower than the decoders',
+    // so check before spending the analysis passes.
+    if let Err(err) =
+        cochlea_score::Score::try_new(cochlea_score::SampleRate(audio.sample_rate), ppq_typed)
+    {
+        return ToolOutcome::Failed(format!(
+            "the input's {} Hz sample rate is outside what a score can carry ({err}); resample \
+             it first",
+            audio.sample_rate
+        ));
+    }
 
     let (bpm, tempo_source) = match bpm_arg {
         Some(b) => (b, "given"),
@@ -1013,15 +1067,14 @@ pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     };
 
     let melody = cochlea_features::extract_melody(&audio);
+    // One downmix for every note, not one per note.
+    let windows: Vec<(f64, f64)> = melody.iter().map(|n| (n.start_ms, n.end_ms)).collect();
+    let peaks = cochlea_features::peak_dbfs_for_windows(&audio, &windows);
     let observations: Vec<cochlea_score::NoteObservation> = melody
         .iter()
-        .map(|n| {
-            cochlea_score::NoteObservation::from_peak_dbfs(
-                n.start_ms,
-                n.end_ms,
-                n.midi,
-                cochlea_features::peak_dbfs_between(&audio, n.start_ms, n.end_ms),
-            )
+        .zip(peaks)
+        .map(|(n, peak)| {
+            cochlea_score::NoteObservation::from_peak_dbfs(n.start_ms, n.end_ms, n.midi, peak)
         })
         .collect();
 
@@ -1042,6 +1095,25 @@ pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
             return ToolOutcome::Failed(format!("serializing the transcribed score: {err}"));
         }
     };
+
+    // Lint before writing, exactly as `cochlea transcribe` does: an agent
+    // that gets `isError: false` must be able to trust that the file it was
+    // handed will render, and an invalid score must never land on top of
+    // whatever `out_path` already pointed at.
+    let errors: Vec<String> = transcription
+        .score
+        .validate(&bank)
+        .into_iter()
+        .filter(|f| f.severity == cochlea_score::Severity::Error)
+        .map(|f| f.message)
+        .collect();
+    if !errors.is_empty() {
+        return ToolOutcome::Failed(format!(
+            "the transcribed score fails lint, so {out_path} was not written: {}",
+            errors.join("; ")
+        ));
+    }
+
     if let Err(err) = std::fs::write(&out_resolved, ron) {
         return ToolOutcome::Failed(format!("writing {out_path}: {err}"));
     }
@@ -1069,7 +1141,7 @@ pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
 /// parsed by the score IR's own `Dur::parse` so the spelling matches the
 /// CLI's `--grid` exactly.
 fn parse_grid_arg(args: &Value) -> Result<Option<cochlea_score::Dur>, ToolOutcome> {
-    let raw = args.get("grid").and_then(Value::as_str).unwrap_or("1/16");
+    let raw = str_or_invalid(args, "grid", "1/16")?;
     let t = raw.trim();
     if t.eq_ignore_ascii_case("none") || t.eq_ignore_ascii_case("raw") {
         return Ok(None);

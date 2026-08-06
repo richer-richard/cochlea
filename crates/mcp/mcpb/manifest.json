@@ -4,7 +4,7 @@
   "display_name": "Cochlea",
   "version": "0.5.0",
   "description": "Render, analyze, and verify audio (WAV/FLAC/mp3/ogg) offline and deterministically, exposed as MCP tools.",
-  "long_description": "Cochlea is a headless, deterministic audio engine. This server exposes it as MCP tools: render a declarative score to byte-identical PCM, extract loudness/pitch/melody/timbre/tempo/key/structure reports from any WAV, FLAC, mp3, or ogg file, generate plain or annotated spectrograms, diff two renders in feature space or as a spectral heat map, and import Standard MIDI Files as scores. No ffmpeg, no audio device, no realtime path.",
+  "long_description": "Cochlea is a headless, deterministic audio engine. This server exposes it as MCP tools: render a declarative score to byte-identical PCM, extract loudness/pitch/melody/timbre/tempo/key/structure reports from any WAV, FLAC, mp3, or ogg file, generate plain or annotated spectrograms, diff two renders in feature space or as a spectral heat map, import Standard MIDI Files as scores, and transcribe audio back into an editable score. No ffmpeg, no audio device, no realtime path.",
   "author": {
     "name": "richer-richard",
     "url": "https://github.com/richer-richard"
@@ -82,6 +82,10 @@
     {
       "name": "beat_grid",
       "description": "The whole-file beat grid as JSON: every detected beat time, the estimated downbeats, the tempo with its octave candidates, and a stability score — the per-beat detail the compact tempo summary drops."
+    },
+    {
+      "name": "transcribe_audio",
+      "description": "Transcribe a WAV, FLAC, mp3, or ogg file into an editable RON score — the inverse of render_score. Monophonic pitch tracking against a detected or given tempo, quantized to a note grid, with every guess reported."
     }
   ]
 }

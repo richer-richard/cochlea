@@ -600,6 +600,15 @@ fn transcribe_rejects_bad_parameters() {
         json!({"audio_path": wav, "out_path": out, "ppq": 12.5}),
         // In range as an integer, but outside the score IR's PPQ bounds.
         json!({"audio_path": wav, "out_path": out, "ppq": 3}),
+        // A grid that cannot land on a whole tick at this PPQ.
+        json!({"audio_path": wav, "out_path": out, "ppq": 25, "grid": "1/16"}),
+        // A preset that is not in the catalog: caught before any write, so
+        // the agent never receives an unrenderable score.
+        json!({"audio_path": wav, "out_path": out, "preset": "saw"}),
+        // Wrong JSON types must not silently fall back to the default.
+        json!({"audio_path": wav, "out_path": out, "grid": 16}),
+        json!({"audio_path": wav, "out_path": out, "preset": ["marimba"]}),
+        json!({"audio_path": wav, "out_path": out, "track_name": 7}),
     ] {
         let response = call_tool(&server, 31, "transcribe_audio", bad.clone());
         assert!(
@@ -612,6 +621,24 @@ fn transcribe_rejects_bad_parameters() {
         );
     }
 
+    // An explicit null means "not set", as everywhere else on this server —
+    // clients that serialize unset optionals as null are the common case.
+    let null_ok = tmp_path("mcp_nulls_ok.ron");
+    let response = call_tool(
+        &server,
+        33,
+        "transcribe_audio",
+        json!({
+            "audio_path": wav, "out_path": null_ok,
+            "bpm": null, "grid": null, "preset": null, "track_name": null, "ppq": null
+        }),
+    );
+    assert_eq!(
+        response["result"]["isError"], false,
+        "explicit nulls should read as absent: {response}"
+    );
+    assert!(std::path::Path::new(&null_ok).exists());
+
     // Aliasing the input is refused too.
     let response = call_tool(
         &server,
@@ -623,4 +650,72 @@ fn transcribe_rejects_bad_parameters() {
         response["error"].is_object() || response["result"]["isError"] == true,
         "{response}"
     );
+}
+
+/// The write path must resolve a symlinked *final component*, not just its
+/// parent. Regression: `resolve_read` canonicalized fully while
+/// `resolve_write` stopped at the parent, so `audio_path == out_path ==
+/// take.wav` (a symlink to master.wav) compared unequal, slipped past the
+/// aliasing guard, and `fs::write` followed the link and destroyed the
+/// audio — the exact data-loss class the CLI's `same_file` closes.
+#[test]
+fn a_symlinked_out_path_cannot_destroy_the_input() {
+    let server = Server::new();
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("mcp_symlink_guard");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let score = dir.join("s.ron");
+    std::fs::write(
+        &score,
+        r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960, time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: "lead", instrument: Preset("sine"),
+        notes: [ Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+)"#,
+    )
+    .unwrap();
+    let master = dir.join("master.wav");
+    let response = call_tool(
+        &server,
+        40,
+        "render_score",
+        json!({"score_path": score.to_str().unwrap(), "out_path": master.to_str().unwrap()}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let before = std::fs::metadata(&master).unwrap().len();
+    assert!(before > 1000);
+
+    // take.wav -> master.wav
+    let link = dir.join("take.wav");
+    std::os::unix::fs::symlink("master.wav", &link).unwrap();
+
+    let response = call_tool(
+        &server,
+        41,
+        "transcribe_audio",
+        json!({"audio_path": link.to_str().unwrap(), "out_path": link.to_str().unwrap()}),
+    );
+    assert!(
+        response["error"].is_object() || response["result"]["isError"] == true,
+        "a symlinked out_path aliasing the input must be refused: {response}"
+    );
+    assert_eq!(
+        std::fs::metadata(&master).unwrap().len(),
+        before,
+        "the input audio must be untouched"
+    );
+
+    // The same link is still perfectly usable as a *read* path.
+    let out = dir.join("ok.ron");
+    let response = call_tool(
+        &server,
+        42,
+        "transcribe_audio",
+        json!({"audio_path": link.to_str().unwrap(), "out_path": out.to_str().unwrap()}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert!(out.exists());
+    assert_eq!(std::fs::metadata(&master).unwrap().len(), before);
 }

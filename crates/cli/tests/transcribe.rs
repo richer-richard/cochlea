@@ -306,3 +306,84 @@ fn raw_timing_skips_quantization() {
         "the no-grid path should say so"
     );
 }
+
+/// Everything knowable without the audio is rejected at the boundary, and
+/// crucially *before* `--out` is written — an existing file must survive a
+/// command that was never going to succeed.
+#[test]
+fn invalid_flags_fail_before_writing_anything() {
+    let dir = case_dir("failfast");
+    let wav = render(&dir, SCALE);
+    let out = dir.join("precious.ron");
+    const PRECIOUS: &str = "// hand-edited, must not be clobbered\n";
+
+    for args in [
+        vec!["--preset", "saw"],         // not in the catalog
+        vec!["--ppq", "3"],              // outside the IR's PPQ range
+        vec!["--ppq", "25"],             // grid can't land on a whole tick
+        vec!["--grid", "banana"],        // unparseable
+        vec!["--grid", "1/2147483648."], // would overflow the dotted multiplier
+        vec!["--bpm", "99999"],          // outside the IR's tempo range
+    ] {
+        std::fs::write(&out, PRECIOUS).unwrap();
+        let mut cmd = cochlea();
+        cmd.args([
+            "transcribe",
+            wav.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ]);
+        cmd.args(&args);
+        let output = cmd.output().unwrap();
+
+        assert!(
+            !output.status.success(),
+            "{args:?} should fail: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap(),
+            PRECIOUS,
+            "{args:?} must not touch --out"
+        );
+    }
+}
+
+/// An overlapping or collapsed note is repaired rather than emitted as a
+/// chord — the transcription is a monophonic line by construction.
+#[test]
+fn the_transcription_is_monophonic() {
+    let dir = case_dir("monophonic");
+    let wav = render(&dir, SCALE);
+    let out = dir.join("back.ron");
+
+    assert!(
+        cochlea()
+            .args([
+                "transcribe",
+                wav.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+                "--bpm",
+                "120",
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let ron = std::fs::read_to_string(&out).unwrap();
+    // Every `at:` must be distinct — two notes on one tick would mean the
+    // repair pass let a stack through.
+    let ats: Vec<String> = ron
+        .lines()
+        .map(str::trim)
+        .filter_map(|l| {
+            l.strip_prefix("at: ")
+                .map(|r| r.trim_end_matches(',').to_owned())
+        })
+        .collect();
+    let mut unique = ats.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(ats.len(), unique.len(), "notes share a tick:\n{ron}");
+}

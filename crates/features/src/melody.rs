@@ -147,16 +147,46 @@ pub(crate) fn notes_from_track(
 /// zero, the same convention [`Audio::window`]'s frame mapping uses — so
 /// `+inf` is not a spelling of "to the end of the buffer", it yields an
 /// empty window.
+/// Measuring one window downmixes the whole buffer, so prefer
+/// [`peak_dbfs_for_windows`] when measuring many — a note-per-call loop over
+/// a long file is quadratic.
 pub fn peak_dbfs_between(audio: &Audio, start_ms: f64, end_ms: f64) -> f64 {
     if audio.sample_rate == 0 {
         return f64::NEG_INFINITY;
     }
+    peak_dbfs_in(&audio.mono(), audio.sample_rate, start_ms, end_ms)
+}
+
+/// [`peak_dbfs_between`] for many windows at once, downmixing the buffer
+/// **once** instead of per window.
+///
+/// This is the shape the transcribe path actually needs: one measurement per
+/// detected note. Calling the single-window function in a loop re-runs the
+/// stereo downmix (a full-length allocation) for every note, which on a
+/// few-minute file with a few hundred notes is hundreds of multi-megabyte
+/// allocations and billions of wasted operations — quadratic in a place
+/// where linear is free.
+///
+/// Returns one reading per input window, in the same order. Each window
+/// follows [`peak_dbfs_between`]'s rules exactly.
+pub fn peak_dbfs_for_windows(audio: &Audio, windows: &[(f64, f64)]) -> Vec<f64> {
+    if audio.sample_rate == 0 {
+        return vec![f64::NEG_INFINITY; windows.len()];
+    }
     let mono = audio.mono();
+    windows
+        .iter()
+        .map(|&(start_ms, end_ms)| peak_dbfs_in(&mono, audio.sample_rate, start_ms, end_ms))
+        .collect()
+}
+
+/// The shared measurement over an already-downmixed buffer.
+fn peak_dbfs_in(mono: &[f32], sample_rate: u32, start_ms: f64, end_ms: f64) -> f64 {
     let to_index = |ms: f64| -> usize {
         if !ms.is_finite() || ms <= 0.0 {
             return 0;
         }
-        let idx = libm::round(ms / 1000.0 * f64::from(audio.sample_rate));
+        let idx = libm::round(ms / 1000.0 * f64::from(sample_rate));
         if idx >= mono.len() as f64 {
             mono.len()
         } else {

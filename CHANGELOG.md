@@ -32,6 +32,39 @@ versions all crates together.
 
 ### Fixed
 
+- **An MCP write path can no longer destroy the file it is reading through a
+  symlink.** `resolve_read` canonicalized fully while `resolve_write` stopped
+  at the parent directory, so a symlinked *final* component made the two
+  disagree about the same file: `audio_path = out_path = take.wav` (a link to
+  `master.wav`) compared unequal, slipped past the aliasing guard, and the RON
+  write followed the link and replaced the audio. Reproduced — a 249 KB WAV
+  became 498 bytes of RON. Write paths now resolve an existing target the rest
+  of the way, which also means `--root` confinement sees where a symlink
+  actually lands. Shared by `transcribe_audio`, `import_midi`, and
+  `export_midi`.
+- **`Dur::parse` can no longer overflow on a hostile duration.** The
+  dotted/triplet multipliers ran unchecked on freshly parsed `u32` terms, so
+  `--grid "1/2147483648."` (and the MCP `grid` argument) overflowed `den * 2`
+  — a panic in debug builds, a wrapped nonsense fraction in release. Terms are
+  now bounded at parse (`Dur::MAX_FRACTION_TERM`, far finer than one tick at
+  any PPQ) and the modifiers saturate, so direct library callers are safe too.
+- **Transcription no longer emits simultaneous notes.** The input is a
+  monophonic line, but rounding both ends of a short note to the grid could
+  land its start and end on one tick while the next note snapped to that same
+  tick — emitting a stack instead of a melody. Overlapping notes are now
+  shortened to end where the next begins, a note landing on a taken tick is
+  dropped, and both are reported.
+- **Invalid flags fail before the audio is read, and nothing is written until
+  the score lints.** `--preset`, `--ppq`, `--grid`-at-that-PPQ, and the input's
+  sample rate are all checked at the boundary, and the lint moved ahead of the
+  write — previously a bad `--preset` overwrote `--out` with an unrenderable
+  score and only then exited non-zero. `transcribe_audio` gained the same
+  checks plus the lint it never had (it used to report success for a score
+  that would fail at `render_score`).
+- **Velocity estimation is no longer quadratic.** `peak_dbfs_between`
+  downmixes the whole buffer, and both front ends called it once per detected
+  note — hundreds of full-length allocations on a few-minute file. New
+  `peak_dbfs_for_windows` downmixes once for all windows.
 - **An MCP integer argument no longer falls back to its default when the
   caller passed something invalid.** `usize_or` treated a negative or
   fractional JSON number the same as a missing key, so `{"ppq": -100}` (or
@@ -40,7 +73,11 @@ versions all crates together.
   That divergence broke the rule that each MCP tool mirrors its CLI
   subcommand exactly. Present-but-invalid integers are now Invalid Params
   errors, for both `transcribe_audio`'s `ppq` and `import_midi`'s
-  `sample_rate`.
+  `sample_rate`. String arguments (`grid`, `preset`, `track_name`) are strict
+  the same way, an explicit JSON `null` reads as "not set" everywhere
+  (clients commonly serialize unset optionals that way), and the one
+  remaining silent-default helper was removed rather than left beside its
+  replacement — so `spectrogram`'s `bars_per_tile` is validated too.
 - **A corrupt MIDI file can no longer panic the importer.** A time-signature
   meta event stores its denominator as a power-of-two *exponent*, and that
   byte was shifted unvalidated (`1u32 << payload[1]`) — so any exponent past

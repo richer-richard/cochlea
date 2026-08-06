@@ -46,7 +46,7 @@ pub use harmony::{
 pub use loudness::{
     LoudnessPoint, LoudnessTimeline, LoudnessTimelineOpts, loudness_range, loudness_timeline,
 };
-pub use melody::{MelodyNote, extract_melody, peak_dbfs_between};
+pub use melody::{MelodyNote, extract_melody, peak_dbfs_between, peak_dbfs_for_windows};
 pub use report::{
     ClippingReport, KeyReport, LoudnessReport, Mode, OnsetsReport, PitchClass, PitchReport,
     PitchSegment, ProbeOpts, Report, SilenceReport, SourceInfo, TempoSummary,

@@ -848,9 +848,44 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             if same_file(&out, &input) {
                 anyhow::bail!("--out would overwrite the input audio {out:?}");
             }
+
+            // Everything knowable without the audio is checked *first*:
+            // decoding and the YIN pass cost seconds to minutes on a long
+            // file, and `--out` is written near the end, so a bad flag that
+            // surfaced late would burn that work and could clobber an
+            // existing file with a score we already knew was invalid.
             let grid = parse_grid(&grid)?;
+            let ppq = cochlea_score::Ppq(ppq);
+            // Probe the whole (rate, ppq, grid) combination by building the
+            // same empty score `transcribe` will build.
+            let probe = cochlea_score::Score::try_new(cochlea_score::SampleRate(48_000), ppq)
+                .context("--ppq is out of range")?;
+            if let Some(g) = grid {
+                g.resolve(ppq).with_context(|| {
+                    format!("--grid does not land on a whole tick at --ppq {}", ppq.0)
+                })?;
+            }
+            let bank = PatchBank::presets();
+            if !bank.patch_names().contains(&preset.as_str()) {
+                anyhow::bail!(
+                    "unknown preset {preset:?} — known presets: {}",
+                    bank.patch_names().join(", ")
+                );
+            }
+            drop(probe);
+
             let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
+            // The score IR's sample-rate bounds are narrower than what the
+            // decoders accept, so check before spending the analysis passes.
+            cochlea_score::Score::try_new(cochlea_score::SampleRate(audio.sample_rate), ppq)
+                .with_context(|| {
+                    format!(
+                        "the input's {} Hz sample rate is outside what a score can carry; \
+                     resample it first",
+                        audio.sample_rate
+                    )
+                })?;
 
             // Tempo: the caller's if given, else detected. A detection that
             // finds no pulse falls back to MIDI's default rather than
@@ -870,21 +905,22 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             };
 
             let melody = cochlea_features::extract_melody(&audio);
+            // One downmix for every note, not one per note.
+            let windows: Vec<(f64, f64)> = melody.iter().map(|n| (n.start_ms, n.end_ms)).collect();
+            let peaks = cochlea_features::peak_dbfs_for_windows(&audio, &windows);
             let observations: Vec<cochlea_score::NoteObservation> = melody
                 .iter()
-                .map(|n| {
+                .zip(peaks)
+                .map(|(n, peak)| {
                     cochlea_score::NoteObservation::from_peak_dbfs(
-                        n.start_ms,
-                        n.end_ms,
-                        n.midi,
-                        cochlea_features::peak_dbfs_between(&audio, n.start_ms, n.end_ms),
+                        n.start_ms, n.end_ms, n.midi, peak,
                     )
                 })
                 .collect();
 
             let opts = cochlea_score::TranscribeOpts::new()
                 .with_sample_rate(cochlea_score::SampleRate(audio.sample_rate))
-                .with_ppq(cochlea_score::Ppq(ppq))
+                .with_ppq(ppq)
                 .with_bpm(cochlea_score::Bpm(bpm))
                 .with_grid(grid)
                 .with_preset(&preset)
@@ -898,6 +934,20 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                 eprintln!("note: {w}");
             }
 
+            // Lint *before* writing: an invalid score must never land on
+            // top of whatever `--out` already pointed at.
+            let errors = score
+                .validate(&PatchBank::presets())
+                .into_iter()
+                .filter(|f| f.severity == Severity::Error)
+                .count();
+            if errors > 0 {
+                anyhow::bail!(
+                    "transcribed score fails lint with {errors} error(s); {} not written",
+                    out.display()
+                );
+            }
+
             std::fs::write(&out, score.to_ron()?)
                 .with_context(|| format!("writing {}", out.display()))?;
             eprintln!(
@@ -905,17 +955,6 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                 score.tracks().first().map_or(0, |t| t.notes.len()),
                 out.display()
             );
-
-            // Same belt-and-braces as `import`: a preset that isn't in the
-            // catalog should surface here, not at render time.
-            let errors = score
-                .validate(&PatchBank::presets())
-                .into_iter()
-                .filter(|f| f.severity == Severity::Error)
-                .count();
-            if errors > 0 {
-                anyhow::bail!("transcribed score fails lint with {errors} error(s)");
-            }
             Ok(std::process::ExitCode::SUCCESS)
         }
 

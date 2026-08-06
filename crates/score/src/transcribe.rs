@@ -32,6 +32,21 @@
 //! musical grid rather than on the tracker's frame boundaries. A note that
 //! quantizes to zero length keeps one grid unit: a hit that happened should
 //! not vanish because it was short.
+//!
+//! The grid is anchored at **tick 0** — the start of the analyzed buffer —
+//! because that is the only reference this module has; it receives note
+//! times, not a beat map. A recording that does not begin on the beat is
+//! therefore quantized against a grid offset from its real one, and the
+//! result says so in its warnings. Trimming the lead-in (or windowing the
+//! probe) before transcribing is the fix; aligning to a detected downbeat
+//! would mean taking a beat grid as input, which is a larger change than
+//! this module's contract.
+//!
+//! Because the input is a single monophonic line, notes that quantization
+//! pulls onto each other are repaired rather than emitted as chords: an
+//! overlapping note is shortened to end where the next begins, and a note
+//! landing on a tick already taken is dropped. Both are counted in the
+//! warnings.
 
 use crate::error::ScoreError;
 use crate::pitch::Pitch;
@@ -101,6 +116,14 @@ pub const VEL_FLOOR_DBFS: f64 = -48.0;
 /// The shortest note a transcription will emit, in grid units — a note that
 /// quantizes to nothing still happened.
 const MIN_GRID_UNITS: u64 = 1;
+
+/// One note resolved to integer ticks, before overlap repair.
+struct PlannedNote {
+    start: u64,
+    len: u64,
+    pitch: Pitch,
+    vel: u8,
+}
 
 /// How to turn observations into a score.
 #[derive(Debug, Clone)]
@@ -238,6 +261,18 @@ pub fn transcribe(
                 0
             } else {
                 warnings.push(format!("timing quantized to a {t}-tick grid"));
+                // The grid is anchored at tick 0 — the start of the
+                // analyzed buffer — not at a detected downbeat. A recording
+                // that does not begin on the beat therefore quantizes
+                // against a grid offset from its real one, which is a
+                // wrong-rhythm result rather than a wrong-tempo one, so it
+                // is worth saying out loud.
+                warnings.push(
+                    "the grid is anchored at the start of the audio, not at a detected \
+                     downbeat — trim any lead-in first, or pass no grid, if the recording \
+                     does not begin on the beat"
+                        .to_owned(),
+                );
                 t
             }
         }
@@ -260,7 +295,12 @@ pub fn transcribe(
 
     let (mut clamped_pitch, mut clamped_vel) = (0usize, 0usize);
     let (mut repaired_len, mut dropped) = (0usize, 0usize);
+    let (mut truncated, mut collapsed) = (0usize, 0usize);
 
+    // Resolve every observation to integer ticks first; overlap repair
+    // below needs to see neighbours, which a straight emit-as-you-go loop
+    // cannot.
+    let mut planned: Vec<PlannedNote> = Vec::with_capacity(sorted.len());
     for obs in sorted {
         let Some(start) = ms_to_ticks(obs.start_ms, ticks_per_ms) else {
             dropped += 1;
@@ -314,12 +354,48 @@ pub fn transcribe(
             obs.vel.clamp(1, 127)
         };
 
+        planned.push(PlannedNote {
+            start,
+            len,
+            pitch,
+            vel,
+        });
+    }
+
+    // Overlap repair. The input is a *monophonic* line, so two notes
+    // sounding at once is never something the analyzer heard — it is an
+    // artifact of quantization pulling neighbours together. Rounding both
+    // ends to the grid can land a short note's start and end on the same
+    // tick (it then takes the minimum duration) while the next note snaps
+    // to that same tick, which without this step emits a stack of
+    // simultaneous notes instead of a melody.
+    //
+    // Two notes on the same tick: keep the first, since that is the onset
+    // the tracker actually reported there. Otherwise truncate the earlier
+    // note to end where the next begins — always leaving it at least one
+    // tick, because the next start is strictly greater.
+    let mut repaired: Vec<PlannedNote> = Vec::with_capacity(planned.len());
+    for note in planned {
+        if let Some(last) = repaired.last_mut() {
+            if note.start == last.start {
+                collapsed += 1;
+                continue;
+            }
+            if last.start + last.len > note.start {
+                last.len = note.start - last.start;
+                truncated += 1;
+            }
+        }
+        repaired.push(note);
+    }
+
+    for note in repaired {
         score = score.try_note(
             &opts.track_name,
-            Ticks(start),
-            Dur::ticks(len),
-            pitch,
-            Vel(vel),
+            Ticks(note.start),
+            Dur::ticks(note.len),
+            note.pitch,
+            Vel(note.vel),
         )?;
     }
 
@@ -331,6 +407,18 @@ pub fn transcribe(
     if clamped_vel > 0 {
         warnings.push(format!(
             "{clamped_vel} note(s) fell outside velocity 1..=127 and were clamped"
+        ));
+    }
+    if truncated > 0 {
+        warnings.push(format!(
+            "{truncated} note(s) overlapped after quantization and were shortened to end where \
+             the next begins"
+        ));
+    }
+    if collapsed > 0 {
+        warnings.push(format!(
+            "{collapsed} note(s) quantized onto a tick already taken and were dropped — the grid \
+             is coarser than the playing"
         ));
     }
     if repaired_len > 0 {
@@ -542,6 +630,77 @@ mod tests {
         assert_eq!(track.notes[1].vel, Vel(1), "0 should clamp to the floor");
         assert!(
             t.warnings.iter().any(|w| w.contains("velocity 1..=127")),
+            "{:?}",
+            t.warnings
+        );
+    }
+
+    #[test]
+    fn quantization_never_emits_simultaneous_notes() {
+        // The input is a monophonic line, so overlapping output is always a
+        // quantization artifact. At 120 BPM / 960 PPQ a 1/16 grid is 240
+        // ticks (125 ms): an 80 ms note snaps start and end to the same
+        // tick, takes the minimum duration, and its successor snaps to that
+        // same tick too — which used to emit a stack.
+        let notes = [
+            obs(90.0, 170.0, 60),
+            obs(170.0, 250.0, 62),
+            obs(250.0, 800.0, 64),
+        ];
+        let t = transcribe(&notes, &TranscribeOpts::new()).expect("transcribes");
+        let track = &t.score.tracks()[0];
+
+        let mut spans: Vec<(u64, u64)> = track
+            .notes
+            .iter()
+            .map(|n| (n.at.0, n.at.0 + n.dur.0))
+            .collect();
+        spans.sort_unstable();
+        for pair in spans.windows(2) {
+            assert!(
+                pair[0].1 <= pair[1].0,
+                "note {:?} overlaps {:?} — a monophonic line must not stack",
+                pair[0],
+                pair[1]
+            );
+        }
+        assert!(
+            track.notes.iter().all(|n| n.dur.0 > 0),
+            "every emitted note keeps a positive duration"
+        );
+    }
+
+    #[test]
+    fn an_overlapping_note_is_shortened_to_the_next_start() {
+        // Two notes a beat apart, the first held way past the second.
+        let notes = [obs(0.0, 2000.0, 60), obs(500.0, 1000.0, 62)];
+        let t = transcribe(&notes, &TranscribeOpts::new()).expect("transcribes");
+        let track = &t.score.tracks()[0];
+        assert_eq!(track.notes.len(), 2);
+        assert_eq!(track.notes[0].at, Ticks(0));
+        assert_eq!(
+            track.notes[0].dur,
+            Ticks(960),
+            "the held note should stop where the next starts"
+        );
+        assert_eq!(track.notes[1].at, Ticks(960));
+        assert!(
+            t.warnings.iter().any(|w| w.contains("overlapped")),
+            "{:?}",
+            t.warnings
+        );
+    }
+
+    #[test]
+    fn notes_landing_on_one_tick_keep_the_first_and_report_it() {
+        // Both inside the same 1/16 cell, so both snap to tick 0.
+        let notes = [obs(0.0, 20.0, 60), obs(20.0, 40.0, 67)];
+        let t = transcribe(&notes, &TranscribeOpts::new()).expect("transcribes");
+        let track = &t.score.tracks()[0];
+        assert_eq!(track.notes.len(), 1, "one tick holds one note");
+        assert_eq!(track.notes[0].pitch, Pitch(60), "the first onset wins");
+        assert!(
+            t.warnings.iter().any(|w| w.contains("already taken")),
             "{:?}",
             t.warnings
         );

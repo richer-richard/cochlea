@@ -176,6 +176,14 @@ enum DurKind {
 }
 
 impl Dur {
+    /// Largest `num`/`den` term [`Dur::parse`] accepts.
+    ///
+    /// A whole note is at most `4 × 15_360 = 61_440` ticks (the coarsest
+    /// resolution [`Ppq`] allows), so a denominator past this is already
+    /// far below one tick and can never resolve. Bounding here keeps the
+    /// dotted/triplet multipliers away from `u32` overflow.
+    pub const MAX_FRACTION_TERM: u32 = 1 << 20;
+
     /// An exact `num`/`den` fraction of a whole note.
     pub fn of(num: u32, den: u32) -> Dur {
         assert!(num > 0 && den > 0, "a duration must be positive");
@@ -207,24 +215,29 @@ impl Dur {
     }
 
     /// Dotted: half again as long (×3/2).
+    ///
+    /// Saturating: the multipliers cannot overflow into a wrapped, silently
+    /// wrong duration. Terms that large are already unresolvable (see
+    /// [`Dur::MAX_FRACTION_TERM`]), so saturation only ever turns one
+    /// error into another.
     pub fn dotted(self) -> Dur {
         match self.0 {
             DurKind::Frac { num, den } => Dur(DurKind::Frac {
-                num: num * 3,
-                den: den * 2,
+                num: num.saturating_mul(3),
+                den: den.saturating_mul(2),
             }),
-            DurKind::Ticks(n) => Dur(DurKind::Ticks(n * 3 / 2)),
+            DurKind::Ticks(n) => Dur(DurKind::Ticks(n.saturating_mul(3) / 2)),
         }
     }
 
-    /// Triplet: two-thirds as long (×2/3).
+    /// Triplet: two-thirds as long (×2/3). Saturating, as [`Dur::dotted`].
     pub fn triplet(self) -> Dur {
         match self.0 {
             DurKind::Frac { num, den } => Dur(DurKind::Frac {
-                num: num * 2,
-                den: den * 3,
+                num: num.saturating_mul(2),
+                den: den.saturating_mul(3),
             }),
-            DurKind::Ticks(n) => Dur(DurKind::Ticks(n * 2 / 3)),
+            DurKind::Ticks(n) => Dur(DurKind::Ticks(n.saturating_mul(2) / 3)),
         }
     }
 
@@ -260,6 +273,16 @@ impl Dur {
         let num: u32 = num.trim().parse().map_err(|_| bad())?;
         let den: u32 = den.trim().parse().map_err(|_| bad())?;
         if num == 0 || den == 0 {
+            return Err(bad());
+        }
+        // Bound the terms before the dotted/triplet multipliers touch them.
+        // This is the untrusted-input door (RON scores, and `--grid` /
+        // the MCP `grid` argument), and a term near `u32::MAX` would
+        // otherwise overflow `num * 3` / `den * 2` — a panic in debug, a
+        // wrapped nonsense fraction in release. Anything past this bound is
+        // far finer than one tick at the coarsest PPQ, so it could never
+        // resolve regardless.
+        if num > Self::MAX_FRACTION_TERM || den > Self::MAX_FRACTION_TERM {
             return Err(bad());
         }
         let mut dur = Dur::of(num, den);
@@ -378,5 +401,73 @@ impl Pos {
 impl From<Ticks> for Pos {
     fn from(t: Ticks) -> Pos {
         Pos(PosKind::Raw(t))
+    }
+}
+
+#[cfg(test)]
+mod dur_parse_bounds {
+    //! `Dur::parse` is an untrusted-input door: RON scores, `cochlea
+    //! transcribe --grid`, and the MCP `grid` argument all reach it. The
+    //! dotted/triplet multipliers used to run unchecked on the parsed
+    //! terms, so `"1/2147483648."` overflowed `den * 2` — a panic in debug,
+    //! a wrapped fraction in release.
+    use super::*;
+
+    #[test]
+    fn terms_that_would_overflow_the_modifiers_are_rejected() {
+        for s in [
+            "1/2147483648.",
+            "1/4294967295.",
+            "2000000000/4.",
+            "1/4294967295t",
+            "4294967295/1t",
+            "3000000000/2",
+        ] {
+            assert!(
+                Dur::parse(s).is_err(),
+                "{s:?} should be rejected, not overflow"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_durations_still_parse() {
+        for (s, num, den) in [
+            ("1/4", 1u32, 4u32),
+            ("3/16", 3, 16),
+            ("1/8.", 3, 16), // dotted eighth = 3/16
+            ("1/4t", 2, 12), // quarter triplet = 2/12
+        ] {
+            match Dur::parse(s).expect("valid duration").0 {
+                DurKind::Frac { num: n, den: d } => {
+                    assert_eq!((n, d), (num, den), "{s:?} should parse as {num}/{den}")
+                }
+                other => panic!("{s:?} parsed as {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_bound_is_inclusive_and_its_modifiers_stay_in_range() {
+        // Exactly at the bound parses, and dotting it (the largest
+        // multiplier) must not overflow.
+        let at_bound = format!("1/{}", Dur::MAX_FRACTION_TERM);
+        let dur = Dur::parse(&at_bound).expect("the bound itself is valid");
+        let _ = dur.dotted(); // must not panic
+        let _ = dur.triplet();
+        let past = format!("1/{}", u64::from(Dur::MAX_FRACTION_TERM) + 1);
+        assert!(Dur::parse(&past).is_err(), "one past the bound is rejected");
+    }
+
+    #[test]
+    fn modifiers_saturate_rather_than_overflow_for_direct_callers() {
+        // `Dur::of` is public and unbounded, so the modifiers must be safe
+        // even when `parse`'s bound was never applied.
+        let huge = Dur::of(u32::MAX, u32::MAX);
+        let _ = huge.dotted();
+        let _ = huge.triplet();
+        let ticks = Dur::ticks(u64::MAX);
+        let _ = ticks.dotted();
+        let _ = ticks.triplet();
     }
 }
