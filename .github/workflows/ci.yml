@@ -7,6 +7,12 @@ on:
   schedule:
     # Weekly: surfaces new RUSTSEC advisories even with no pushes.
     - cron: "23 6 * * 1"
+  # Manual trigger. Webhook delivery is the part of Actions that fails
+  # first in an outage (2026-08-06: ~15% of pushes fired a run), and a
+  # release can't proceed without a green Tier 1 run on the exact commit.
+  # `workflow_dispatch` goes through the REST API instead, so it still
+  # gets a run scheduled when push events are being dropped.
+  workflow_dispatch:
 
 # CI only reads the repo; never hand write scopes to third-party actions.
 permissions:
