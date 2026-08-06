@@ -171,8 +171,19 @@ fn parse_track(data: &[u8], index: u16) -> Result<RawTrack, ScoreError> {
                     0x58 => {
                         if payload.len() >= 2 && out.time_signature.is_none() {
                             let num = u32::from(payload[0]);
-                            let den = 1u32 << payload[1];
-                            out.time_signature = Some((num, den));
+                            // The denominator is stored as a power of two
+                            // (2 = quarter). The byte is unvalidated file
+                            // data, and anything past 31 overflows the
+                            // shift — a panic on a corrupt file, and no
+                            // music has a 2³²-th note. Treat it as
+                            // malformed and keep the default 4/4.
+                            match 1u32.checked_shl(u32::from(payload[1])) {
+                                Some(den) => out.time_signature = Some((num, den)),
+                                None => push_once(
+                                    &mut skipped_kinds,
+                                    "an out-of-range time-signature denominator",
+                                ),
+                            }
                         } else if out.time_signature.is_some() {
                             push_once(&mut skipped_kinds, "extra time-signature changes");
                         }

@@ -187,6 +187,7 @@ impl Server {
             "audio_diff" => tools::audio_diff(&self.ctx, args),
             "import_midi" => tools::import_midi(&self.ctx, args),
             "export_midi" => tools::export_midi(&self.ctx, args),
+            "transcribe_audio" => tools::transcribe_audio(&self.ctx, args),
             "score_reference" => tools::score_reference(),
             // Test-only arm: a guaranteed panic to prove the `catch_unwind`
             // backstop keeps the server alive, independent of whichever real

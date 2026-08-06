@@ -14,6 +14,7 @@ cochlea diff a.wav b.wav --tier2 --spectro delta.png # equivalence gate + heat m
 cochlea lint score.ron
 cochlea spectro input.wav --out spec.png --annotate  # beats/onsets/pitch drawn on
 cochlea import song.mid --out score.ron              # SMF -> score, timing exact
+cochlea transcribe solo.wav --out score.ron          # audio -> score, the inverse of render
 cochlea reference                         # the full score-authoring reference
 ```
 

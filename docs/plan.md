@@ -615,3 +615,22 @@ automation, bus/send routing, realtime anything.
 - **Overwrite guard generalized.** One shared `same_file` (raw-or-canonical)
   now backs every CLI write guard (probe/diff/import/export/render), closing an
   aliased-path data-loss hole the old raw-string compare left open.
+
+## Unreleased (post-0.5.0)
+
+- **`transcribe`: the audio→score arrow.** `cochlea transcribe` and the MCP
+  `transcribe_audio` tool turn a rendered or recorded file back into an
+  editable RON score — melody note events read against a detected (or
+  given) tempo, quantized to a note grid, with velocity estimated from peak
+  level. Monophonic by construction, and every guess surfaces as a warning.
+  MCP is now twelve tools.
+  - The conversion lives in `score` (`transcribe.rs`) and takes plain
+    `NoteObservation` data, never audio — so the dependency law is
+    untouched: `features` and `score` stay independent leaves, and the
+    front ends (CLI, MCP) do the five-line join. This is the same
+    "receives plain data, never the other crate's types" pattern the
+    spectrogram annotation path already uses, pointed the other way.
+- **Malformed-MIDI hardening.** A time-signature denominator exponent past
+  31 overflowed an unchecked shift in the importer (panic in debug, garbage
+  in release), reachable by a single byte flip. Now checked, warned, and
+  covered by a dedicated malformed-input suite.

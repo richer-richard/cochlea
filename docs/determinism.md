@@ -416,3 +416,30 @@ existing rules — but each addition deserves its line in this ledger:
   `loudness_timeline` and `estimate_tempo` analyzers (ebur128 polled at a
   fixed hop; the shared scalar-FFT tempo path), served over new CLI flags and
   MCP tools.
+
+## Unreleased additions (post-0.5.0)
+
+- **`transcribe` (audio → score).** Analysis times are inherently `f64`
+  milliseconds — a tracker measures frames, not ticks — so this path has one
+  float→integer conversion, and it is confined to exactly one place:
+  `ms_to_ticks` in `crates/score/src/transcribe.rs`, applied **once per note
+  boundary** and immediately rounded to `u64` with `libm::round`. Nothing
+  accumulates in float: quantization, the minimum-duration floor, and the
+  `Ticks::MAX` bound are all integer arithmetic on the rounded value. This
+  is the same shape as the existing authoring-time rounding (`Bpm` →
+  integer ns per quarter): float in, integer immediately, integer
+  thereafter.
+  - Non-finite and negative inputs are rejected at that boundary rather
+    than propagated, so a NaN from an analyzer can never reach the tick
+    domain.
+  - Ordering is deterministic: observations sort by
+    `(start_ms, midi)` with `total_cmp`, so equal starts break ties by
+    pitch rather than by input order.
+  - No new DSP and no new transcendental call sites — velocity estimation
+    is `libm::log10` over an existing peak fold, and the render path is
+    untouched. Golden hashes are unchanged.
+- **MIDI time-signature denominator.** The importer's `1u32 << payload[1]`
+  became `checked_shl`. This is a malformed-input fix, not a numeric one:
+  the shifted value never reaches the render fold (an out-of-range
+  denominator is warned about and the default 4/4 kept), so rendered bytes
+  are unaffected.

@@ -5,8 +5,11 @@ headless deterministic audio engine for AI agents: integer ticks at 960
 PPQ, a tempo map of step changes, bar/beat math, tracks, notes,
 per-parameter automation, an optional master bus (gain + brick-wall
 limiter), embeddable verify assertions, a RON data form (round-trip
-tested both ways), and Standard MIDI File import (`import_midi` — SMF
-ticks land on the grid verbatim; instrument mapping is a labeled guess).
+tested both ways), Standard MIDI File import (`import_midi` — SMF
+ticks land on the grid verbatim; instrument mapping is a labeled guess),
+and transcription (`transcribe` — analyzer note observations in
+milliseconds become quantized, tick-exact notes; plain data in, so this
+crate never depends on the analysis side).
 Anything off the tick grid is an error, never a rounding.
 
 ```rust

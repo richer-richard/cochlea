@@ -87,9 +87,12 @@ impl Bpm {
     pub(crate) const MIN: f64 = 1.0;
     pub(crate) const MAX: f64 = 4_000.0;
 
-    /// The one authoring-time rounding: BPM to integer ns per quarter note.
-    /// 120 BPM → exactly 500_000_000 ns.
-    pub(crate) fn nanos_per_quarter(self) -> Result<u64, ScoreError> {
+    /// Is this a tempo the score IR accepts (finite, `1..=4000`)?
+    ///
+    /// The single rule, so a front end can reject `--bpm` at the flag
+    /// boundary instead of failing deep inside score assembly — and so the
+    /// bounds live in exactly one place.
+    pub fn validate(self) -> Result<(), ScoreError> {
         if !self.0.is_finite() || self.0 < Self::MIN || self.0 > Self::MAX {
             return Err(ScoreError::OutOfRange {
                 what: "bpm",
@@ -98,6 +101,13 @@ impl Bpm {
                 max: Self::MAX,
             });
         }
+        Ok(())
+    }
+
+    /// The one authoring-time rounding: BPM to integer ns per quarter note.
+    /// 120 BPM → exactly 500_000_000 ns.
+    pub(crate) fn nanos_per_quarter(self) -> Result<u64, ScoreError> {
+        self.validate()?;
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,

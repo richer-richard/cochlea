@@ -50,6 +50,7 @@ cochlea diff a.wav b.wav --tier2 --spectro delta.png
 cochlea lint score.ron
 cochlea spectro input.wav --out spec.png --annotate  # draw beats/onsets/pitch on the image
 cochlea import song.mid --out score.ron              # SMF -> score, timing exact
+cochlea transcribe solo.wav --out score.ron          # audio -> score, the inverse of render
 cochlea reference    # the full score-authoring reference, generated from the live preset bank
 ```
 
@@ -216,9 +217,9 @@ or an agent can catch a regression without ever reading a raw sample.
 ## Agents as MCP clients
 
 `cochlea-mcp` is a stdio MCP server over the same libraries the CLI uses —
-eleven tools (`render_score`, `probe_audio`, `spectrogram`, `lint_score`,
+twelve tools (`render_score`, `probe_audio`, `spectrogram`, `lint_score`,
 `probe_digest`, `loudness_timeline`, `beat_grid`, `audio_diff`,
-`import_midi`, `export_midi`, `score_reference`), each a
+`import_midi`, `export_midi`, `transcribe_audio`, `score_reference`), each a
 thin wrapper over the matching library call, so any MCP client gets the
 same compose → render → probe → spectrogram → verify loop as tool calls
 instead of shelled-out subprocesses:

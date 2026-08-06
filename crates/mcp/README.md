@@ -17,9 +17,10 @@ tools (render a score, extract a report, write a PNG) need none. Every
 response is a pure function of its request: no wall clock, no session
 state.
 
-Eleven tools: `render_score`, `probe_audio`, `spectrogram`, `lint_score`,
+Twelve tools: `render_score`, `probe_audio`, `spectrogram`, `lint_score`,
 `probe_digest`, `loudness_timeline`, `beat_grid`, `audio_diff`,
-`import_midi`, `export_midi`, `score_reference` — accepting WAV, FLAC, mp3,
+`import_midi`, `export_midi`, `transcribe_audio`, `score_reference` —
+accepting WAV, FLAC, mp3,
 or ogg wherever audio input applies, with
 `from_s`/`to_s` window parameters on the read tools for zooming into a
 time range. `score_reference` makes the server
@@ -32,7 +33,9 @@ repo. `spectrogram` returns the image inline as MCP image content
 beats, onsets, and pitch — so clients without filesystem access still
 get to *look* at audio, and `audio_diff` can return a signed A→B
 difference heat map the same way. `import_midi` brings Standard MIDI
-Files into the loop with timing intact. Launch with `--root DIR` to confine every read
+Files into the loop with timing intact, and `transcribe_audio` closes the
+loop the other way — audio in, an editable RON score out (monophonic, with
+every guess reported). Launch with `--root DIR` to confine every read
 and write to one directory (canonical-path checked before any
 filesystem work). Tool-level failures (a bad path, a failed verify) come
 back as a normal success response with `isError: true`; JSON-RPC errors

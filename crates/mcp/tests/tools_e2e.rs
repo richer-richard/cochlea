@@ -497,3 +497,130 @@ fn hearing_upgrade_tools_end_to_end() {
     let response = call_tool(&server, 7, "lint_score", json!({"score_path": ron_path}));
     assert_eq!(response["result"]["isError"], false, "{response}");
 }
+
+/// `transcribe_audio`: the audio→score arrow, end to end. Renders a known
+/// scale through the server, transcribes it back, and asserts the recovered
+/// notes — then renders the transcription again, since producing an
+/// *editable, renderable* score is the whole point of the tool.
+#[test]
+fn transcribe_round_trip() {
+    let server = Server::new();
+    let scale_ron = tmp_path("mcp_scale.ron");
+    std::fs::write(
+        &scale_ron,
+        r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960, time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: "lead", instrument: Preset("sine"), notes: [
+        Note(at: (1, 1), dur: "1/4", pitch: "C4", vel: 100),
+        Note(at: (1, 2), dur: "1/4", pitch: "E4", vel: 100),
+        Note(at: (1, 3), dur: "1/4", pitch: "G4", vel: 100),
+    ]) ],
+)"#,
+    )
+    .unwrap();
+
+    let wav = tmp_path("mcp_scale.wav");
+    let response = call_tool(
+        &server,
+        20,
+        "render_score",
+        json!({"score_path": scale_ron, "out_path": wav}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+
+    let out = tmp_path("mcp_transcribed.ron");
+    let response = call_tool(
+        &server,
+        21,
+        "transcribe_audio",
+        json!({"audio_path": wav, "out_path": out, "bpm": 120.0, "preset": "pluck"}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let text = tool_text(&response);
+    assert!(text.contains("transcribed 3 notes"), "{text}");
+    assert!(text.contains("monophonic"), "{text}");
+    assert!(text.contains("120.00 BPM (given)"), "{text}");
+
+    let ron = std::fs::read_to_string(&out).unwrap();
+    for pitch in ["C4", "E4", "G4"] {
+        assert!(
+            ron.contains(pitch),
+            "transcription should recover {pitch}:\n{ron}"
+        );
+    }
+    assert!(ron.contains(r#"Preset("pluck")"#), "{ron}");
+
+    // It lints, and it renders — an editable score, not just a report.
+    let response = call_tool(&server, 22, "lint_score", json!({"score_path": out}));
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let remix = tmp_path("mcp_transcribed.wav");
+    let response = call_tool(
+        &server,
+        23,
+        "render_score",
+        json!({"score_path": out, "out_path": remix}),
+    );
+    assert_eq!(response["result"]["isError"], false, "{response}");
+}
+
+/// Bad parameters are Invalid Params errors, and nothing is written.
+#[test]
+fn transcribe_rejects_bad_parameters() {
+    let server = Server::new();
+    let wav = tmp_path("mcp_badparams.wav");
+    let scale_ron = tmp_path("mcp_badparams.ron");
+    std::fs::write(
+        &scale_ron,
+        r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960, time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: "lead", instrument: Preset("sine"),
+        notes: [ Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+)"#,
+    )
+    .unwrap();
+    call_tool(
+        &server,
+        30,
+        "render_score",
+        json!({"score_path": scale_ron, "out_path": wav}),
+    );
+
+    let out = tmp_path("mcp_never_written.ron");
+    let _ = std::fs::remove_file(&out);
+
+    for bad in [
+        json!({"audio_path": wav, "out_path": out, "grid": "banana"}),
+        json!({"audio_path": wav, "out_path": out, "bpm": 99999.0}),
+        json!({"audio_path": wav, "out_path": out, "bpm": "fast"}),
+        // A negative integer must be an error, not a silent fallback to the
+        // default — the CLI's clap rejects `--ppq -100`, so this must too.
+        json!({"audio_path": wav, "out_path": out, "ppq": -100}),
+        json!({"audio_path": wav, "out_path": out, "ppq": 12.5}),
+        // In range as an integer, but outside the score IR's PPQ bounds.
+        json!({"audio_path": wav, "out_path": out, "ppq": 3}),
+    ] {
+        let response = call_tool(&server, 31, "transcribe_audio", bad.clone());
+        assert!(
+            response["error"].is_object() || response["result"]["isError"] == true,
+            "expected a failure for {bad}: {response}"
+        );
+        assert!(
+            !std::path::Path::new(&out).exists(),
+            "nothing should be written for {bad}"
+        );
+    }
+
+    // Aliasing the input is refused too.
+    let response = call_tool(
+        &server,
+        32,
+        "transcribe_audio",
+        json!({"audio_path": wav, "out_path": wav}),
+    );
+    assert!(
+        response["error"].is_object() || response["result"]["isError"] == true,
+        "{response}"
+    );
+}

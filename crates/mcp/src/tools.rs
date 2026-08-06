@@ -341,6 +341,48 @@ pub fn schemas() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "transcribe_audio",
+            "description": "Transcribe a WAV, FLAC, mp3, or ogg file into an editable cochlea RON score — the inverse of render_score, and the arrow that closes the compose loop: hear a sketch, get score back, revise it, render it again. Pitch-tracks the melody, reads its timing against a tempo (detected from the audio unless you pass bpm), quantizes to a note grid, and estimates each note's velocity from its peak level. Deliberately monophonic: it hears one line, so chords, drums, and dense mixes come back as whichever line the tracker locked onto. Every assumption — the tempo, the grid, the preset, clamped or dropped notes — comes back in the response, so treat the result as a draft to re-voice rather than a faithful score.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "audio_path": {
+                        "type": "string",
+                        "description": "Path to a WAV, FLAC, mp3, or ogg file."
+                    },
+                    "out_path": {
+                        "type": "string",
+                        "description": "Where to write the transcribed RON score."
+                    },
+                    "bpm": {
+                        "type": "number",
+                        "description": "Tempo to notate against, 1..=4000. Detected from the audio when omitted; a wrong tempo renotates the same sound with odd note values."
+                    },
+                    "grid": {
+                        "type": "string",
+                        "description": "Quantization grid as a note duration (\"1/16\", \"1/8\", \"1/4\", \"1/8t\" for triplets, \"1/8.\" for dotted), or \"none\" to keep the analyzer's raw timing. Default \"1/16\".",
+                        "default": "1/16"
+                    },
+                    "preset": {
+                        "type": "string",
+                        "description": "Instrument preset for the transcribed track. Default \"sine\"; call score_reference for the catalog.",
+                        "default": "sine"
+                    },
+                    "track_name": {
+                        "type": "string",
+                        "description": "Track name in the written score. Default \"lead\".",
+                        "default": "lead"
+                    },
+                    "ppq": {
+                        "type": "integer",
+                        "description": "Tick resolution of the written score. Default 960.",
+                        "default": 960
+                    }
+                },
+                "required": ["audio_path", "out_path"]
+            }
+        }),
+        json!({
             "name": "loudness_timeline",
             "description": "The loudness-over-time curve of a whole WAV, FLAC, mp3, or ogg file, as JSON: momentary (400 ms) and short-term (3 s) LUFS sampled every ~100 ms. This is the dynamics view the single integrated-LUFS / LRA summary in probe_audio can't give — where a mix gets loud, where a gate opens, how the level moves through a build or a chorus. Use it to check whether a change actually moved the dynamics, or to find the loudest moment. Every point's time is measured from the start of the file. (For a windowed analysis with an anchored offset, use probe_audio with from_s/to_s.)",
             "inputSchema": {
@@ -405,6 +447,41 @@ fn usize_or(args: &Value, key: &str, default: usize) -> usize {
 
 fn f64_or(args: &Value, key: &str, default: f64) -> f64 {
     args.get(key).and_then(Value::as_f64).unwrap_or(default)
+}
+
+/// A `u32` argument that distinguishes *absent* from *invalid*.
+///
+/// [`usize_or`] treats a negative or fractional number the same as a missing
+/// key and substitutes the default — which silently ignores a value the
+/// caller explicitly set, and diverges from the CLI, where clap rejects
+/// `--ppq -100` outright. A value that is present but not a non-negative
+/// whole number in range is an Invalid Params error here, matching that.
+fn u32_or_invalid(args: &Value, key: &str, default: u32) -> Result<u32, ToolOutcome> {
+    let Some(value) = args.get(key).filter(|v| !v.is_null()) else {
+        return Ok(default);
+    };
+    let whole = value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|f| f.fract() == 0.0 && *f >= 0.0 && *f <= f64::from(u32::MAX))
+            .map(|f| {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "filtered to a whole value in 0..=u32::MAX immediately above"
+                )]
+                let n = f as u64;
+                n
+            })
+    });
+    match whole {
+        Some(n) => u32::try_from(n).map_err(|_| {
+            ToolOutcome::InvalidParams(format!("{key} {n} is out of range (max {})", u32::MAX))
+        }),
+        None => Err(ToolOutcome::InvalidParams(format!(
+            "{key} must be a non-negative whole number"
+        ))),
+    }
 }
 
 /// `window_ms` for the segment-timeline tools — validation delegates to
@@ -754,9 +831,9 @@ pub fn import_midi(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    let sample_rate = usize_or(args, "sample_rate", 48_000);
-    let Ok(sample_rate) = u32::try_from(sample_rate) else {
-        return ToolOutcome::InvalidParams(format!("sample_rate {sample_rate} out of range"));
+    let sample_rate = match u32_or_invalid(args, "sample_rate", 48_000) {
+        Ok(sr) => sr,
+        Err(outcome) => return outcome,
     };
 
     let midi_resolved = match ctx.resolve_read(midi_path, "midi_path") {
@@ -855,6 +932,151 @@ pub fn export_midi(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         score.tracks().len(),
         score.tempo_changes().count(),
     ))
+}
+
+/// `transcribe_audio`: mirrors `cochlea transcribe`
+/// (`crates/cli/src/main.rs` `Cmd::Transcribe`) — audio in, RON score out,
+/// with every guess (tempo, grid, preset, repaired notes) in the response.
+pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
+    let audio_path = match require_str(args, "audio_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let out_path = match require_str(args, "out_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+
+    // Validate every parameter before touching the filesystem, so a bad
+    // grid or tempo is an Invalid Params error rather than a half-done job.
+    let grid = match parse_grid_arg(args) {
+        Ok(g) => g,
+        Err(outcome) => return outcome,
+    };
+    let bpm_arg = match args.get("bpm") {
+        Some(v) => {
+            let Some(b) = v.as_f64() else {
+                return ToolOutcome::InvalidParams("bpm must be a number".to_string());
+            };
+            if let Err(err) = cochlea_score::Bpm(b).validate() {
+                return ToolOutcome::InvalidParams(format!("bpm {err}"));
+            }
+            Some(b)
+        }
+        None => None,
+    };
+    let ppq = match u32_or_invalid(args, "ppq", 960) {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let preset = args
+        .get("preset")
+        .and_then(Value::as_str)
+        .unwrap_or("sine")
+        .to_owned();
+    let track_name = args
+        .get("track_name")
+        .and_then(Value::as_str)
+        .unwrap_or("lead")
+        .to_owned();
+
+    let audio_resolved = match ctx.resolve_read(audio_path, "audio_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    let out_resolved = match ctx.resolve_write(out_path, "out_path") {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+    if out_resolved == audio_resolved {
+        return ToolOutcome::InvalidParams(
+            "out_path must not alias audio_path (the RON write would overwrite the audio file)"
+                .to_string(),
+        );
+    }
+
+    let audio = match cochlea_decode::load(&audio_resolved) {
+        Ok(audio) => audio,
+        Err(err) => return ToolOutcome::Failed(format!("reading {audio_path}: {err}")),
+    };
+
+    let (bpm, tempo_source) = match bpm_arg {
+        Some(b) => (b, "given"),
+        None => {
+            let tempo =
+                cochlea_features::estimate_tempo(&audio, &cochlea_features::TempoOpts::default());
+            match tempo.bpm {
+                Some(b) => (b, "detected"),
+                None => (120.0, "undetected, defaulted"),
+            }
+        }
+    };
+
+    let melody = cochlea_features::extract_melody(&audio);
+    let observations: Vec<cochlea_score::NoteObservation> = melody
+        .iter()
+        .map(|n| {
+            cochlea_score::NoteObservation::from_peak_dbfs(
+                n.start_ms,
+                n.end_ms,
+                n.midi,
+                cochlea_features::peak_dbfs_between(&audio, n.start_ms, n.end_ms),
+            )
+        })
+        .collect();
+
+    let opts = cochlea_score::TranscribeOpts::new()
+        .with_sample_rate(cochlea_score::SampleRate(audio.sample_rate))
+        .with_ppq(cochlea_score::Ppq(ppq))
+        .with_bpm(cochlea_score::Bpm(bpm))
+        .with_grid(grid)
+        .with_preset(&preset)
+        .with_track_name(&track_name);
+    let transcription = match cochlea_score::transcribe(&observations, &opts) {
+        Ok(t) => t,
+        Err(err) => return ToolOutcome::Failed(err.to_string()),
+    };
+    let ron = match transcription.score.to_ron() {
+        Ok(ron) => ron,
+        Err(err) => {
+            return ToolOutcome::Failed(format!("serializing the transcribed score: {err}"));
+        }
+    };
+    if let Err(err) = std::fs::write(&out_resolved, ron) {
+        return ToolOutcome::Failed(format!("writing {out_path}: {err}"));
+    }
+
+    let mut summary = format!(
+        "transcribed {} notes -> {out_path}\nnote: tempo {bpm:.2} BPM ({tempo_source})\nnote: \
+         pitch tracking is monophonic — chords and drums read as one line\n",
+        transcription
+            .score
+            .tracks()
+            .first()
+            .map_or(0, |t| t.notes.len()),
+    );
+    for w in &transcription.warnings {
+        summary.push_str(&format!("note: {w}\n"));
+    }
+    summary.push_str(
+        "\nNext: render_score to hear the transcription, audio_diff it against the source to see \
+         what the draft missed, and edit the RON to re-voice it.",
+    );
+    ToolOutcome::Ok(summary)
+}
+
+/// `grid` for `transcribe_audio` — a note duration or `"none"`/`"raw"`,
+/// parsed by the score IR's own `Dur::parse` so the spelling matches the
+/// CLI's `--grid` exactly.
+fn parse_grid_arg(args: &Value) -> Result<Option<cochlea_score::Dur>, ToolOutcome> {
+    let raw = args.get("grid").and_then(Value::as_str).unwrap_or("1/16");
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("none") || t.eq_ignore_ascii_case("raw") {
+        return Ok(None);
+    }
+    cochlea_score::Dur::parse(t)
+        .map(Some)
+        .map_err(|err| ToolOutcome::InvalidParams(format!("grid {err}")))
 }
 
 /// `score_reference`: the self-describing half of the compose loop — the

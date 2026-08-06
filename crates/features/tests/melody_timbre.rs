@@ -147,3 +147,115 @@ fn window_cuts_frame_exact_slices_and_reports_start() {
     let (empty, _) = audio.window(5.0, Some(2.0));
     assert_eq!(empty.frames(), 0);
 }
+
+/// `peak_dbfs_between` — the plain numeric level measurement the transcribe
+/// path uses to estimate a note's velocity. Its documented edge behavior
+/// (clamped bounds, inverted or empty windows, silence, a degenerate rate)
+/// is asserted here directly rather than only through the CLI round trip.
+mod peak_level {
+    use cochlea_features::{Audio, peak_dbfs_between};
+
+    fn tone(amplitude: f32) -> Audio {
+        Audio {
+            samples: vec![amplitude; 48_000],
+            channels: 1,
+            sample_rate: 48_000,
+        }
+    }
+
+    #[test]
+    fn full_scale_reads_zero_dbfs() {
+        let db = peak_dbfs_between(&tone(1.0), 0.0, 1000.0);
+        assert!(db.abs() < 1e-9, "expected ~0 dBFS, got {db}");
+    }
+
+    #[test]
+    fn half_scale_reads_about_minus_six() {
+        let db = peak_dbfs_between(&tone(0.5), 0.0, 1000.0);
+        assert!((db + 6.0206).abs() < 0.01, "expected ~-6.02 dBFS, got {db}");
+    }
+
+    #[test]
+    fn silence_reads_negative_infinity() {
+        assert_eq!(
+            peak_dbfs_between(&tone(0.0), 0.0, 1000.0),
+            f64::NEG_INFINITY
+        );
+    }
+
+    #[test]
+    fn an_inverted_or_empty_window_reads_as_silence() {
+        let audio = tone(1.0);
+        // end before start, and a zero-width window: both empty, not errors.
+        assert_eq!(peak_dbfs_between(&audio, 500.0, 100.0), f64::NEG_INFINITY);
+        assert_eq!(peak_dbfs_between(&audio, 200.0, 200.0), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn bounds_are_clamped_to_the_buffer() {
+        let audio = tone(1.0);
+        // Finite bounds past either edge clamp rather than panicking.
+        assert!(peak_dbfs_between(&audio, -1e9, 1e9).abs() < 1e-9);
+        assert_eq!(peak_dbfs_between(&audio, 5000.0, 6000.0), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn a_non_finite_bound_reads_as_zero_like_audio_window() {
+        // Same convention as `Audio::window`'s `to_frame`: a non-finite
+        // bound is degenerate input and resolves to 0, so it never indexes
+        // out of range. `+inf` is therefore *not* a spelling of "to the
+        // end" (Audio::window uses `None` for that) — it yields an empty
+        // window, which reads as silence.
+        let audio = tone(1.0);
+        assert_eq!(
+            peak_dbfs_between(&audio, f64::NAN, f64::NAN),
+            f64::NEG_INFINITY
+        );
+        assert_eq!(
+            peak_dbfs_between(&audio, f64::NEG_INFINITY, f64::INFINITY),
+            f64::NEG_INFINITY
+        );
+    }
+
+    #[test]
+    fn a_zero_sample_rate_reads_as_silence_not_a_panic() {
+        let audio = Audio {
+            samples: vec![1.0; 100],
+            channels: 1,
+            sample_rate: 0,
+        };
+        assert_eq!(peak_dbfs_between(&audio, 0.0, 100.0), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn the_window_actually_selects_its_range() {
+        // Loud only in the second half — a window over the first half must
+        // not see it.
+        let mut samples = vec![0.1f32; 48_000];
+        samples.extend(vec![1.0f32; 48_000]);
+        let audio = Audio {
+            samples,
+            channels: 1,
+            sample_rate: 48_000,
+        };
+        let quiet = peak_dbfs_between(&audio, 0.0, 1000.0);
+        let loud = peak_dbfs_between(&audio, 1000.0, 2000.0);
+        assert!(
+            (quiet + 20.0).abs() < 0.01,
+            "first half ~-20 dBFS, got {quiet}"
+        );
+        assert!(loud.abs() < 1e-9, "second half ~0 dBFS, got {loud}");
+    }
+
+    #[test]
+    fn stereo_is_measured_over_the_mono_downmix() {
+        // Opposite-phase channels cancel in the downmix — the documented
+        // behavior (it measures `mono()`, not per-channel peaks).
+        let audio = Audio {
+            samples: [1.0f32, -1.0].repeat(48_000),
+            channels: 2,
+            sample_rate: 48_000,
+        };
+        assert_eq!(peak_dbfs_between(&audio, 0.0, 1000.0), f64::NEG_INFINITY);
+    }
+}

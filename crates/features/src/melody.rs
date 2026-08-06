@@ -132,6 +132,55 @@ pub(crate) fn notes_from_track(
     notes
 }
 
+/// Peak absolute sample level in `[start_ms, end_ms)`, as dBFS — a plain
+/// numeric measurement over the mono downmix, no score types involved.
+///
+/// This exists for callers turning a heard note into an authored one (the
+/// `transcribe` path): pitch tracking recovers *when* and *what*, never
+/// *how hard*, so the loudest sample under a note is the only honest
+/// evidence available for its velocity. Returns [`f64::NEG_INFINITY`] for
+/// a silent, empty, or out-of-range window — the caller decides what a
+/// silent note means.
+///
+/// Finite bounds are clamped to the buffer; an inverted or empty window
+/// reads as silence rather than an error. A *non-finite* bound resolves to
+/// zero, the same convention [`Audio::window`]'s frame mapping uses — so
+/// `+inf` is not a spelling of "to the end of the buffer", it yields an
+/// empty window.
+pub fn peak_dbfs_between(audio: &Audio, start_ms: f64, end_ms: f64) -> f64 {
+    if audio.sample_rate == 0 {
+        return f64::NEG_INFINITY;
+    }
+    let mono = audio.mono();
+    let to_index = |ms: f64| -> usize {
+        if !ms.is_finite() || ms <= 0.0 {
+            return 0;
+        }
+        let idx = libm::round(ms / 1000.0 * f64::from(audio.sample_rate));
+        if idx >= mono.len() as f64 {
+            mono.len()
+        } else {
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "bounded to 0..=mono.len() immediately above"
+            )]
+            let i = idx as usize;
+            i
+        }
+    };
+    let start = to_index(start_ms);
+    let end = to_index(end_ms).max(start);
+    let peak = mono[start..end]
+        .iter()
+        .fold(0.0f64, |acc, &s| acc.max(f64::from(s).abs()));
+    if peak > 0.0 {
+        20.0 * libm::log10(peak)
+    } else {
+        f64::NEG_INFINITY
+    }
+}
+
 /// Start time of frame `idx`, milliseconds — from the track's own sample
 /// offsets, so timing agrees with the YIN pass exactly rather than being
 /// re-derived from an assumed hop.

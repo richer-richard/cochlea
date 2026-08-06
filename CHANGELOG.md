@@ -4,6 +4,55 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
+## [Unreleased]
+
+### Added
+
+- **`transcribe`: audio → an editable score, over the CLI and MCP.** The
+  arrow the compose loop was missing. `render` turns a score into audio and
+  `probe` turns audio into numbers; `cochlea transcribe solo.wav --out
+  score.ron` (MCP: `transcribe_audio`) turns audio back into **RON you can
+  edit and render again**. It pitch-tracks the melody, reads its timing
+  against a tempo (detected from the audio unless you pass `--bpm`),
+  quantizes to a note grid (`--grid 1/16`, `1/8t`, `none`, …), and estimates
+  each note's velocity from its peak level. Deliberately monophonic and
+  deliberately loud about it: chords and drums read as whichever single line
+  the tracker locked onto, and every assumption — the tempo and where it came
+  from, the grid, the preset, clamped or repaired or dropped notes — comes
+  back as a warning, the same ethos as `import`'s mapping guesses. MCP is now
+  twelve tools.
+  - Architecture: the conversion is pure and score-side
+    (`cochlea_score::transcribe`, taking plain `NoteObservation` data), so
+    the dependency law holds — `features` still knows nothing about `score`,
+    and the tick math is unit-testable with no audio in sight.
+  - `cochlea_features::peak_dbfs_between` (plain numeric peak level over a
+    time window) and `cochlea_score::Bpm::validate` (the tempo bounds as one
+    public rule, so `--bpm` is rejected at the flag boundary) are new public
+    API in service of it.
+
+### Fixed
+
+- **An MCP integer argument no longer falls back to its default when the
+  caller passed something invalid.** `usize_or` treated a negative or
+  fractional JSON number the same as a missing key, so `{"ppq": -100}` (or
+  `import_midi`'s `{"sample_rate": -1}`) silently proceeded at the default
+  instead of erroring — while the CLI's clap rejects `--ppq -100` outright.
+  That divergence broke the rule that each MCP tool mirrors its CLI
+  subcommand exactly. Present-but-invalid integers are now Invalid Params
+  errors, for both `transcribe_audio`'s `ppq` and `import_midi`'s
+  `sample_rate`.
+- **A corrupt MIDI file can no longer panic the importer.** A time-signature
+  meta event stores its denominator as a power-of-two *exponent*, and that
+  byte was shifted unvalidated (`1u32 << payload[1]`) — so any exponent past
+  31 overflowed the shift: a panic in debug builds, a garbage denominator in
+  release. It was reachable by a *single byte flip* in an otherwise-valid
+  file, not just by a crafted one. The shift is now checked, an out-of-range
+  denominator is reported as a warning and the default 4/4 kept, and the rest
+  of the file still imports. Hardened with a malformed-input suite
+  (`crates/score/tests/midi_malformed.rs`): hostile meta payloads, every
+  truncation, every single-byte corruption, the header field space, and
+  extreme delta times — all asserted to return a `Result`, never panic.
+
 ## [0.5.0] — 2026-08-06
 
 Two more non-subtractive voices and a pair of over-time analysis surfaces, plus

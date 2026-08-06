@@ -195,6 +195,34 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Transcribe an audio file into a RON score — the inverse of `render`.
+    /// Pitch-tracks a monophonic melody, reads it against a tempo (detected
+    /// unless you pass --bpm), quantizes to a grid, and writes an editable
+    /// score. Every guess is printed: it hears one line, not an
+    /// arrangement, so treat the result as a draft to re-voice.
+    Transcribe {
+        /// Input audio file (WAV, FLAC, mp3, or ogg).
+        input: PathBuf,
+        /// Output RON score path.
+        #[arg(long)]
+        out: PathBuf,
+        /// Tempo to notate against. Detected from the audio when omitted.
+        #[arg(long, value_parser = parse_bpm)]
+        bpm: Option<f64>,
+        /// Quantization grid as a note duration (`1/16`, `1/8`, `1/4`,
+        /// `1/8t`...), or `none` to keep raw analyzer timing.
+        #[arg(long, default_value = "1/16")]
+        grid: String,
+        /// Instrument preset for the transcribed track.
+        #[arg(long, default_value = "sine")]
+        preset: String,
+        /// Track name in the written score.
+        #[arg(long, default_value = "lead")]
+        track: String,
+        /// Tick resolution of the written score.
+        #[arg(long, default_value_t = 960)]
+        ppq: u32,
+    },
     /// Print the score-authoring reference (RON grammar, instrument
     /// catalog, verify assertions, worked example) — the same text the
     /// MCP `score_reference` tool serves.
@@ -223,6 +251,16 @@ fn load_score(path: &Path) -> anyhow::Result<Score> {
 fn parse_window_ms(s: &str) -> Result<f64, String> {
     let v: f64 = s.parse().map_err(|err| format!("not a number: {err}"))?;
     cochlea_features::validate_window_ms(v)
+}
+
+/// `--bpm` validation: rejected at the flag boundary with the same bounds
+/// the score IR enforces, so a bad tempo fails before any audio is read.
+fn parse_bpm(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|err| format!("not a number: {err}"))?;
+    cochlea_score::Bpm(v)
+        .validate()
+        .map(|()| v)
+        .map_err(|e| e.to_string())
 }
 
 /// `--from`/`--to` validation: a finite, non-negative number of seconds.
@@ -796,6 +834,91 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             Ok(std::process::ExitCode::SUCCESS)
         }
 
+        Cmd::Transcribe {
+            input,
+            out,
+            bpm,
+            grid,
+            preset,
+            track,
+            ppq,
+        } => {
+            // The read subcommands never write over their own input, in any
+            // spelling of the path (see `same_file`).
+            if same_file(&out, &input) {
+                anyhow::bail!("--out would overwrite the input audio {out:?}");
+            }
+            let grid = parse_grid(&grid)?;
+            let audio = cochlea_decode::load(&input)
+                .with_context(|| format!("reading {}", input.display()))?;
+
+            // Tempo: the caller's if given, else detected. A detection that
+            // finds no pulse falls back to MIDI's default rather than
+            // failing — the notes are still worth having.
+            let (bpm, tempo_source) = match bpm {
+                Some(b) => (b, "given"),
+                None => {
+                    let tempo = cochlea_features::estimate_tempo(
+                        &audio,
+                        &cochlea_features::TempoOpts::default(),
+                    );
+                    match tempo.bpm {
+                        Some(b) => (b, "detected"),
+                        None => (120.0, "undetected, defaulted"),
+                    }
+                }
+            };
+
+            let melody = cochlea_features::extract_melody(&audio);
+            let observations: Vec<cochlea_score::NoteObservation> = melody
+                .iter()
+                .map(|n| {
+                    cochlea_score::NoteObservation::from_peak_dbfs(
+                        n.start_ms,
+                        n.end_ms,
+                        n.midi,
+                        cochlea_features::peak_dbfs_between(&audio, n.start_ms, n.end_ms),
+                    )
+                })
+                .collect();
+
+            let opts = cochlea_score::TranscribeOpts::new()
+                .with_sample_rate(cochlea_score::SampleRate(audio.sample_rate))
+                .with_ppq(cochlea_score::Ppq(ppq))
+                .with_bpm(cochlea_score::Bpm(bpm))
+                .with_grid(grid)
+                .with_preset(&preset)
+                .with_track_name(&track);
+            let cochlea_score::Transcription { score, warnings } =
+                cochlea_score::transcribe(&observations, &opts)?;
+
+            eprintln!("note: tempo {bpm:.2} BPM ({tempo_source})");
+            eprintln!("note: pitch tracking is monophonic — chords and drums read as one line");
+            for w in &warnings {
+                eprintln!("note: {w}");
+            }
+
+            std::fs::write(&out, score.to_ron()?)
+                .with_context(|| format!("writing {}", out.display()))?;
+            eprintln!(
+                "transcribed {} notes -> {}",
+                score.tracks().first().map_or(0, |t| t.notes.len()),
+                out.display()
+            );
+
+            // Same belt-and-braces as `import`: a preset that isn't in the
+            // catalog should surface here, not at render time.
+            let errors = score
+                .validate(&PatchBank::presets())
+                .into_iter()
+                .filter(|f| f.severity == Severity::Error)
+                .count();
+            if errors > 0 {
+                anyhow::bail!("transcribed score fails lint with {errors} error(s)");
+            }
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+
         Cmd::Reference => {
             print!(
                 "{}",
@@ -804,6 +927,16 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             Ok(std::process::ExitCode::SUCCESS)
         }
     }
+}
+
+/// `--grid`: a note duration (`1/16`, `1/8t`, `1/4.`) or `none`/`raw` to
+/// keep the analyzer's own timing.
+fn parse_grid(s: &str) -> anyhow::Result<Option<cochlea_score::Dur>> {
+    let t = s.trim();
+    if t.eq_ignore_ascii_case("none") || t.eq_ignore_ascii_case("raw") {
+        return Ok(None);
+    }
+    Ok(Some(cochlea_score::Dur::parse(t)?))
 }
 
 fn write_spectro(

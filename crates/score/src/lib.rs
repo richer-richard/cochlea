@@ -30,6 +30,7 @@ mod reference;
 mod score;
 mod tempo;
 mod time;
+mod transcribe;
 mod validate;
 mod verify_spec;
 
@@ -45,6 +46,7 @@ pub use score::{
 };
 pub use tempo::TempoMap;
 pub use time::{Bpm, Dur, Pos, Ppq, SampleRate, Ticks, TimeSignature, Vel, bar};
+pub use transcribe::{NoteObservation, TranscribeOpts, Transcription, VEL_FLOOR_DBFS, transcribe};
 pub use validate::{Catalog, InstrumentInfo, LintFinding, ParamInfo, Polyphony, Severity};
 pub use verify_spec::{MonotoneDir, VerifySpec};
 

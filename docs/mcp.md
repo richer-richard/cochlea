@@ -3,8 +3,8 @@
 An MCP (Model Context Protocol) stdio server over the cochlea libraries.
 Any MCP client — Claude Code, another agent, a script — gets `render` /
 `probe` / `spectro` / `lint` / `digest` / `loudness` / `beats` / `diff` /
-`import` / `export` / `reference` as tool calls, so it can compose, render,
-and "listen" to audio through
+`import` / `export` / `transcribe` / `reference` as tool calls, so it can
+compose, render, and "listen" to audio through
 numbers and images without shelling out to the `cochlea` binary or
 reading raw PCM.
 
@@ -33,6 +33,7 @@ second front end onto the same offline pipeline, not a reimplementation.
 | `audio_diff` | `audio_path_a` (string, required), `audio_path_b` (string, required), `window_ms` (number, default `1000`), `json` (bool, default `false`), `spectrogram` (bool, default `false`) | Feature-space comparison text (`cochlea_features::compare_text`): a verdict (`byte-identical` / `tier2-equivalent` / `different (dimensions...)`) plus per-dimension deltas, now including a timbre (MFCC) distance. `json: true` appends the full `CompareReport`; `spectrogram: true` also returns the signed A→B difference heat map inline (red = louder in B, blue = quieter, black = unchanged). A `different` verdict is a normal, successful answer — not `isError`. |
 | `import_midi` | `midi_path` (string, required), `out_path` (string, required), `sample_rate` (integer, default `48000`) | Converts a Standard MIDI File (format 0/1, metrical division) to a RON score at `out_path`. Timing imports exactly; GM programs map to rough preset families and channel-10 percussion to kick/snare/hat tracks, with every mapping guess listed in the response for re-voicing. |
 | `export_midi` | `score_path` (string, required), `out_path` (string, required) | The inverse of `import_midi`: converts a RON score to a Standard MIDI File (format 1) at `out_path`. Timing exports exactly (score ticks → SMF ticks, tempo map and time signature carry over); presets become rough General MIDI program labels, since a synth voice isn't a GM instrument. Use it to hand a composed score to a DAW or notation tool. |
+| `transcribe_audio` | `audio_path` (string, required), `out_path` (string, required), `bpm` (number, optional), `grid` (string, default `"1/16"`), `preset` (string, default `"sine"`), `track_name` (string, default `"lead"`), `ppq` (integer, default `960`) | The inverse of `render_score`, and the arrow that closes the compose loop: audio in, an **editable RON score** out. Pitch-tracks the melody, reads its timing against `bpm` (detected from the audio when omitted), quantizes to `grid` (`"none"` keeps raw analyzer timing), and estimates each note's velocity from its peak level. Deliberately monophonic — chords, drums, and dense mixes come back as whichever single line the tracker locked onto. Every assumption (tempo and where it came from, the grid, the preset, clamped/repaired/dropped notes) is in the response text; treat the result as a draft to re-voice. |
 
 Tool-level failures (a bad path, a render error, a failed verify or lint)
 come back as a normal `tools/call` success response with `isError: true`
