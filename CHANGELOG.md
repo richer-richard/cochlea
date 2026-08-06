@@ -4,7 +4,14 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
-## [Unreleased]
+## [0.5.0] — 2026-08-06
+
+Two more non-subtractive voices and a pair of over-time analysis surfaces, plus
+a quiet data-loss fix. `marimba` and `organ` widen the palette to eleven
+presets; `loudness_timeline` and `beat_grid` — CLI flags and MCP tools — expose
+the dynamics curve and the full beat grid that the summary reports drop; and
+every CLI write guard now canonicalizes before comparing, closing an
+aliased-path hole that let a read subcommand overwrite its own input.
 
 ### Added
 

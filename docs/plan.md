@@ -602,7 +602,7 @@ automation, bus/send routing, realtime anything.
   `catch_unwind` instead of dying.
 - **MCP**: nine tools (`export_midi` added).
 
-## Unreleased (post-0.4.0)
+## 0.5.0 (2026-08-06)
 
 - **Two non-subtractive voices.** `marimba` (modal — a struck bar as a
   fundamental plus tuned octave partials, faded out before retirement so the

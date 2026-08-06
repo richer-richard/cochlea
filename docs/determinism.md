@@ -404,7 +404,7 @@ existing rules — but each addition deserves its line in this ledger:
   accumulate; the MCP `catch_unwind` backstop wraps dispatch only and
   never touches the render fold. None of the three affects rendered bytes.
 
-## Unreleased additions (post-0.4.0)
+## 0.5.0 additions (2026-08-06)
 
 - **`marimba` and `organ` presets.** Both are pure arithmetic over exact
   harmonics: `marimba` sums modal sine partials under `1/(1+t/tau)²` decays
