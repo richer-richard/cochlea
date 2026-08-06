@@ -658,6 +658,12 @@ fn transcribe_rejects_bad_parameters() {
 /// take.wav` (a symlink to master.wav) compared unequal, slipped past the
 /// aliasing guard, and `fs::write` followed the link and destroyed the
 /// audio — the exact data-loss class the CLI's `same_file` closes.
+///
+/// Unix-only: creating a symlink on Windows needs either developer mode or
+/// elevation, so the *test* can't run there. The fix itself is
+/// platform-independent (`Path::canonicalize` resolves Windows reparse
+/// points too) — this asserts it where the setup is reliable.
+#[cfg(unix)]
 #[test]
 fn a_symlinked_out_path_cannot_destroy_the_input() {
     let server = Server::new();
