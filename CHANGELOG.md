@@ -32,6 +32,16 @@ versions all crates together.
 
 ### Fixed
 
+- **The quantization grid is phase-locked to the detected beat.** A grid is a
+  phase as much as a spacing, and it was pinned at tick 0 — which assumes the
+  audio begins exactly on a beat. Any recording with a count-in, room tone, or
+  a pickup was therefore quantized against a grid offset from its real one,
+  corrupting the rhythm rather than merely the tempo. Both front ends now
+  estimate the beat grid (even when `--bpm` pins the tempo, since the tempo
+  says how far apart the lines are and the first beat says *where* they fall)
+  and pass it as `TranscribeOpts::grid_anchor_ms`. Ticks below the anchor snap
+  symmetrically, so a pickup keeps its place instead of being dragged onto the
+  downbeat.
 - **An MCP write path can no longer destroy the file it is reading through a
   symlink.** `resolve_read` canonicalized fully while `resolve_write` stopped
   at the parent directory, so a symlinked *final* component made the two

@@ -1054,17 +1054,18 @@ pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         ));
     }
 
+    // The beat grid is estimated even when `bpm` is given, because the
+    // first beat is what tells us *where* the grid lines fall — mirrors
+    // `cochlea transcribe`.
+    let tempo = cochlea_features::estimate_tempo(&audio, &cochlea_features::TempoOpts::default());
     let (bpm, tempo_source) = match bpm_arg {
         Some(b) => (b, "given"),
-        None => {
-            let tempo =
-                cochlea_features::estimate_tempo(&audio, &cochlea_features::TempoOpts::default());
-            match tempo.bpm {
-                Some(b) => (b, "detected"),
-                None => (120.0, "undetected, defaulted"),
-            }
-        }
+        None => match tempo.bpm {
+            Some(b) => (b, "detected"),
+            None => (120.0, "undetected, defaulted"),
+        },
     };
+    let grid_anchor_ms = tempo.beats_ms.first().copied().unwrap_or(0.0);
 
     let melody = cochlea_features::extract_melody(&audio);
     // One downmix for every note, not one per note.
@@ -1083,6 +1084,7 @@ pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         .with_ppq(cochlea_score::Ppq(ppq))
         .with_bpm(cochlea_score::Bpm(bpm))
         .with_grid(grid)
+        .with_grid_anchor_ms(grid_anchor_ms)
         .with_preset(&preset)
         .with_track_name(&track_name);
     let transcription = match cochlea_score::transcribe(&observations, &opts) {

@@ -33,14 +33,14 @@
 //! quantizes to zero length keeps one grid unit: a hit that happened should
 //! not vanish because it was short.
 //!
-//! The grid is anchored at **tick 0** — the start of the analyzed buffer —
-//! because that is the only reference this module has; it receives note
-//! times, not a beat map. A recording that does not begin on the beat is
-//! therefore quantized against a grid offset from its real one, and the
-//! result says so in its warnings. Trimming the lead-in (or windowing the
-//! probe) before transcribing is the fix; aligning to a detected downbeat
-//! would mean taking a beat grid as input, which is a larger change than
-//! this module's contract.
+//! A grid is a *phase* as much as a spacing, so
+//! [`TranscribeOpts::grid_anchor_ms`] pins where its lines fall. Left at
+//! zero it assumes the audio starts exactly on a beat, which is wrong for
+//! any recording with a count-in, room tone, or a pickup — the notes then
+//! quantize against a grid offset from the real one, corrupting the rhythm
+//! rather than merely the tempo. Callers that detected a beat grid pass the
+//! first beat's time, and everything snaps relative to that instant. Ticks
+//! below the anchor snap symmetrically, so a pickup keeps its place.
 //!
 //! Because the input is a single monophonic line, notes that quantization
 //! pulls onto each other are repaired rather than emitted as chords: an
@@ -140,6 +140,18 @@ pub struct TranscribeOpts {
     /// Quantization grid as a note duration (`Dur::sixteenth()` and friends),
     /// or `None` to keep the analyzer's raw timing at tick resolution.
     pub grid: Option<Dur>,
+    /// Where the quantization grid's phase is pinned, in milliseconds from
+    /// the start of the analyzed buffer.
+    ///
+    /// A grid is a phase as much as a spacing. Pinned at `0.0` (the
+    /// default) it assumes the audio begins exactly on a beat, so any
+    /// recording with a lead-in — count-in, room tone, a pickup — is
+    /// quantized against a grid offset from its real one, which corrupts
+    /// the rhythm rather than merely the tempo. Callers that detected a
+    /// beat grid should pass the first beat's time here; everything then
+    /// snaps relative to that instant instead of to the file's first
+    /// sample.
+    pub grid_anchor_ms: f64,
     /// Instrument preset for the transcribed track.
     pub preset: String,
     /// Track name.
@@ -155,9 +167,18 @@ impl TranscribeOpts {
             ppq: Ppq(960),
             bpm: Bpm(120.0),
             grid: Some(Dur::sixteenth()),
+            grid_anchor_ms: 0.0,
             preset: "sine".to_owned(),
             track_name: "lead".to_owned(),
         }
+    }
+
+    /// Pin the grid's phase to this instant (milliseconds from the start of
+    /// the buffer) — normally the first detected beat.
+    #[must_use]
+    pub fn with_grid_anchor_ms(mut self, anchor_ms: f64) -> Self {
+        self.grid_anchor_ms = anchor_ms;
+        self
     }
 
     /// Set the tempo the milliseconds are read against.
@@ -261,18 +282,6 @@ pub fn transcribe(
                 0
             } else {
                 warnings.push(format!("timing quantized to a {t}-tick grid"));
-                // The grid is anchored at tick 0 — the start of the
-                // analyzed buffer — not at a detected downbeat. A recording
-                // that does not begin on the beat therefore quantizes
-                // against a grid offset from its real one, which is a
-                // wrong-rhythm result rather than a wrong-tempo one, so it
-                // is worth saying out loud.
-                warnings.push(
-                    "the grid is anchored at the start of the audio, not at a detected \
-                     downbeat — trim any lead-in first, or pass no grid, if the recording \
-                     does not begin on the beat"
-                        .to_owned(),
-                );
                 t
             }
         }
@@ -285,6 +294,32 @@ pub fn transcribe(
     // Milliseconds per tick at this tempo — the single float→tick constant.
     // ticks = ms * ppq / ms_per_quarter, with ms_per_quarter = 60_000 / bpm.
     let ticks_per_ms = f64::from(opts.ppq.0) * opts.bpm.0 / 60_000.0;
+
+    // Where the grid's phase is pinned. Converted through the same
+    // millisecond→tick rounding as the notes, so anchor and notes agree.
+    let anchor_ticks = if grid_ticks == 0 {
+        0
+    } else {
+        match ms_to_ticks(opts.grid_anchor_ms, ticks_per_ms) {
+            Some(0) => 0,
+            Some(t) => {
+                warnings.push(format!(
+                    "the grid is phase-locked to the first detected beat at {:.0} ms, not to the \
+                     start of the file",
+                    opts.grid_anchor_ms
+                ));
+                t
+            }
+            None => {
+                warnings.push(
+                    "the requested grid anchor is not a usable time; the grid is pinned to the \
+                     start of the file instead"
+                        .to_owned(),
+                );
+                0
+            }
+        }
+    };
 
     let mut sorted: Vec<&NoteObservation> = observations.iter().collect();
     sorted.sort_by(|a, b| {
@@ -311,8 +346,8 @@ pub fn transcribe(
             continue;
         };
 
-        let start = snap(start, grid_ticks);
-        let end = snap(end, grid_ticks);
+        let start = snap_anchored(start, grid_ticks, anchor_ticks);
+        let end = snap_anchored(end, grid_ticks, anchor_ticks);
         let unit = grid_ticks.max(1);
         let len = if end > start {
             end - start
@@ -468,6 +503,23 @@ fn snap(t: u64, grid: u64) -> u64 {
         t - rem + grid
     } else {
         t - rem
+    }
+}
+
+/// [`snap`], but with the grid's phase pinned at `anchor` rather than at
+/// tick zero — the grid lines fall on `anchor ± n·grid`.
+///
+/// Ticks below the anchor snap symmetrically (the distance below is
+/// snapped, then subtracted), so a pickup note before the first detected
+/// beat lands on a real grid line instead of being dragged forward to it.
+fn snap_anchored(t: u64, grid: u64, anchor: u64) -> u64 {
+    if grid == 0 {
+        return t;
+    }
+    if t >= anchor {
+        anchor + snap(t - anchor, grid)
+    } else {
+        anchor.saturating_sub(snap(anchor - t, grid))
     }
 }
 
@@ -633,6 +685,94 @@ mod tests {
             "{:?}",
             t.warnings
         );
+    }
+
+    #[test]
+    fn anchored_snapping_pins_the_grid_phase() {
+        // Grid 240, anchor 100: lines fall on ..., -140, 100, 340, 580.
+        assert_eq!(snap_anchored(100, 240, 100), 100);
+        assert_eq!(snap_anchored(219, 240, 100), 100); // just under half
+        assert_eq!(snap_anchored(220, 240, 100), 340); // exactly half rounds up
+        assert_eq!(snap_anchored(345, 240, 100), 340);
+        // Below the anchor, symmetric rather than dragged forward. Tick 0
+        // sits 100 below the anchor; the neighbouring lines are 100 and
+        // -140, so 100 is the nearer one (and the only representable one).
+        assert_eq!(snap_anchored(90, 240, 100), 100);
+        assert_eq!(snap_anchored(0, 240, 100), 100);
+        // Below the anchor the grid continues downward: with anchor 500 the
+        // lines are 500, 260, 20, so tick 1 snaps to 20.
+        assert_eq!(snap_anchored(1, 240, 500), 20);
+        // When the nearest line below would be negative, the result clamps
+        // at zero rather than wrapping (ticks are unsigned): anchor 100,
+        // grid 150 would put it at -50.
+        assert_eq!(snap_anchored(0, 150, 100), 0);
+        assert_eq!(snap_anchored(1000, 0, 100), 1000); // no grid
+        // A zero anchor is exactly the unanchored behavior.
+        for t in [0u64, 119, 120, 241, 1000] {
+            assert_eq!(snap_anchored(t, 240, 0), snap(t, 240), "t = {t}");
+        }
+    }
+
+    #[test]
+    fn a_lead_in_quantizes_against_the_beat_not_the_file_start() {
+        // A performance that begins 60 ms in — a count-in, room tone, a
+        // late start. The notes are exactly on the beat *relative to that
+        // instant*, so with the grid pinned there they must land on exact
+        // beat multiples, not be smeared by the 60 ms offset.
+        let lead_in = 60.0;
+        let notes: Vec<NoteObservation> = (0..4)
+            .map(|i| {
+                let start = lead_in + f64::from(i) * 500.0;
+                obs(start, start + 500.0, 60 + i)
+            })
+            .collect();
+        let opts = TranscribeOpts::new().with_grid_anchor_ms(lead_in);
+        let t = transcribe(&notes, &opts).expect("transcribes");
+        let ats: Vec<u64> = t.score.tracks()[0].notes.iter().map(|n| n.at.0).collect();
+
+        // 60 ms at 120 BPM / 960 PPQ is 115 ticks; each beat is 960.
+        assert_eq!(
+            ats,
+            vec![115, 1075, 2035, 2995],
+            "grid pinned to the first beat"
+        );
+        // Every note sits an exact whole number of beats from the anchor.
+        for at in &ats {
+            assert_eq!(
+                (at - 115) % 960,
+                0,
+                "note at {at} is not a whole beat from the anchor"
+            );
+        }
+        assert!(
+            t.warnings.iter().any(|w| w.contains("phase-locked")),
+            "{:?}",
+            t.warnings
+        );
+    }
+
+    #[test]
+    fn without_an_anchor_the_lead_in_is_discarded() {
+        // Same input, grid left pinned at the file start: every note is
+        // pulled onto the file's own grid, so the 60 ms lead-in vanishes
+        // and the performance is renotated as if it began on the beat.
+        // Kept beside the anchored case so the difference is explicit
+        // rather than incidental.
+        let lead_in = 60.0;
+        let notes: Vec<NoteObservation> = (0..4)
+            .map(|i| {
+                let start = lead_in + f64::from(i) * 500.0;
+                obs(start, start + 500.0, 60 + i)
+            })
+            .collect();
+        let t = transcribe(&notes, &TranscribeOpts::new()).expect("transcribes");
+        let ats: Vec<u64> = t.score.tracks()[0].notes.iter().map(|n| n.at.0).collect();
+        assert_eq!(
+            ats,
+            vec![0, 960, 1920, 2880],
+            "the lead-in is snapped away without an anchor"
+        );
+        assert_eq!(ats[0], 0, "the pickup offset is lost entirely");
     }
 
     #[test]

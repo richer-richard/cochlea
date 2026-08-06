@@ -887,22 +887,22 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                     )
                 })?;
 
-            // Tempo: the caller's if given, else detected. A detection that
-            // finds no pulse falls back to MIDI's default rather than
-            // failing — the notes are still worth having.
+            // Tempo, and the grid's phase. The beat grid is estimated even
+            // when `--bpm` pins the tempo, because the first beat is what
+            // tells us *where* the grid lines fall — without it a recording
+            // with a count-in quantizes against an offset grid.
+            let tempo =
+                cochlea_features::estimate_tempo(&audio, &cochlea_features::TempoOpts::default());
             let (bpm, tempo_source) = match bpm {
                 Some(b) => (b, "given"),
-                None => {
-                    let tempo = cochlea_features::estimate_tempo(
-                        &audio,
-                        &cochlea_features::TempoOpts::default(),
-                    );
-                    match tempo.bpm {
-                        Some(b) => (b, "detected"),
-                        None => (120.0, "undetected, defaulted"),
-                    }
-                }
+                None => match tempo.bpm {
+                    Some(b) => (b, "detected"),
+                    None => (120.0, "undetected, defaulted"),
+                },
             };
+            // The first detected beat carries the grid's phase; with no
+            // pulse at all the file's start is the only reference left.
+            let grid_anchor_ms = tempo.beats_ms.first().copied().unwrap_or(0.0);
 
             let melody = cochlea_features::extract_melody(&audio);
             // One downmix for every note, not one per note.
@@ -923,6 +923,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                 .with_ppq(ppq)
                 .with_bpm(cochlea_score::Bpm(bpm))
                 .with_grid(grid)
+                .with_grid_anchor_ms(grid_anchor_ms)
                 .with_preset(&preset)
                 .with_track_name(&track);
             let cochlea_score::Transcription { score, warnings } =
