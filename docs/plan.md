@@ -616,7 +616,7 @@ automation, bus/send routing, realtime anything.
   now backs every CLI write guard (probe/diff/import/export/render), closing an
   aliased-path data-loss hole the old raw-string compare left open.
 
-## Unreleased (post-0.5.0)
+## 0.6.0 (2026-08-07)
 
 - **`transcribe`: the audio→score arrow.** `cochlea transcribe` and the MCP
   `transcribe_audio` tool turn a rendered or recorded file back into an

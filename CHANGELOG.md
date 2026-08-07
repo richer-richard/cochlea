@@ -4,7 +4,16 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
-## [Unreleased]
+## [0.6.0] — 2026-08-07
+
+The compose loop closes. `render` made audio from a score and `probe` made
+numbers from audio; `transcribe` makes a *score* from audio, so an agent can
+now go around the circle instead of down a one-way street. Alongside it, an
+adversarial pass over the new surface and the old one: three reachable panics
+(a one-byte MIDI corruption, a hostile duration string, a note stack from
+rounding), an MCP symlink write that destroyed the file it was reading, a
+quadratic velocity pass, and a family of arguments that silently fell back to
+their defaults instead of erroring.
 
 ### Added
 
@@ -25,10 +34,13 @@ versions all crates together.
     (`cochlea_score::transcribe`, taking plain `NoteObservation` data), so
     the dependency law holds — `features` still knows nothing about `score`,
     and the tick math is unit-testable with no audio in sight.
-  - `cochlea_features::peak_dbfs_between` (plain numeric peak level over a
-    time window) and `cochlea_score::Bpm::validate` (the tempo bounds as one
-    public rule, so `--bpm` is rejected at the flag boundary) are new public
-    API in service of it.
+  - New public API in service of it: `cochlea_features::peak_dbfs_between`
+    (plain numeric peak level over a time window) and its batched form
+    `peak_dbfs_for_windows`, which downmixes once for many windows;
+    `cochlea_score::Bpm::validate` (the tempo bounds as one public rule, so
+    `--bpm` is rejected at the flag boundary); `Dur::MAX_FRACTION_TERM`; and
+    `TranscribeOpts::grid_anchor_ms`, which phase-locks the quantization grid
+    to a detected beat rather than to tick 0.
 
 ### Fixed
 

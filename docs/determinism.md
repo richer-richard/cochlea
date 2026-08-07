@@ -417,7 +417,7 @@ existing rules — but each addition deserves its line in this ledger:
   fixed hop; the shared scalar-FFT tempo path), served over new CLI flags and
   MCP tools.
 
-## Unreleased additions (post-0.5.0)
+## 0.6.0 additions (2026-08-07)
 
 - **`transcribe` (audio → score).** Analysis times are inherently `f64`
   milliseconds — a tracker measures frames, not ticks — so this path has one
