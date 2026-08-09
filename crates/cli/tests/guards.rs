@@ -135,6 +135,189 @@ fn probe_refuses_to_overwrite_its_input_via_an_aliased_path() {
     assert_eq!(&after[..4], b"RIFF", "the input is still a WAV, not JSON");
 }
 
+/// A track name is score data, and `--stems` turns it into a file path.
+/// Before the [`cochlea_render::stem_file_name`] rule, a name spelled as a
+/// path escaped `--stems` entirely: an absolute one because `Path::join`
+/// discards the base, a `../` one by climbing. Reproduced against 0.6.0 —
+/// this renders a score whose track names point at a file outside the stems
+/// directory and pins that the render refuses before writing anything.
+#[test]
+fn render_refuses_path_shaped_track_names_in_stems() {
+    for (case, spelling) in [("absolute", None), ("relative", Some("../../escaped"))] {
+        let dir = case_dir(&format!("stems_escape_{case}"));
+        let victim = dir.join("victim.wav");
+        std::fs::write(&victim, b"UNTOUCHED").unwrap();
+
+        // Absolute: name the victim itself (minus the extension the writer
+        // appends). Relative: climb out of the stems directory.
+        let owned;
+        let track = match spelling {
+            Some(rel) => rel,
+            None => {
+                owned = victim.with_extension("").to_str().unwrap().to_owned();
+                &owned
+            }
+        };
+        let score = dir.join("evil.ron");
+        std::fs::write(
+            &score,
+            format!(
+                r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960, time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: {track:?}, instrument: Preset("sine"),
+        notes: [ Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+)"#
+            ),
+        )
+        .unwrap();
+
+        let out = dir.join("mix.wav");
+        let stems = dir.join("stems");
+        let output = cochlea()
+            .args([
+                "render",
+                score.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+                "--stems",
+                stems.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            !output.status.success(),
+            "{case}: a path-shaped track name must fail the render"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("single path component"),
+            "{case}: the reason should name the rule: {stderr}"
+        );
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"UNTOUCHED",
+            "{case}: the file the track name pointed at must be untouched"
+        );
+        // Validate-before-write: not even the mix, which is written first.
+        assert!(!out.exists(), "{case}: no mix should have been written");
+        assert!(
+            !stems.exists(),
+            "{case}: no stems directory should have been created"
+        );
+    }
+}
+
+/// The same escape, carried by an untrusted *binary* file rather than a
+/// hand-written score: MIDI meta event 0x03 becomes the track name verbatim
+/// (`crates/score/src/midi.rs`), so `import` then `render --stems` was a
+/// two-step arbitrary write from a downloaded `.mid`. Import still succeeds
+/// — a score is data, not a write — and the render is what refuses.
+#[test]
+fn a_midi_carried_track_name_cannot_escape_the_stems_dir() {
+    let dir = case_dir("midi_carried_escape");
+    let victim = dir.join("victim.wav");
+    std::fs::write(&victim, b"UNTOUCHED").unwrap();
+    let name = victim.with_extension("").to_str().unwrap().to_owned();
+
+    // Minimal format-0 SMF: a track-name meta event holding the path, one
+    // note, end of track. The name is longer than 127 bytes, so its length
+    // is a two-byte VLQ.
+    let mut vlq = Vec::new();
+    let mut n = name.len();
+    let mut digits = vec![(n & 0x7F) as u8];
+    n >>= 7;
+    while n > 0 {
+        digits.push(((n & 0x7F) as u8) | 0x80);
+        n >>= 7;
+    }
+    digits.reverse();
+    vlq.extend(digits);
+
+    let mut events = vec![0x00, 0xFF, 0x03];
+    events.extend(&vlq);
+    events.extend(name.as_bytes());
+    events.extend([0x00, 0x90, 0x3C, 0x64]); // note on
+    events.extend([0x60, 0x80, 0x3C, 0x00]); // note off
+    events.extend([0x00, 0xFF, 0x2F, 0x00]); // end of track
+
+    let mut midi = b"MThd".to_vec();
+    midi.extend(6u32.to_be_bytes());
+    midi.extend([0, 0, 0, 1, 0, 96]); // format 0, 1 track, 96 PPQ
+    midi.extend(b"MTrk");
+    midi.extend((events.len() as u32).to_be_bytes());
+    midi.extend(&events);
+
+    let mid = dir.join("evil.mid");
+    let score = dir.join("from_midi.ron");
+    std::fs::write(&mid, &midi).unwrap();
+
+    let status = cochlea()
+        .args([
+            "import",
+            mid.to_str().unwrap(),
+            "--out",
+            score.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success(), "import itself should still succeed");
+
+    let stems = dir.join("stems");
+    let output = cochlea()
+        .args([
+            "render",
+            score.to_str().unwrap(),
+            "--out",
+            dir.join("mix.wav").to_str().unwrap(),
+            "--stems",
+            stems.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "a MIDI-carried path-shaped track name must fail the render"
+    );
+    assert_eq!(
+        std::fs::read(&victim).unwrap(),
+        b"UNTOUCHED",
+        "the file the MIDI track name pointed at must be untouched"
+    );
+}
+
+/// The guard must not over-fire: ordinary track names still export stems.
+#[test]
+fn render_still_writes_stems_for_ordinary_track_names() {
+    let dir = case_dir("stems_ok");
+    let score = dir.join("score.ron");
+    std::fs::write(&score, SCORE).unwrap();
+    let stems = dir.join("stems");
+
+    let status = cochlea()
+        .args([
+            "render",
+            score.to_str().unwrap(),
+            "--out",
+            dir.join("mix.wav").to_str().unwrap(),
+            "--stems",
+            stems.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+
+    assert!(
+        status.success(),
+        "an ordinary score should still export stems"
+    );
+    assert!(
+        stems.join("lead.wav").exists(),
+        "the stem should be written"
+    );
+}
+
 #[test]
 fn probe_still_writes_json_to_a_distinct_path() {
     // The guard must not over-fire: a genuinely different output path works.

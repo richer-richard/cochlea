@@ -606,6 +606,19 @@ pub fn render_score(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(score) => score,
         Err(err) => return ToolOutcome::Failed(format!("parsing {score_path}: {err}")),
     };
+    // Track names are score data, so they are caller-influenced input that
+    // never passed through `resolve_write`. Unchecked, `<dir>/<track>.wav`
+    // would write clean outside `stems_dir` — and outside `--root`, while
+    // every path *argument* stayed legitimately inside it. Checked here,
+    // before the render, so nothing is written at all.
+    if stems_resolved.is_some() {
+        for track in score.tracks() {
+            if let Err(err) = cochlea_render::stem_file_name(&track.name) {
+                return ToolOutcome::InvalidParams(err.to_string());
+            }
+        }
+    }
+
     let rendered = match cochlea_render::render(&score) {
         Ok(rendered) => rendered,
         Err(err) => return ToolOutcome::Failed(format!("rendering {score_path}: {err}")),

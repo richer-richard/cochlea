@@ -4,6 +4,34 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
+## [Unreleased]
+
+### Fixed
+
+- **A track name could write a stem outside the stems directory — and
+  outside the MCP server's `--root`.** Stems are written as
+  `<dir>/<track>.wav`, and a track name is free-form score data, but it was
+  handed to `Path::join` unchecked. `Path::join` *replaces* the base path
+  when its argument is absolute, so a track named `/etc/x` wrote `/etc/x.wav`
+  and one named `../../x` climbed out. Reproduced on both front ends against
+  0.6.0. Over MCP it was a confinement bypass: with `score_path`, `out_path`,
+  and `stems_dir` all legitimately inside `--root`, the escape rode in on the
+  score's data and the tool still reported `isError: false`. The payload did
+  not need a hand-written score either — `cochlea import` lifts a MIDI
+  track-name meta event verbatim, so a downloaded `.mid` carried it.
+  - The rule is now one public function, `cochlea_render::stem_file_name`: a
+    stem name must be exactly one ordinary path component, with `/` and `\`
+    both refused on every platform so a score means the same thing on every
+    host. `write_stems_as` validates every name *before* creating the
+    directory or writing a file, so a refused name leaves nothing behind, and
+    both front ends pre-flight the same rule so the mix is never written
+    first. A `..` on its own is still allowed and still safe: the appended
+    extension makes it the ordinary file `...wav`.
+  - Scope: writes were always suffixed `.wav` and could not create parent
+    directories, so this was arbitrary-location write of `.wav` files into
+    existing directories — destructive to any `.wav` the user could write,
+    but not a path to code execution.
+
 ## [0.6.0] — 2026-08-07
 
 The compose loop closes. `render` made audio from a score and `probe` made

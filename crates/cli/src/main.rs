@@ -403,7 +403,12 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             // path per track, so it needs the loaded track names to check.
             if let Some(dir) = stems.as_ref() {
                 for track in score.tracks() {
-                    let stem = dir.join(format!("{}.wav", track.name));
+                    // A track name is score data, not a path the caller
+                    // typed: unchecked, `dir.join` would let a name like
+                    // `/etc/x` or `../../x` write clean outside --stems.
+                    // Checked here (before the mix write) so a hostile score
+                    // produces no output at all, not a mix plus an error.
+                    let stem = dir.join(cochlea_render::stem_file_name(&track.name)?);
                     if same_file(&out, &stem) {
                         anyhow::bail!(
                             "the stem for track {:?} would overwrite the mix --out {}",

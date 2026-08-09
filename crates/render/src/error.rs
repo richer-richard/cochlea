@@ -20,6 +20,12 @@ pub enum RenderError {
     )]
     TooLong { samples: u64, sample_rate: u32 },
 
+    #[error(
+        "track {name:?} cannot be written as a stem file: a stem name must be a single \
+         path component ({reason}). Rename the track, or write the mix without --stems."
+    )]
+    UnwritableStemName { name: String, reason: &'static str },
+
     #[error("WAV write failed: {0}")]
     Wav(#[from] hound::Error),
 

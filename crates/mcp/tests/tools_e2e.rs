@@ -361,6 +361,62 @@ fn root_confinement_refuses_escapes_end_to_end() {
     assert!(wav.exists());
 }
 
+/// `--root` confinement, laundered through score data. Every *path
+/// argument* here is legitimately inside the root — it is the score's track
+/// name that points outside, and `stems_dir/<track>.wav` used to follow it
+/// (`Path::join` discards the base for an absolute argument). Reproduced
+/// against 0.6.0: the escape wrote outside the root and the tool still
+/// reported `isError: false`. The confinement test above only covers direct
+/// path arguments, which is exactly why this one exists.
+#[test]
+fn root_confinement_survives_a_path_shaped_track_name() {
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("confined-root-stems");
+    let outside = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("outside-the-root");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("stems")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let victim = outside.join("master.wav");
+    std::fs::write(&victim, b"UNTOUCHED").unwrap();
+
+    // The track name is an absolute path outside the root; the writer
+    // appends `.wav`, so name the victim minus its extension.
+    let score_text = format!(
+        r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960, time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: {:?}, instrument: Preset("sine"),
+        notes: [ Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+)"#,
+        victim.with_extension("").to_str().unwrap()
+    );
+    let score = root.join("evil.ron");
+    std::fs::write(&score, score_text).unwrap();
+
+    let server = Server::with_root(&root).expect("root exists");
+    let out = root.join("mix.wav");
+    let response = call_tool(
+        &server,
+        1,
+        "render_score",
+        json!({
+            "score_path": score.to_str().unwrap(),
+            "out_path": out.to_str().unwrap(),
+            "stems_dir": root.join("stems").to_str().unwrap(),
+        }),
+    );
+
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+    assert_eq!(
+        std::fs::read(&victim).unwrap(),
+        b"UNTOUCHED",
+        "a track name must not be able to write outside --root"
+    );
+    assert!(
+        !out.exists(),
+        "nothing should be written when a track name is refused"
+    );
+}
+
 /// The canonical alias guard: `./score.ron` vs `score.ron` is the same
 /// file, and render_score must refuse to clobber it regardless of
 /// spelling (the old guard was string equality and missed this).

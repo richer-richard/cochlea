@@ -18,12 +18,66 @@ mod error;
 mod master;
 mod schedule;
 
-use std::path::Path;
+use std::path::{Component, Path};
 
 use cochlea_score::{SampleRate, Score};
 use cochlea_synth::PatchBank;
 
 pub use error::RenderError;
+
+/// The file name a track's stem is written as, or why it can't be written.
+///
+/// A track name is free-form score data — it can come from a hand-authored
+/// RON file or, via `cochlea import`, from a MIDI track-name meta event —
+/// so it is *untrusted input* the moment it is used to build a path.
+/// `Path::join` replaces the whole base path when handed an absolute
+/// argument, so a track named `/etc/foo` or `../../foo` would otherwise
+/// escape the stems directory entirely (and, over MCP, escape `--root`
+/// while every path *argument* stayed inside it).
+///
+/// The rule: the composed `<track>.wav` must be exactly one ordinary path
+/// component. Separators are rejected on every platform, not just the
+/// host's, so a score renders the same way everywhere — that portability is
+/// the same reason the rest of the engine is bit-deterministic.
+///
+/// This is the single rule behind [`Rendered::write_stems_as`] and both
+/// front ends' pre-flight checks (`cochlea render --stems`, the MCP
+/// `render_score` tool), so there is one answer to "is this name writable",
+/// not three.
+///
+/// ```
+/// assert_eq!(cochlea_render::stem_file_name("lead").unwrap(), "lead.wav");
+/// assert!(cochlea_render::stem_file_name("../../escape").is_err());
+/// assert!(cochlea_render::stem_file_name("/etc/passwd").is_err());
+/// ```
+pub fn stem_file_name(track: &str) -> Result<String, RenderError> {
+    let reject = |reason: &'static str| {
+        Err(RenderError::UnwritableStemName {
+            name: track.to_owned(),
+            reason,
+        })
+    };
+    if track.is_empty() {
+        return reject("it is empty");
+    }
+    if track.contains('\0') {
+        return reject("it contains a NUL byte");
+    }
+    // Both separators on every platform: `\` is an ordinary character in a
+    // Unix file name but a separator on Windows, and a score is portable
+    // data. Rejecting it everywhere keeps one score's meaning host-independent.
+    if track.contains('/') || track.contains('\\') {
+        return reject("it contains a path separator");
+    }
+    let file = format!("{track}.wav");
+    // Catches what the character checks can't spell out: `..`, a bare root,
+    // and Windows prefixes like `C:`.
+    let mut components = Path::new(&file).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(only)), None) if only == file.as_str() => Ok(file),
+        _ => reject("it is not an ordinary relative file name"),
+    }
+}
 
 /// A completed render: per-track stems plus the mix, all interleaved
 /// stereo f32 at the score's sample rate.
@@ -48,6 +102,11 @@ impl Rendered {
 
     /// Per-track stems in score track order, interleaved L/R, all the same
     /// length as the mix.
+    ///
+    /// The names are the score's track names verbatim — free-form data, not
+    /// sanitized identifiers. If you build file paths from them, go through
+    /// [`stem_file_name`] rather than joining them directly; a track name
+    /// can be spelled as an absolute path, and `Path::join` would honour it.
     pub fn stems(&self) -> impl Iterator<Item = (&str, &[f32])> {
         self.stems.iter().map(|(n, s)| (n.as_str(), s.as_slice()))
     }
@@ -101,20 +160,38 @@ impl Rendered {
 
     /// Writes one `<track>.wav` per stem into `dir` (created if missing), in
     /// the chosen PCM encoding.
+    ///
+    /// Every track name is checked against [`stem_file_name`] *before* the
+    /// directory is created or any file is written, so a score with one
+    /// unwritable name leaves nothing behind rather than a half-written set
+    /// of stems — the same validate-before-write rule the front ends apply
+    /// to their own arguments.
     pub fn write_stems_as(
         &self,
         dir: impl AsRef<Path>,
         depth: WavBitDepth,
     ) -> Result<(), RenderError> {
         let dir = dir.as_ref();
+        let files = self
+            .stems
+            .iter()
+            .map(|(name, stem)| Ok((stem_file_name(name)?, stem)))
+            .collect::<Result<Vec<_>, RenderError>>()?;
+
         std::fs::create_dir_all(dir)?;
-        for (name, stem) in &self.stems {
-            write_wav(
-                &dir.join(format!("{name}.wav")),
-                self.sample_rate,
-                stem,
-                depth,
-            )?;
+        for (file, stem) in files {
+            let path = dir.join(&file);
+            // Unreachable while [`stem_file_name`] holds — kept as a real
+            // check rather than a `debug_assert` precisely because this one
+            // guards a containment boundary, and a backstop that compiles
+            // out of release builds is not a backstop where it matters.
+            if !path.starts_with(dir) {
+                return Err(RenderError::UnwritableStemName {
+                    name: file,
+                    reason: "it did not stay inside the stems directory",
+                });
+            }
+            write_wav(&path, self.sample_rate, stem, depth)?;
         }
         Ok(())
     }

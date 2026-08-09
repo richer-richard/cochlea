@@ -54,6 +54,17 @@ error before the filesystem is touched. This is defense against a
 confused or prompt-injected *client*, not a sandbox against hostile local
 processes.
 
+Confinement covers paths the *score* implies, not just the ones the caller
+types. `render_score` with a `stems_dir` derives one file per track from
+the track name, and a track name is free-form score data — it can arrive from a
+hand-authored RON file or, through `import_midi`, from a MIDI track-name
+meta event. A name spelled as a path (`/etc/x`, `../../x`) would otherwise
+escape both the stems directory and `DIR` while every path argument stayed
+legitimately inside it, so stem names are validated against
+`cochlea_render::stem_file_name` before the render starts: one ordinary
+path component, no separators on any platform. Anything else is refused
+with nothing written.
+
 ```
 claude mcp add cochlea -- cochlea-mcp --root ~/music-workspace
 ```

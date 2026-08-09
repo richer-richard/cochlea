@@ -634,3 +634,18 @@ automation, bus/send routing, realtime anything.
   31 overflowed an unchecked shift in the importer (panic in debug, garbage
   in release), reachable by a single byte flip. Now checked, warned, and
   covered by a dedicated malformed-input suite.
+
+## Unreleased
+
+- **Stem names are validated as file names.** `write_stems_as` derived
+  `<dir>/<track>.wav` from a track name without checking it, and a track
+  name is free-form score data (hand-authored, or lifted verbatim from a
+  MIDI track-name meta event by the importer). `Path::join` discards the
+  base for an absolute argument, so a path-shaped track name wrote outside
+  the stems directory — and, over MCP, outside `--root` while every path
+  *argument* stayed inside it. The rule is now one public function,
+  `cochlea_render::stem_file_name` (one ordinary path component; `/` and
+  `\` refused on every platform so a score is host-independent), applied at
+  the write sink and pre-flighted by both front ends so nothing is written
+  when a name is refused. The same "one public rule, several callers"
+  shape as `Bpm::validate` and `validate_window_ms`.
