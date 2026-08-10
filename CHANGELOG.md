@@ -32,6 +32,18 @@ versions all crates together.
     existing directories — destructive to any `.wav` the user could write,
     but not a path to code execution.
 
+### Changed
+
+- **The golden-audio composite action passes its inputs through the
+  environment instead of `${{ }}` interpolation.** Interpolation pastes a
+  value into the script text *before* bash parses it, so an input carrying a
+  quote and `$(…)` would have run as a command; an environment variable is
+  only ever data. Not exploitable as the action shipped — the inputs come
+  from the calling workflow's own author — but this action exists to be
+  copied into other repositories, and a consumer who wired an input to
+  `github.event.*` data would have handed that data a shell. The action's
+  inputs are unchanged, so callers need no edit.
+
 ## [0.6.0] — 2026-08-07
 
 The compose loop closes. `render` made audio from a score and `probe` made

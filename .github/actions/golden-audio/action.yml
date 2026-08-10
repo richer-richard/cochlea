@@ -24,11 +24,23 @@ runs:
   steps:
     - name: cochlea eval
       shell: bash
+      # Inputs reach the script through the environment, never through
+      # `${{ }}` interpolation into the script text. Interpolation pastes the
+      # value in before bash parses the line, so an input containing a quote
+      # and `$(…)` would run as a command; an env var is only ever data. The
+      # caller's own workflow supplies these, but this action is meant to be
+      # copied, and a consumer who wires an input to `github.event.*` data
+      # would otherwise hand that data a shell.
+      env:
+        COCHLEA_CANDIDATES: ${{ inputs.candidates }}
+        COCHLEA_REFERENCES: ${{ inputs.references }}
+        COCHLEA_TIER: ${{ inputs.tier }}
+        COCHLEA_JSON: ${{ inputs.json }}
       run: |
         set -euo pipefail
-        args=(eval --candidates "${{ inputs.candidates }}" --references "${{ inputs.references }}")
-        if [ "${{ inputs.tier }}" = "exact" ]; then args+=(--exact); fi
-        if [ -n "${{ inputs.json }}" ]; then args+=(--json "${{ inputs.json }}"); fi
+        args=(eval --candidates "$COCHLEA_CANDIDATES" --references "$COCHLEA_REFERENCES")
+        if [ "$COCHLEA_TIER" = "exact" ]; then args+=(--exact); fi
+        if [ -n "$COCHLEA_JSON" ]; then args+=(--json "$COCHLEA_JSON"); fi
         # Prefer a `cochlea` already on PATH (e.g. installed from crates.io);
         # fall back to building it from this checkout.
         if command -v cochlea >/dev/null 2>&1; then
