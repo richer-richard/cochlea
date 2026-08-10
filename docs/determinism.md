@@ -443,3 +443,25 @@ existing rules — but each addition deserves its line in this ledger:
   the shifted value never reaches the render fold (an out-of-range
   denominator is warned about and the default 4/4 kept), so rendered bytes
   are unaffected.
+
+## Unreleased
+
+- **Stem-name validation: no bit-level change, one cross-platform rule.**
+  The stem-name fix (`cochlea_render::stem_file_name`, plus containment of
+  the resolved stem path) touches only *which files a render is willing to
+  write*, never a sample. No DSP, no new transcendental call sites, no
+  change to the schedule or the bus. Both golden PCM hashes are unchanged
+  and were re-confirmed on the Tier 1 target by CI.
+- **Why the name rule is enforced on every platform, not per-host.** A
+  score is portable data, so the checks that only *bite* on Windows — `\`
+  as a separator, `:` as a drive or alternate-data-stream marker, the
+  `<>"|?*` set, the `CON`/`NUL`/`COM1` device names — are refused on Unix
+  too. The alternative is worse than a false rejection: `C:` was previously
+  accepted on Unix and rejected on Windows, so one score exported stems on
+  the Tier 1 target and errored on a Tier 2 one. That is the same
+  commitment as the bit-exact render, applied to the filesystem edge — the
+  answer should not depend on which machine asked.
+  - Known limit, recorded rather than half-solved: names colliding only
+    under Unicode normalization (NFC vs NFD) are *not* caught, because
+    normalization would mean a new dependency in a workspace that keeps its
+    graph deliberately small. Case-insensitive collisions are caught.

@@ -71,6 +71,22 @@ Track(
 - `dur`: a fraction of a whole note as a string — `"1/4"` quarter,
   `"3/16"`, dotted `"1/4."`, triplet `"1/8t"`.
 
+A track `name` is free-form text and need only be unique within the score
+— unless you export stems (`cochlea render --stems`, or `stems_dir` on the
+MCP `render_score` tool), which writes one `<track>.wav` per track and so
+turns the name into a *file name*. Then it must be a portable one, checked
+the same way on every platform so a score exports the same stems
+everywhere instead of working on one host and failing on another: no path
+separator (`/`, `\`) and no `:` (a drive or an alternate data stream on
+Windows); none of `<>"|?*` and no control characters; not a Windows device
+name (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`, matched
+before the first dot whatever the extension); short enough to be a file
+name; and no two tracks differing only by case, since those are one file
+on macOS and Windows. A name that breaks a rule fails the render with the
+reason and the track quoted, before anything is written — it is never
+silently rewritten. `cochlea import` lifts track names straight out of a
+MIDI file, so an imported score is the usual place to meet this.
+
 ## Automation
 
 ```ron

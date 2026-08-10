@@ -15,6 +15,17 @@ let rendered = cochlea_render::render(&score)?;
 rendered.write_wav("mix.wav")?;
 ```
 
+Stems are written as `<dir>/<track>.wav`, which turns a track name — free-form
+score data, and something `cochlea import` can lift straight out of a MIDI
+file — into a file name. `stem_file_name` is the one rule for that: a single
+portable file name, with separators, `:`, `<>"|?*`, control characters and the
+Windows device names refused on every platform so a score exports the same
+stems on every host. `write_stems_as` applies it to every track, rejects two
+names that differ only by case, and checks where each stem path actually lands
+before writing, so a symlink can't redirect a stem out of the directory. If
+you build stem paths yourself from `Rendered::stems()`, go through
+`stem_file_name` rather than joining the name directly.
+
 There is no realtime path, and there never will be one — offline render
 is ground truth. Docs: <https://richer-richard.github.io/cochlea/>.
 
