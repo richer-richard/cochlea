@@ -60,10 +60,20 @@ the track name, and a track name is free-form score data — it can arrive from 
 hand-authored RON file or, through `import_midi`, from a MIDI track-name
 meta event. A name spelled as a path (`/etc/x`, `../../x`) would otherwise
 escape both the stems directory and `DIR` while every path argument stayed
-legitimately inside it, so stem names are validated against
-`cochlea_render::stem_file_name` before the render starts: one ordinary
-path component, no separators on any platform. Anything else is refused
-with nothing written.
+legitimately inside it. Two checks close that:
+
+- **The name**, against `cochlea_render::stem_file_name` before the render
+  starts — one ordinary, portable file name, with separators, `:`,
+  `<>"|?*`, control characters and the Win32 device names refused on every
+  platform so a score means the same thing on every host.
+- **The path it lands on**, when the stem is written. A well-formed name is
+  not enough: a symlink already sitting at `<stems>/<track>.wav` would be
+  followed straight out of the directory, so an existing target is resolved
+  and checked for containment. A link that stays inside the stems directory
+  is ordinary and still works.
+
+A stem that would land on the mix (`out_path`) or the score (`score_path`)
+is refused too, so a `stems_dir` overlapping either cannot destroy them.
 
 ```
 claude mcp add cochlea -- cochlea-mcp --root ~/music-workspace

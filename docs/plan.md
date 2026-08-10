@@ -644,8 +644,27 @@ automation, bus/send routing, realtime anything.
   base for an absolute argument, so a path-shaped track name wrote outside
   the stems directory — and, over MCP, outside `--root` while every path
   *argument* stayed inside it. The rule is now one public function,
-  `cochlea_render::stem_file_name` (one ordinary path component; `/` and
-  `\` refused on every platform so a score is host-independent), applied at
-  the write sink and pre-flighted by both front ends so nothing is written
-  when a name is refused. The same "one public rule, several callers"
+  `cochlea_render::stem_file_name` (one ordinary, *portable* file name —
+  separators, `:`, `<>"|?*`, control characters and the Win32 device names
+  all refused on every platform, so a score means the same thing on every
+  host), applied at the write sink and pre-flighted by both front ends so
+  nothing is written when a name is refused. The same "one public rule,
+  several callers"
   shape as `Bpm::validate` and `validate_window_ms`.
+- **Containment is checked at the path, not just the name.** A code review
+  of the above found the name rule was necessary but not sufficient: a
+  symlink already sitting at `<stems>/<track>.wav` is followed by
+  `File::create`, so a legitimate name still wrote outside the stems
+  directory and outside `--root` (reproduced). `write_stems_as` now
+  canonicalizes the stems directory and resolves any existing stem target
+  before writing, refusing one that lands outside — the same treatment
+  `ToolCtx::resolve_write` gives the MCP server's own path arguments, which
+  stem paths never passed through. A link that stays inside is left alone.
+- **The output-collision guards were completed.** `same_file` canonicalized
+  both sides, which fails for a path that does not exist yet, so for two
+  *outputs* it degraded to a raw string compare and `--out d/stems/lead.wav
+  --stems d/stems/../stems` destroyed the mix at exit 0; it now resolves
+  through the canonical parent plus file name. The CLI gained the missing
+  stem-vs-score pair (a score need not be named `.ron`), and the MCP
+  `render_score`, which had no stem-collision guard at all, gained
+  stem-vs-`out_path` and stem-vs-`score_path`.

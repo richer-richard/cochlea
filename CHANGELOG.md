@@ -32,7 +32,59 @@ versions all crates together.
     existing directories — destructive to any `.wav` the user could write,
     but not a path to code execution.
 
+- **A symlink at a stem's path could still redirect the write out of the
+  stems directory, and out of `--root`.** Validating the *name* is not
+  enough: if `<stems>/lead.wav` already exists as a link pointing elsewhere,
+  `File::create` follows it. Reproduced — a render truncated a file outside
+  the server's root while every name and every argument was legitimate.
+  `write_stems_as` now canonicalizes the stems directory and, for any stem
+  path that already exists, checks where it actually lands before writing.
+  A link that stays *inside* the directory is ordinary and still works: the
+  rule is containment, not a ban on links. This is the same trap
+  `resolve_write` was hardened against in 0.6.0, arriving by a path that
+  never went through `resolve_write`.
+
+- **A stem could overwrite the mix, the report, or the input score, at exit
+  0.** Two separate holes. The CLI's `same_file` canonicalized both sides,
+  which fails for a path that does not exist yet — so for two *outputs*, the
+  pair it most needed to judge, it silently degraded to a raw string
+  compare: `render --out d/stems/lead.wav --stems d/stems/../stems`
+  destroyed the mix with the `lead` stem. It now resolves through the
+  canonical parent plus file name, the shape the MCP server's
+  `resolve_write` already used. Separately, the guard never compared a stem
+  against the *score*, and `load_score` accepts any extension, so a score
+  kept as `d/lead.wav` with `--stems d` was read, rendered, and then
+  destroyed. And `render_score` (MCP) had no stem-collision guard at all —
+  `out_path = <root>/lead.wav` with `stems_dir = <root>` wrote the mix and
+  then overwrote it with one track, reporting success and the mix's peak.
+
+- **Two tracks whose names differ only by case no longer silently lose a
+  stem.** `Lead` and `lead` are distinct tracks and both valid names, but
+  one file on macOS and Windows. The set is now checked before any stem is
+  written. (Unicode NFC/NFD spellings of the same name still collide; that
+  would need a normalization dependency this workspace does not carry, and
+  it is documented as a known limit rather than half-solved.)
+
 ### Changed
+
+- **Breaking — some track names that exported stems before are now
+  refused.** The stem-name rule is enforced on every platform, not just the
+  one where each check bites, because a score is portable data and should
+  export the same stems everywhere rather than working on one host and
+  failing (or writing somewhere unexpected) on another. On Unix that newly
+  refuses names containing `\`, `:`, `<>"|?*`, or control characters, names
+  longer than a file name can be, and the Win32 device names (`NUL`, `CON`,
+  `COM1`, …) — the last of which used to write a stem to the null device on
+  Windows and report success. Renaming the track is the fix; a score that
+  does not use `--stems` / `stems_dir` is unaffected. A bare `..` is still
+  allowed and still safe: with the extension appended it is the ordinary
+  file `...wav`.
+
+- **Breaking — `RenderError` is now `#[non_exhaustive]`,** and has two new
+  variants (`UnwritableStemName`, `CollidingStemNames`). Adding a variant to
+  a public enum is already breaking for any downstream exhaustive `match`,
+  so the attribute lands in the same release rather than forcing a second
+  break later. Downstream matches need a `_` arm.
 
 - **The golden-audio composite action passes its inputs through the
   environment instead of `${{ }}` interpolation.** Interpolation pastes a

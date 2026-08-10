@@ -68,6 +68,23 @@ fn path_shaped_names_are_refused() {
         "with\0nul",            // rejected cleanly instead of an OS error
         "",                     // degenerate: would write a file named `.wav`
         "trailing/",            //
+        // Not separators, but not portable either — each means something
+        // different (or nothing) on Windows, and a score is portable data.
+        "C:",          // a drive prefix on Windows, an ordinary name on Unix
+        "..:x",        // an NTFS alternate data stream on the *parent* dir
+        "stream:name", // ditto, the general shape
+        "why?",        // <>"|?* are illegal in a Win32 file name
+        "a*b",         //
+        "pipe|it",     //
+        "quote\"it",   //
+        "less<than",   //
+        "bell\u{7}",   // control characters
+        "NUL",         // Win32 device names resolve from any directory,
+        "nul",         // case-insensitively,
+        "CON",         //
+        "COM1",        //
+        "LPT9",        //
+        "NUL.foo",     // and are matched before the first dot
     ] {
         let err = stem_file_name(name)
             .expect_err(&format!("{name:?} must be refused as a stem file name"));
@@ -136,6 +153,89 @@ fn an_absolute_track_name_cannot_write_outside_the_stems_dir() {
         std::fs::read(&victim).unwrap(),
         b"UNTOUCHED",
         "the file the track name pointed at must be untouched"
+    );
+}
+
+/// A well-formed *name* is not enough. If something already sits at the
+/// stem's path and links out of the directory, `File::create` follows it —
+/// the same trap `resolve_write` was hardened against on the MCP side.
+/// Reproduced: a symlink planted at `<root>/stems/lead.wav` let a render
+/// truncate a file outside `--root` while every name and argument was
+/// legitimate.
+#[test]
+#[cfg(unix)]
+fn a_symlink_at_a_stem_path_cannot_redirect_the_write_outside() {
+    let dir = case_dir("symlink_escape");
+    let stems = dir.join("stems");
+    std::fs::create_dir_all(&stems).unwrap();
+    let victim = dir.join("victim.wav");
+    std::fs::write(&victim, b"UNTOUCHED").unwrap();
+    std::os::unix::fs::symlink(&victim, stems.join("lead.wav")).unwrap();
+
+    let rendered = cochlea_render::render(&score_with_track("lead")).expect("score renders");
+    let err = rendered
+        .write_stems(&stems)
+        .expect_err("a symlink pointing out of the stems dir must be refused");
+    assert!(
+        matches!(err, RenderError::UnwritableStemName { .. }),
+        "{err}"
+    );
+    assert_eq!(
+        std::fs::read(&victim).unwrap(),
+        b"UNTOUCHED",
+        "the symlink target outside the stems dir must be untouched"
+    );
+}
+
+/// ...but the rule is containment, not a ban on links: one pointing *inside*
+/// the directory is ordinary and must still work.
+#[test]
+#[cfg(unix)]
+fn a_symlink_that_stays_inside_the_stems_dir_is_fine() {
+    let dir = case_dir("symlink_inside");
+    let stems = dir.join("stems");
+    std::fs::create_dir_all(&stems).unwrap();
+    let real = stems.join("real.wav");
+    std::fs::write(&real, b"placeholder").unwrap();
+    std::os::unix::fs::symlink(&real, stems.join("lead.wav")).unwrap();
+
+    cochlea_render::render(&score_with_track("lead"))
+        .expect("score renders")
+        .write_stems(&stems)
+        .expect("a link that stays inside the stems dir is not an escape");
+    assert_eq!(&std::fs::read(&real).unwrap()[..4], b"RIFF");
+}
+
+/// Two tracks whose names differ only by case are distinct to a score but
+/// one file on macOS and Windows, so writing both would silently drop a
+/// stem. Refused as a set, before anything is written.
+#[test]
+fn names_that_differ_only_by_case_are_refused() {
+    let dir = case_dir("case_collision");
+    let stems = dir.join("stems");
+    let score = score_with_track("Lead").track("lead", Instrument::preset("sine"));
+
+    let err = cochlea_render::render(&score)
+        .expect("score renders")
+        .write_stems(&stems)
+        .expect_err("case-colliding stem names must be refused");
+    assert!(
+        matches!(err, RenderError::CollidingStemNames { .. }),
+        "{err}"
+    );
+    assert!(!stems.exists(), "nothing should be written");
+}
+
+/// A name long enough to fail at the filesystem is caught by the rule
+/// instead, so the all-or-nothing promise holds rather than breaking partway
+/// through the set with ENAMETOOLONG.
+#[test]
+fn an_overlong_name_is_refused_by_the_rule_not_the_filesystem() {
+    let long = "a".repeat(300);
+    let err = stem_file_name(&long).expect_err("an overlong name must be refused");
+    assert!(
+        err.to_string().contains("too long"),
+        "the reason should say so: {err}"
     );
 }
 

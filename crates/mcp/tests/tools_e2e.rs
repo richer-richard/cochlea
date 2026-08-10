@@ -405,7 +405,18 @@ fn root_confinement_survives_a_path_shaped_track_name() {
         }),
     );
 
-    assert_eq!(response["error"]["code"], -32602, "{response}");
+    // An `isError` result, not Invalid Params: every argument is valid and
+    // inside the root, and it is the score's *content* that cannot be
+    // exported — the same class as a parse failure. It also has to reach the
+    // model as tool output, or an agent never learns to rename the track.
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    assert!(
+        response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("portable file name"),
+        "the reason should reach the caller: {response}"
+    );
     assert_eq!(
         std::fs::read(&victim).unwrap(),
         b"UNTOUCHED",
@@ -414,6 +425,97 @@ fn root_confinement_survives_a_path_shaped_track_name() {
     assert!(
         !out.exists(),
         "nothing should be written when a track name is refused"
+    );
+}
+
+/// The CLI refuses a stem that would land on the mix or the score;
+/// `render_score` had no such guard at all. With `out_path = <root>/lead.wav`
+/// and `stems_dir = <root>`, the mix was written and then destroyed by the
+/// `lead` stem — reported as `isError: false`, with the *mix's* peak
+/// summarising a file that now held one track.
+#[test]
+fn render_score_refuses_a_stem_that_would_overwrite_the_mix() {
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("stem-over-mix");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let score = root.join("score.ron");
+    std::fs::write(
+        &score,
+        r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960, time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: "lead", instrument: Preset("sine"),
+        notes: [ Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+)"#,
+    )
+    .unwrap();
+
+    let server = Server::with_root(&root).expect("root exists");
+    let out = root.join("lead.wav"); // == the `lead` track's stem path
+    let response = call_tool(
+        &server,
+        1,
+        "render_score",
+        json!({
+            "score_path": score.to_str().unwrap(),
+            "out_path": out.to_str().unwrap(),
+            "stems_dir": root.to_str().unwrap(),
+        }),
+    );
+
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+    assert!(
+        !out.exists(),
+        "the guard must fire before anything is written"
+    );
+}
+
+/// A well-formed track name is not enough: if a symlink already sits at the
+/// stem's path, `File::create` follows it out of the stems directory and out
+/// of `--root`. Reproduced against the first version of this fix, which
+/// checked only the *name*.
+#[test]
+#[cfg(unix)]
+fn render_score_cannot_be_redirected_out_of_root_by_a_symlinked_stem() {
+    let base = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("stem-symlink");
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("root");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(root.join("stems")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let victim = outside.join("master.wav");
+    std::fs::write(&victim, b"UNTOUCHED").unwrap();
+    std::os::unix::fs::symlink(&victim, root.join("stems").join("lead.wav")).unwrap();
+
+    let score = root.join("score.ron");
+    std::fs::write(
+        &score,
+        r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960, time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: "lead", instrument: Preset("sine"),
+        notes: [ Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+)"#,
+    )
+    .unwrap();
+
+    let server = Server::with_root(&root).expect("root exists");
+    let response = call_tool(
+        &server,
+        1,
+        "render_score",
+        json!({
+            "score_path": score.to_str().unwrap(),
+            "out_path": root.join("mix.wav").to_str().unwrap(),
+            "stems_dir": root.join("stems").to_str().unwrap(),
+        }),
+    );
+
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    assert_eq!(
+        std::fs::read(&victim).unwrap(),
+        b"UNTOUCHED",
+        "a symlinked stem path must not write outside --root"
     );
 }
 

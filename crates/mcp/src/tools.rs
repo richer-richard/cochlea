@@ -611,10 +611,34 @@ pub fn render_score(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     // would write clean outside `stems_dir` — and outside `--root`, while
     // every path *argument* stayed legitimately inside it. Checked here,
     // before the render, so nothing is written at all.
-    if stems_resolved.is_some() {
+    //
+    // A bad name is a `Failed`, not `InvalidParams`: every *argument* here is
+    // valid and inside the root, and it is the score's content that can't be
+    // exported — the same class as the `from_ron` failure just above. It also
+    // matters practically, since an agent only learns to rename the track if
+    // the reason comes back as tool output rather than a transport error.
+    if let Some(dir) = &stems_resolved {
         for track in score.tracks() {
-            if let Err(err) = cochlea_render::stem_file_name(&track.name) {
-                return ToolOutcome::InvalidParams(err.to_string());
+            let file = match cochlea_render::stem_file_name(&track.name) {
+                Ok(file) => file,
+                Err(err) => return ToolOutcome::Failed(err.to_string()),
+            };
+            // The CLI refuses a stem that would land on the mix, the report,
+            // or the score; this front end had no such guard at all, so
+            // `out_path = <root>/lead.wav` with `stems_dir = <root>` and a
+            // track named `lead` wrote the mix and then destroyed it with the
+            // lead stem, reporting success and the *mix's* peak. Same shape
+            // reached the score, since `from_ron` accepts any extension.
+            let stem = dir.join(&file);
+            for (what, other) in [("out_path", &out_resolved), ("score_path", &score_resolved)] {
+                if stem == *other {
+                    return ToolOutcome::InvalidParams(format!(
+                        "the stem for track {:?} would overwrite {what} ({}) — \
+                         point stems_dir somewhere else",
+                        track.name,
+                        other.display()
+                    ));
+                }
             }
         }
     }

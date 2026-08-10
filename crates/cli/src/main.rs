@@ -325,25 +325,55 @@ fn parse_bit_depth(s: &str) -> Result<cochlea_render::WavBitDepth, String> {
     s.parse()
 }
 
+/// Resolve a path far enough to compare it with another, whether or not it
+/// exists yet.
+///
+/// `canonicalize` only works on something already on disk, which is the
+/// wrong half of the problem: the dangerous comparisons here are between
+/// *outputs*, and an output does not exist when the guard runs. So fall back
+/// to the shape [`cochlea_mcp`'s `resolve_write`] uses — canonicalize the
+/// parent directory, which does exist, and re-attach the file name. That
+/// normalizes `..`, symlinked directories, and absolute-vs-relative
+/// spellings for a file that has yet to be created.
+///
+/// A path we cannot resolve at all is returned unchanged, so the caller
+/// still gets the raw comparison rather than a false "different".
+fn resolve_for_compare(path: &Path) -> PathBuf {
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return canonical;
+    }
+    let Some(name) = path.file_name() else {
+        return path.to_path_buf();
+    };
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    match std::fs::canonicalize(parent) {
+        Ok(canonical_parent) => canonical_parent.join(name),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
 /// Whether `a` and `b` name the same file on disk — the one rule every "don't
 /// clobber my input" guard in this binary shares. A raw path compare first
-/// (the common case, and the only thing decidable for an output that doesn't
-/// exist yet), then a canonical compare so a *different spelling* of an
-/// existing file — `./x.wav` vs `x.wav`, a symlink, an absolute-vs-relative
-/// mix — is caught too. `canonicalize` only succeeds for a path that already
-/// exists, which is exactly the case where overwriting it would destroy data;
-/// a not-yet-created output falls back cleanly to the raw compare.
+/// (the common case), then a resolved compare so a *different spelling* of
+/// the same file — `./x.wav` vs `x.wav`, a symlink, an absolute-vs-relative
+/// mix, a `..` segment — is caught too.
+///
+/// The resolved half deliberately does not require the files to exist. It
+/// used to: both sides went through `canonicalize`, which fails for a
+/// not-yet-written output, so the guard silently degraded to the raw compare
+/// for exactly the pair it most needed to catch. `render --out d/stems/lead.wav
+/// --stems d/stems/../stems` then wrote the mix and let the `lead` stem
+/// overwrite it, at exit 0.
 ///
 /// This lives in one place on purpose: the guard used to be open-coded per
 /// subcommand, and only `export` had the canonical half, so `probe`/`diff`/
 /// `import` could be tricked into overwriting their own input through an
 /// aliased path while still exiting 0. Now every write path routes here.
 fn same_file(a: &Path, b: &Path) -> bool {
-    a == b
-        || matches!(
-            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
-            (Ok(ca), Ok(cb)) if ca == cb
-        )
+    a == b || resolve_for_compare(a) == resolve_for_compare(b)
 }
 
 /// Apply a `--from`/`--to` window to loaded audio: no-op (offset 0) when
@@ -397,10 +427,12 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             {
                 anyhow::bail!("--report and --out point at the same path {out:?}");
             }
+            let score_path = score.clone();
             let score = load_score(&score)?;
             // A per-track stem (`<dir>/<track>.wav`) must not land on the mix
-            // (--out) or the report either — the same overwrite class, but one
-            // path per track, so it needs the loaded track names to check.
+            // (--out), the report, or the score it was read from — the same
+            // overwrite class, but one path per track, so it needs the loaded
+            // track names to check.
             if let Some(dir) = stems.as_ref() {
                 for track in score.tracks() {
                     // A track name is score data, not a path the caller
@@ -423,6 +455,18 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                             "the stem for track {:?} would overwrite --report {}",
                             track.name,
                             stem.display()
+                        );
+                    }
+                    // ...and not onto the score itself. `load_score` does not
+                    // require a `.ron` extension, so a score kept as
+                    // `d/lead.wav` plus `--stems d` and a track named `lead`
+                    // used to read the score, render, then destroy it at
+                    // exit 0.
+                    if same_file(&score_path, &stem) {
+                        anyhow::bail!(
+                            "the stem for track {:?} would overwrite the input score {}",
+                            track.name,
+                            score_path.display()
                         );
                     }
                 }

@@ -192,7 +192,7 @@ fn render_refuses_path_shaped_track_names_in_stems() {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("single path component"),
+            stderr.contains("portable file name"),
             "{case}: the reason should name the rule: {stderr}"
         );
         assert_eq!(
@@ -200,6 +200,17 @@ fn render_refuses_path_shaped_track_names_in_stems() {
             b"UNTOUCHED",
             "{case}: the file the track name pointed at must be untouched"
         );
+        // Assert against each case's *own* escape target. `victim` above is
+        // only the absolute case's target, so checking it alone would let the
+        // relative case pass while happily writing its file.
+        if spelling.is_some() {
+            let escaped = dir.join("stems").join("../../escaped.wav");
+            assert!(
+                !escaped.exists(),
+                "{case}: the relative escape target {} must not exist",
+                escaped.display()
+            );
+        }
         // Validate-before-write: not even the mix, which is written first.
         assert!(!out.exists(), "{case}: no mix should have been written");
         assert!(
@@ -207,6 +218,73 @@ fn render_refuses_path_shaped_track_names_in_stems() {
             "{case}: no stems directory should have been created"
         );
     }
+}
+
+/// `same_file` used to `canonicalize` both sides, which fails for a path that
+/// does not exist yet — so for two *outputs*, the pair it most needed to
+/// catch, it silently degraded to a raw string compare. Reproduced: the mix
+/// was written and then destroyed by a stem, at exit 0.
+#[test]
+fn render_catches_a_stem_that_aliases_the_mix_through_a_dotdot_spelling() {
+    let dir = case_dir("stem_alias_dotdot");
+    let score = dir.join("score.ron");
+    std::fs::write(&score, SCORE).unwrap();
+    let stems = dir.join("stems");
+    std::fs::create_dir_all(&stems).unwrap();
+
+    let output = cochlea()
+        .args([
+            "render",
+            score.to_str().unwrap(),
+            "--out",
+            stems.join("lead.wav").to_str().unwrap(),
+            // The same directory, spelled so a lexical compare misses it.
+            "--stems",
+            stems.join("../stems").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "a stem aliasing the mix through `..` must be refused"
+    );
+    assert!(
+        !stems.join("lead.wav").exists(),
+        "the guard should fire before anything is written"
+    );
+}
+
+/// `load_score` does not require a `.ron` extension, so a score kept as
+/// `d/lead.wav` plus `--stems d` and a track named `lead` used to read the
+/// score, render, then overwrite it — at exit 0.
+#[test]
+fn render_refuses_a_stem_that_would_overwrite_the_input_score() {
+    let dir = case_dir("stem_over_score");
+    let score = dir.join("lead.wav"); // a score, named like a WAV
+    std::fs::write(&score, SCORE).unwrap();
+
+    let output = cochlea()
+        .args([
+            "render",
+            score.to_str().unwrap(),
+            "--out",
+            dir.join("mix.wav").to_str().unwrap(),
+            "--stems",
+            dir.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "a stem landing on the input score must be refused"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&score).unwrap(),
+        SCORE,
+        "the input score must be intact, not a WAV"
+    );
 }
 
 /// The same escape, carried by an untrusted *binary* file rather than a

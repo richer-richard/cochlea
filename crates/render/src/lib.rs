@@ -35,20 +35,42 @@ pub use error::RenderError;
 /// escape the stems directory entirely (and, over MCP, escape `--root`
 /// while every path *argument* stayed inside it).
 ///
-/// The rule: the composed `<track>.wav` must be exactly one ordinary path
-/// component. Separators are rejected on every platform, not just the
-/// host's, so a score renders the same way everywhere — that portability is
-/// the same reason the rest of the engine is bit-deterministic.
+/// The rule: the composed `<track>.wav` must be an ordinary, *portable*
+/// file name — one path component, and one that means the same thing on
+/// every host cochlea runs on.
+///
+/// Every check runs on every platform, not just the one where it bites.
+/// That is deliberate, and it is the same commitment as the bit-exact
+/// render: a score is portable data, so a score that exports stems on macOS
+/// must export the same stems on Windows rather than failing there (or,
+/// worse, quietly writing somewhere else). Concretely, that means rejecting
+/// on Unix a handful of names Unix itself would accept:
+///
+/// - `\` — an ordinary character here, a separator on Windows.
+/// - `:` — ordinary here; on Windows it names a drive (`C:`) or an NTFS
+///   alternate data stream (`x:y`), the latter writing *outside* the
+///   directory the caller asked for.
+/// - `< > " | ? *` and control characters — illegal in a Win32 file name.
+/// - `CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9` — Win32
+///   device names, matched before the first dot and *regardless* of
+///   extension, so a `NUL` track would write to the null device and vanish
+///   while the render reported success.
+///
+/// A bare `..` is fine and stays allowed: the appended extension makes it
+/// `...wav`, an ordinary file, not a parent component.
 ///
 /// This is the single rule behind [`Rendered::write_stems_as`] and both
 /// front ends' pre-flight checks (`cochlea render --stems`, the MCP
 /// `render_score` tool), so there is one answer to "is this name writable",
-/// not three.
+/// not three. It bounds the *name*; containment of the resulting path is
+/// [`Rendered::write_stems_as`]'s job, because a name alone cannot say
+/// whether something at that path is a symlink out of the directory.
 ///
 /// ```
 /// assert_eq!(cochlea_render::stem_file_name("lead").unwrap(), "lead.wav");
 /// assert!(cochlea_render::stem_file_name("../../escape").is_err());
 /// assert!(cochlea_render::stem_file_name("/etc/passwd").is_err());
+/// assert!(cochlea_render::stem_file_name("NUL").is_err());
 /// ```
 pub fn stem_file_name(track: &str) -> Result<String, RenderError> {
     let reject = |reason: &'static str| {
@@ -63,20 +85,56 @@ pub fn stem_file_name(track: &str) -> Result<String, RenderError> {
     if track.contains('\0') {
         return reject("it contains a NUL byte");
     }
-    // Both separators on every platform: `\` is an ordinary character in a
-    // Unix file name but a separator on Windows, and a score is portable
-    // data. Rejecting it everywhere keeps one score's meaning host-independent.
     if track.contains('/') || track.contains('\\') {
         return reject("it contains a path separator");
     }
+    if track.contains(':') {
+        return reject("it contains a colon, which names a drive or a data stream on Windows");
+    }
+    if track.contains(['<', '>', '"', '|', '?', '*']) {
+        return reject("it contains one of <>\"|?*, which no Windows file name may hold");
+    }
+    if track.contains(char::is_control) {
+        return reject("it contains a control character");
+    }
+    // No trailing space/dot check: Windows strips those from the *end of a
+    // component*, and the mandatory `.wav` suffix means the composed name
+    // never ends in one. Checking `track` instead would reject `..`, which
+    // composes to the perfectly ordinary file `...wav`.
+    if is_reserved_device_name(track) {
+        return reject("it is a reserved device name on Windows");
+    }
     let file = format!("{track}.wav");
-    // Catches what the character checks can't spell out: `..`, a bare root,
-    // and Windows prefixes like `C:`.
+    if file.len() > MAX_STEM_FILE_NAME_BYTES {
+        return reject("it is too long to be a file name");
+    }
+    // The structural backstop for anything the character checks can't spell
+    // out — `..`-shaped components, a bare root, a Windows drive prefix.
     let mut components = Path::new(&file).components();
     match (components.next(), components.next()) {
         (Some(Component::Normal(only)), None) if only == file.as_str() => Ok(file),
         _ => reject("it is not an ordinary relative file name"),
     }
+}
+
+/// The longest stem file name we will compose, in bytes. 255 is the
+/// per-component limit on ext4, APFS and NTFS alike; bounding it here means
+/// a long track name is refused with an actionable message *before* any
+/// stem is written, rather than as an `ENAMETOOLONG` partway through the
+/// set (see [`Rendered::write_stems_as`]'s all-or-nothing promise).
+const MAX_STEM_FILE_NAME_BYTES: usize = 255;
+
+/// Win32 device names, which resolve to a device from *any* directory and
+/// are matched on the portion before the first dot, ignoring the extension
+/// — so `NUL`, `NUL.wav` and `NUL.foo.wav` are all the null device.
+fn is_reserved_device_name(track: &str) -> bool {
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+        "LPT9",
+    ];
+    let base = track.split('.').next().unwrap_or(track);
+    RESERVED.contains(&base.to_ascii_uppercase().as_str())
 }
 
 /// A completed render: per-track stems plus the mix, all interleaved
@@ -161,11 +219,25 @@ impl Rendered {
     /// Writes one `<track>.wav` per stem into `dir` (created if missing), in
     /// the chosen PCM encoding.
     ///
-    /// Every track name is checked against [`stem_file_name`] *before* the
-    /// directory is created or any file is written, so a score with one
-    /// unwritable name leaves nothing behind rather than a half-written set
-    /// of stems — the same validate-before-write rule the front ends apply
-    /// to their own arguments.
+    /// Two things are settled before any stem is written, so that a score
+    /// which cannot be exported cleanly leaves no stems behind rather than a
+    /// half-written set. (Only stems: a mix the caller already wrote through
+    /// [`Rendered::write_wav_as`] is its own write and stays on disk.)
+    ///
+    /// 1. **Every name** is checked against [`stem_file_name`], and the set
+    ///    is checked for names that differ only by case — those are distinct
+    ///    tracks to a score but one file on macOS and Windows, so writing
+    ///    them would silently drop a stem.
+    /// 2. **Every path** is checked for containment *after* resolving what
+    ///    is already on disk. A well-formed name is not enough: if
+    ///    `dir/lead.wav` already exists as a symlink pointing elsewhere,
+    ///    `File::create` follows it and the stem lands outside the directory
+    ///    the caller named — the same trap `resolve_write` was hardened
+    ///    against on the MCP side. A lexical `starts_with` cannot see that;
+    ///    canonicalizing can.
+    ///
+    /// A symlink that stays *inside* `dir` is fine and is left alone — the
+    /// rule is containment, not a ban on links.
     pub fn write_stems_as(
         &self,
         dir: impl AsRef<Path>,
@@ -175,22 +247,48 @@ impl Rendered {
         let files = self
             .stems
             .iter()
-            .map(|(name, stem)| Ok((stem_file_name(name)?, stem)))
+            .map(|(track, stem)| Ok((track.as_str(), stem_file_name(track)?, stem)))
             .collect::<Result<Vec<_>, RenderError>>()?;
 
-        std::fs::create_dir_all(dir)?;
-        for (file, stem) in files {
-            let path = dir.join(&file);
-            // Unreachable while [`stem_file_name`] holds — kept as a real
-            // check rather than a `debug_assert` precisely because this one
-            // guards a containment boundary, and a backstop that compiles
-            // out of release builds is not a backstop where it matters.
-            if !path.starts_with(dir) {
-                return Err(RenderError::UnwritableStemName {
-                    name: file,
-                    reason: "it did not stay inside the stems directory",
+        // Case-insensitive collision: `Lead` and `lead` are two tracks and
+        // two valid names, but one file on any case-insensitive volume.
+        // (Unicode normalization — NFC vs NFD spellings of the same name —
+        // would need a dependency this workspace does not carry, so that
+        // narrower collision is out of scope and documented as such.)
+        for (i, (track, file, _)) in files.iter().enumerate() {
+            if let Some((other, _, _)) = files[..i]
+                .iter()
+                .find(|(_, earlier, _)| earlier.to_lowercase() == file.to_lowercase())
+            {
+                return Err(RenderError::CollidingStemNames {
+                    first: (*other).to_owned(),
+                    second: (*track).to_owned(),
                 });
             }
+        }
+
+        std::fs::create_dir_all(dir)?;
+        // Resolve the directory once, so containment is judged against where
+        // it actually lands rather than how the caller spelled it.
+        let root = std::fs::canonicalize(dir)?;
+        let mut paths = Vec::with_capacity(files.len());
+        for (track, file, stem) in files {
+            let path = root.join(&file);
+            // Only an existing target can redirect the write; a name that is
+            // not there yet resolves to exactly this path.
+            if path.exists() {
+                let landed = std::fs::canonicalize(&path)?;
+                if !landed.starts_with(&root) {
+                    return Err(RenderError::UnwritableStemName {
+                        name: track.to_owned(),
+                        reason: "a link at its path in the stems directory points outside it",
+                    });
+                }
+            }
+            paths.push((path, stem));
+        }
+
+        for (path, stem) in paths {
             write_wav(&path, self.sample_rate, stem, depth)?;
         }
         Ok(())
