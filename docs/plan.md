@@ -635,7 +635,7 @@ automation, bus/send routing, realtime anything.
   in release), reachable by a single byte flip. Now checked, warned, and
   covered by a dedicated malformed-input suite.
 
-## Unreleased
+## 0.7.0 (2026-08-11)
 
 - **Stem names are validated as file names.** `write_stems_as` derived
   `<dir>/<track>.wav` from a track name without checking it, and a track

@@ -4,7 +4,23 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
-## [Unreleased]
+## [0.7.0] — 2026-08-11
+
+A security release, and an unusually honest one. A track name is score data,
+and `--stems` turns it into a file path — so a name spelled as a path wrote
+outside the stems directory, and outside the MCP server's `--root` while every
+path *argument* stayed legitimately inside it. Fixing that took two passes:
+the first validated the name and shipped documentation claiming a confinement
+it did not have, because a symlink already sitting at the stem's path is
+followed regardless of how well-formed the name is. Containment is now checked
+where it belongs, at the resolved path. Around it, three ways a stem could
+overwrite the mix, the report, or the score it was rendered from — all at exit
+0 — are closed, and the name rule is enforced identically on every platform so
+a score exports the same stems on every host.
+
+Two breaking changes come with it, both called out under Changed: `RenderError`
+is now `#[non_exhaustive]` with two new variants, and some track names that
+previously exported stems are refused.
 
 ### Fixed
 

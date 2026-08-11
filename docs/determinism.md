@@ -444,7 +444,7 @@ existing rules — but each addition deserves its line in this ledger:
   denominator is warned about and the default 4/4 kept), so rendered bytes
   are unaffected.
 
-## Unreleased
+## 0.7.0 additions (2026-08-11)
 
 - **Stem-name validation: no bit-level change, one cross-platform rule.**
   The stem-name fix (`cochlea_render::stem_file_name`, plus containment of

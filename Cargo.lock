@@ -178,7 +178,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cochlea"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "cochlea-decode"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "cochlea-features",
  "hound",
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "cochlea-features"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "ebur128",
  "hound",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "cochlea-mcp"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "cochlea-decode",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "cochlea-render"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "cochlea-score",
  "cochlea-synth",
@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "cochlea-score"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "fenestra-anim",
  "libm",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "cochlea-spectro"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "hound",
  "image",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "cochlea-synth"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "cochlea-score",
  "fundsp",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "cochlea-verify"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "cochlea-features",
  "cochlea-render",
