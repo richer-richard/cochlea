@@ -134,8 +134,15 @@ fn note_track(track: &Track) -> Result<Vec<u8>, ScoreError> {
     // at tick 0; fold them into the same delta-encoded stream.
     let mut prefixed: Vec<(u64, Vec<u8>)> = Vec::new();
     let mut name_meta = vec![0xFF, 0x03];
+    // Bounded by MAX_VLQ, not just by `u32`: a meta event's length is itself
+    // a variable-length quantity, and `write_vlq_into` writes into a 4-byte
+    // buffer — a value past 28 bits indexed off the end of it and panicked.
+    // Unreachable with any real track name (this is 256 MB of it), but the
+    // name is score data, and score data does not get to pick the panic.
     let name_len = u32::try_from(track.name.len())
-        .map_err(|_| ScoreError::Midi("track name too long for SMF".to_owned()))?;
+        .ok()
+        .filter(|&n| u64::from(n) <= MAX_VLQ)
+        .ok_or_else(|| ScoreError::Midi("track name too long for SMF".to_owned()))?;
     write_vlq_into(&mut name_meta, name_len);
     name_meta.extend_from_slice(track.name.as_bytes());
     prefixed.push((0, name_meta));
