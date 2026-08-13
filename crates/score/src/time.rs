@@ -127,10 +127,24 @@ pub struct TimeSignature {
 
 impl TimeSignature {
     pub(crate) fn validate(self, ppq: Ppq) -> Result<(), ScoreError> {
-        if self.beats == 0 || !matches!(self.unit, 1 | 2 | 4 | 8 | 16 | 32) {
+        // Two distinct problems, reported distinctly: a zero numerator, and
+        // a denominator that isn't one of the note values a signature can
+        // name. They used to share one message that printed the *beats*
+        // value against the *unit*'s range, so `(4, 3)` read as
+        // "time signature 4 out of range 1..=32" — a true failure with a
+        // description that pointed at the wrong number.
+        if self.beats == 0 {
             return Err(ScoreError::OutOfRange {
-                what: "time signature",
-                value: f64::from(self.beats),
+                what: "time signature beats",
+                value: 0.0,
+                min: 1.0,
+                max: f64::from(u32::MAX),
+            });
+        }
+        if !matches!(self.unit, 1 | 2 | 4 | 8 | 16 | 32) {
+            return Err(ScoreError::OutOfRange {
+                what: "time signature unit",
+                value: f64::from(self.unit),
                 min: 1.0,
                 max: 32.0,
             });
@@ -372,6 +386,26 @@ impl Pos {
     }
 
     /// Resolves to ticks. Exact or an error.
+    ///
+    /// A grid position is *bounded* here, at [`Ticks::MAX`], not merely
+    /// converted. Bar and beat are `u32` and the time signature's beats-per-bar
+    /// is unbounded, so `(bar - 1) · ticks_per_bar` is a product of two
+    /// caller-controlled numbers: a score with `time_signature: (4294967295, 4)`
+    /// and a note at bar 100000000 overflowed it — a panic in debug, a wrapped
+    /// (silently wrong, possibly *accepted*) tick in the release profile every
+    /// shipped binary is built with.
+    ///
+    /// Checked arithmetic alone would fix the overflow but not the class:
+    /// [`Ticks::MAX`] is what keeps the exact rational tempo math from
+    /// overflowing downstream, and this is the one place *every* grid position
+    /// passes through. `Score`'s builders bound the ticks they store
+    /// (`check_tick`), but [`Score::resolve`](crate::Score::resolve) — which
+    /// backs the RON `verify:` block and `cochlea-verify`'s own `Pos`
+    /// resolution — did not, so a far-future verify position reached
+    /// `mul_div` and panicked the renderer *after* the mix had been written.
+    /// Bounding here closes both routes at once, and costs real scores
+    /// nothing: `Ticks::MAX` is ~4.5 million quarter notes, days of audio at
+    /// any tempo, and the render itself caps at one hour.
     pub fn resolve(self, ppq: Ppq, ts: TimeSignature) -> Result<Ticks, ScoreError> {
         match self.0 {
             PosKind::Raw(t) => Ok(t),
@@ -387,12 +421,29 @@ impl Pos {
                     });
                 }
                 let tpb = ts.ticks_per_beat(ppq);
-                let base = u64::from(bar - 1) * ts.ticks_per_bar(ppq) + u64::from(beat - 1) * tpb;
                 let off = match offset {
                     Some(d) => d.resolve(ppq)?.0,
                     None => 0,
                 };
-                Ok(Ticks(base + off))
+                // `beat <= ts.beats` and `tpb <= 61_440`, so the beat term
+                // cannot overflow; the bar term and the offset can.
+                let tick = u64::from(bar - 1)
+                    .checked_mul(ts.ticks_per_bar(ppq))
+                    .and_then(|base| base.checked_add(u64::from(beat - 1) * tpb))
+                    .and_then(|base| base.checked_add(off))
+                    .filter(|&tick| tick <= Ticks::MAX.0)
+                    .ok_or(ScoreError::PositionTooFar {
+                        what: "position",
+                        // Saturating, so an overflowed product still reports a
+                        // number the reader can compare against `max` instead
+                        // of a wrapped one that looks reachable.
+                        tick: u64::from(bar - 1)
+                            .saturating_mul(ts.ticks_per_bar(ppq))
+                            .saturating_add(u64::from(beat - 1) * tpb)
+                            .saturating_add(off),
+                        max: Ticks::MAX.0,
+                    })?;
+                Ok(Ticks(tick))
             }
         }
     }
@@ -401,6 +452,103 @@ impl Pos {
 impl From<Ticks> for Pos {
     fn from(t: Ticks) -> Pos {
         Pos(PosKind::Raw(t))
+    }
+}
+
+#[cfg(test)]
+mod pos_resolve_bounds {
+    //! `Pos::resolve` is the funnel every bar/beat position passes through,
+    //! and both of its inputs are untrusted: a RON score picks the time
+    //! signature *and* the bar number. The product used to be unchecked and
+    //! unbounded — `time_signature: (4294967295, 4)` with a note at bar
+    //! 100000000 panicked in debug and wrapped to a silently wrong tick in
+    //! release, and a far-future `verify:` position (which no builder bounds)
+    //! reached `mul_div` and panicked the renderer mid-run.
+    use super::*;
+
+    const TS: TimeSignature = TimeSignature { beats: 4, unit: 4 };
+
+    fn resolve(bar_n: u32, beats: u32) -> Result<Ticks, ScoreError> {
+        bar(bar_n).resolve(Ppq(960), TimeSignature { beats, unit: 4 })
+    }
+
+    #[test]
+    fn a_huge_time_signature_cannot_overflow_the_bar_product() {
+        // 4.29e9 bars x 4.12e12 ticks-per-bar is ~1.8e22 — past u64.
+        let err = resolve(100_000_000, u32::MAX).expect_err("must be refused, not wrapped");
+        assert!(
+            matches!(err, ScoreError::PositionTooFar { .. }),
+            "wrong error: {err}"
+        );
+    }
+
+    #[test]
+    fn a_far_future_bar_is_refused_rather_than_resolved() {
+        // No overflow here — just a position past what the tempo arithmetic
+        // can carry. This is the shape that panicked `mul_div` from a
+        // `verify:` spec, which no builder bounds.
+        let err = resolve(u32::MAX, 4).expect_err("past Ticks::MAX must be refused");
+        match err {
+            ScoreError::PositionTooFar { tick, max, .. } => {
+                assert_eq!(max, Ticks::MAX.0);
+                assert!(
+                    tick > max,
+                    "the reported tick should exceed the max: {tick}"
+                );
+            }
+            other => panic!("wrong error: {other}"),
+        }
+    }
+
+    #[test]
+    fn an_offset_cannot_push_a_position_past_the_bound() {
+        // The last representable bar plus a whole note lands past the bound.
+        // (`bar` is 1-based, so the bar *starting* at tick `n * ticks_per_bar`
+        // is bar `n + 1`.)
+        let last_bar = u32::try_from(Ticks::MAX.0 / TS.ticks_per_bar(Ppq(960))).unwrap() + 1;
+        let at_bound = bar(last_bar).resolve(Ppq(960), TS).expect("in range");
+        assert!(at_bound <= Ticks::MAX);
+        let err = bar(last_bar)
+            .plus(Dur::whole())
+            .resolve(Ppq(960), TS)
+            .expect_err("the offset pushes it past the bound");
+        assert!(matches!(err, ScoreError::PositionTooFar { .. }), "{err}");
+    }
+
+    #[test]
+    fn ordinary_positions_still_resolve_exactly() {
+        assert_eq!(bar(1).resolve(Ppq(960), TS).unwrap(), Ticks(0));
+        assert_eq!(bar(2).resolve(Ppq(960), TS).unwrap(), Ticks(3840));
+        assert_eq!(bar(1).beat(3).resolve(Ppq(960), TS).unwrap(), Ticks(1920));
+        assert_eq!(
+            bar(2)
+                .beat(2)
+                .plus(Dur::eighth())
+                .resolve(Ppq(960), TS)
+                .unwrap(),
+            Ticks(3840 + 960 + 480)
+        );
+        // A whole hour of 4/4 at 120 BPM — the longest render — is nowhere
+        // near the bound.
+        assert!(bar(1801).resolve(Ppq(960), TS).unwrap() < Ticks::MAX);
+    }
+
+    #[test]
+    fn a_zero_numerator_and_a_bad_unit_report_different_things() {
+        let beats_err = TimeSignature { beats: 0, unit: 4 }
+            .validate(Ppq(960))
+            .expect_err("zero beats is not a signature");
+        assert!(
+            beats_err.to_string().contains("beats"),
+            "the message should name the numerator: {beats_err}"
+        );
+        let unit_err = TimeSignature { beats: 4, unit: 3 }
+            .validate(Ppq(960))
+            .expect_err("a third-note unit is not a signature");
+        assert!(
+            unit_err.to_string().contains("unit") && unit_err.to_string().contains('3'),
+            "the message should name the offending unit: {unit_err}"
+        );
     }
 }
 

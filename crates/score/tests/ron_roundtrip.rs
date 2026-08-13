@@ -189,6 +189,49 @@ fn a_raw_tick_note_past_the_bound_is_refused() {
     ));
 }
 
+/// The `(u32 bar, u32 beat)` grid was assumed to be self-bounding. It isn't:
+/// the *time signature*'s beats-per-bar is unbounded too, so `bar - 1` times
+/// `ticks_per_bar` is a product of two numbers a RON file picks. This score
+/// panicked the loader with "attempt to multiply with overflow" in debug, and
+/// wrapped to a silently wrong tick in the release profile every shipped
+/// binary is built with.
+#[test]
+fn a_bar_position_under_a_huge_time_signature_is_refused_not_wrapped() {
+    let ron = r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960,
+    time_signature: (4294967295, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: "lead", instrument: Preset("sine"),
+        notes: [ Note(at: (100000000, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+)"#;
+    assert!(
+        matches!(Score::from_ron(ron), Err(ScoreError::PositionTooFar { .. })),
+        "an overflowing bar position must be an error, not a panic or a wrap"
+    );
+}
+
+/// A `verify:` position goes through `Score::resolve`, which no builder
+/// bounds — so a far-future bar sailed past load and reached the tempo map's
+/// exact rational arithmetic at *render* time, panicking `mul_div` after the
+/// mix had already been written to disk.
+#[test]
+fn a_far_future_verify_position_is_refused_at_load() {
+    let ron = r#"Score(
+    version: 1, sample_rate: 192000, ppq: 24,
+    time_signature: (1000000, 1),
+    tempo: [(tick: 0, bpm: 1.0)],
+    tracks: [ Track(name: "lead", instrument: Preset("sine"),
+        notes: [ Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+    verify: [ SilentAfter(at: (4294967295, 1)) ],
+)"#;
+    match Score::from_ron(ron) {
+        Err(ScoreError::PositionTooFar { tick, max, .. }) => {
+            assert!(tick > max, "{tick} should exceed the bound {max}");
+        }
+        other => panic!("a far-future verify position must be refused: {other:?}"),
+    }
+}
+
 #[test]
 fn raw_tick_durations_survive_the_data_form() {
     // 961 ticks is off every musical grid; it canonicalizes to a reduced
