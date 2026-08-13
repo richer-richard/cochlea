@@ -411,23 +411,6 @@ pub(crate) struct TempoChange {
     pub npq: u64,
 }
 
-/// Refuse an authored tick past [`Ticks::MAX`] — the domain bound that keeps
-/// the exact tempo arithmetic from overflowing `u64`. Applied where a
-/// position is finalized (tempo changes, note ends, automation keys) so both
-/// the programmatic builder and the RON loader share one guard; grid
-/// positions authored as `(bar, beat)` sit far below it, but a raw-tick
-/// position or duration could otherwise slip past into unchecked `mul_div`.
-fn check_tick(t: Ticks, what: &'static str) -> Result<Ticks, ScoreError> {
-    if t > Ticks::MAX {
-        return Err(ScoreError::PositionTooFar {
-            what,
-            tick: t.0,
-            max: Ticks::MAX.0,
-        });
-    }
-    Ok(t)
-}
-
 impl Score {
     /// A 4/4 score at 120 BPM (both overridable) with no tracks.
     ///
@@ -500,10 +483,9 @@ impl Score {
     }
 
     pub fn try_tempo(mut self, at: impl Into<Pos>, bpm: Bpm) -> Result<Score, ScoreError> {
-        let at = check_tick(
-            at.into().resolve(self.ppq, self.time_signature)?,
-            "tempo change",
-        )?;
+        let at = at
+            .into()
+            .resolve_as(self.ppq, self.time_signature, "tempo change")?;
         let npq = bpm.nanos_per_quarter()?;
         let change = TempoChange { at, bpm, npq };
         match self.tempo.binary_search_by_key(&at, |c| c.at) {
@@ -566,15 +548,17 @@ impl Score {
         if vel.0 == 0 {
             return Err(ScoreError::ZeroVelocity);
         }
-        let at = at.into().resolve(self.ppq, self.time_signature)?;
+        let at = at
+            .into()
+            .resolve_as(self.ppq, self.time_signature, "note position")?;
         let dur = dur.resolve(self.ppq)?;
         if dur.0 == 0 {
             return Err(ScoreError::ZeroDuration);
         }
-        // Bound the note's *end* (at + dur), which subsumes bounding `at`:
-        // a raw-tick position or raw-tick duration could otherwise push a
-        // tick past what the tempo arithmetic can represent. checked_add so
-        // a near-u64::MAX raw duration can't wrap before the comparison.
+        // `at` is bounded by `resolve_as` above; this bounds the note's *end*,
+        // which the duration can push past the ceiling on its own — a
+        // raw-tick `Dur` is unbounded. checked_add so a near-`u64::MAX` one
+        // cannot wrap before the comparison.
         match at.0.checked_add(dur.0) {
             Some(end) if end <= Ticks::MAX.0 => {}
             _ => {
@@ -616,7 +600,7 @@ impl Score {
             .into_iter()
             .map(|k| {
                 Ok(AutoKey {
-                    at: check_tick(k.pos.resolve(ppq, ts)?, "automation key")?,
+                    at: k.pos.resolve_as(ppq, ts, "automation key")?,
                     value: k.value,
                     ease: k.ease.into(),
                 })

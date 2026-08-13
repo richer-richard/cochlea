@@ -462,6 +462,15 @@ existing rules — but each addition deserves its line in this ledger:
   case are refused on Linux too, because they are one file on macOS and
   Windows. Same trade, same reason — the answer should not depend on which
   machine asked. The NFC/NFD limit below is unchanged.
+- **A time signature's numerator is bounded by what can carry it.** `beats`
+  was any nonzero `u32` at the door and a clamped `u8` at the MIDI exit, so
+  a score could say 300/4 and its exported `.mid` could say 255/4 with
+  nothing to mark the loss. Export is a second representation of the same
+  score, and this workspace's rule for a second representation is that it
+  either round-trips or errors — never quietly disagrees. Bounding `beats`
+  to 1..=255 (`TimeSignature::MAX_BEATS`, named after the byte the SMF meta
+  event gives it) makes the export exact by construction. No sample changes;
+  no real signature reaches the ceiling.
 
 ## 0.7.0 additions (2026-08-11)
 

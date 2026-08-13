@@ -1,6 +1,10 @@
 """End-to-end tests for the cochlea Python bindings: render a score, probe it,
 and assert — the whole listen-and-assert loop through Python."""
 
+import shutil
+
+import pytest
+
 import cochlea
 
 # A one-bar A4 whole note on the sine preset — the simplest thing to render
@@ -65,6 +69,28 @@ def test_harmony_progression(tmp_path):
     out = str(tmp_path / "chords.wav")
     cochlea.render(CHORDS, out)
     cochlea.assert_audio(out).has_chord("C").has_chord("F")
+
+
+def test_spectrogram_refuses_to_overwrite_its_input(tmp_path):
+    # The whole file is decoded before a byte of PNG is written, so an
+    # aliasing out_path destroys the audio and reports success. Decode
+    # identifies a file by its magic bytes, so a WAV *named* .png is the
+    # case that actually lands: the PNG encoder is happy with the extension
+    # and nothing else stood between them.
+    wav = tmp_path / "take.wav"
+    cochlea.render(SINE_A4, str(wav))
+    disguised = tmp_path / "take.png"
+    shutil.copy(wav, disguised)
+    before = disguised.read_bytes()
+
+    with pytest.raises(ValueError):
+        cochlea.spectrogram(str(disguised), str(disguised))
+    assert disguised.read_bytes() == before
+
+    # And it still renders normally to a path of its own.
+    png = tmp_path / "spec.png"
+    cochlea.spectrogram(str(wav), str(png))
+    assert png.read_bytes()[:4] == b"\x89PNG"
 
 
 def test_pytest_fixture(assert_audio, tmp_path):

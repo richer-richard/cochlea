@@ -24,11 +24,12 @@ stems on every host. `write_stems_as` applies it to every track, rejects two
 names that differ only by case, and checks where each stem path actually lands
 before writing, so a symlink can't redirect a stem out of the directory —
 including a *broken* one, which `Path::exists()` reports as absent while
-`File::create` follows it anyway. If you build stem paths yourself from
+`File::create` follows it anyway. A link that cannot be resolved at all is
+refused rather than guessed at. If you build stem paths yourself from
 `Rendered::stems()`, go through `stem_file_name` rather than joining the name
-directly, and compare the result against your other outputs with
-`same_target_file` (two paths differing only by case are one file on macOS and
-Windows).
+directly, and compare the result against your other outputs with `same_file`,
+which resolves both sides before applying the rule (two paths differing only by
+case are one file on macOS and Windows; so are two spellings of one path).
 
 There is no realtime path, and there never will be one — offline render
 is ground truth. Docs: <https://richer-richard.github.io/cochlea/>.

@@ -126,19 +126,30 @@ pub struct TimeSignature {
 }
 
 impl TimeSignature {
+    /// The largest numerator a signature may name.
+    ///
+    /// It is `u8::MAX` because that is what a Standard MIDI File can carry:
+    /// the time-signature meta event's numerator is a single byte, so
+    /// [`export_midi`](crate::export_midi) could only clamp anything larger,
+    /// writing a file that says 255/4 for a score that said 300/4 —
+    /// wrong data, no error. Bounding the input is the fix; clamping at the
+    /// exit is the bug. (255 beats to a bar is already far past anything a
+    /// score means, so no real signature notices the ceiling.)
+    pub(crate) const MAX_BEATS: u32 = 255;
+
     pub(crate) fn validate(self, ppq: Ppq) -> Result<(), ScoreError> {
-        // Two distinct problems, reported distinctly: a zero numerator, and
-        // a denominator that isn't one of the note values a signature can
-        // name. They used to share one message that printed the *beats*
-        // value against the *unit*'s range, so `(4, 3)` read as
+        // Two distinct problems, reported distinctly: a numerator outside
+        // its range, and a denominator that isn't one of the note values a
+        // signature can name. They used to share one message that printed the
+        // *beats* value against the *unit*'s range, so `(4, 3)` read as
         // "time signature 4 out of range 1..=32" — a true failure with a
         // description that pointed at the wrong number.
-        if self.beats == 0 {
+        if self.beats == 0 || self.beats > Self::MAX_BEATS {
             return Err(ScoreError::OutOfRange {
                 what: "time signature beats",
-                value: 0.0,
+                value: f64::from(self.beats),
                 min: 1.0,
-                max: f64::from(u32::MAX),
+                max: f64::from(Self::MAX_BEATS),
             });
         }
         if !matches!(self.unit, 1 | 2 | 4 | 8 | 16 | 32) {
@@ -397,18 +408,61 @@ impl Pos {
     ///
     /// Checked arithmetic alone would fix the overflow but not the class:
     /// [`Ticks::MAX`] is what keeps the exact rational tempo math from
-    /// overflowing downstream, and this is the one place *every* grid position
-    /// passes through. `Score`'s builders bound the ticks they store
-    /// (`check_tick`), but [`Score::resolve`](crate::Score::resolve) — which
-    /// backs the RON `verify:` block and `cochlea-verify`'s own `Pos`
-    /// resolution — did not, so a far-future verify position reached
-    /// `mul_div` and panicked the renderer *after* the mix had been written.
-    /// Bounding here closes both routes at once, and costs real scores
+    /// overflowing downstream, and this is the one place *every* position
+    /// passes through. `Score`'s builders each used to bound the tick they
+    /// stored, but [`Score::resolve`](crate::Score::resolve) — which backs the
+    /// RON `verify:` block and `cochlea-verify`'s own `Pos` resolution — did
+    /// not, so a far-future verify position reached `mul_div` and panicked the
+    /// renderer *after* the mix had been written. Bounding here closes every
+    /// route at once and retires the per-builder checks, and costs real scores
     /// nothing: `Ticks::MAX` is ~4.5 million quarter notes, days of audio at
-    /// any tempo, and the render itself caps at one hour.
+    /// any tempo, and the render itself caps at one hour. (A note's *end* is
+    /// still bounded where the note is built — that is `at + dur`, not a
+    /// position, and a raw-tick `Dur` is unbounded.)
+    ///
+    /// *Both* arms are bounded, not just the grid one. Bounding the grid alone
+    /// closed the RON `verify:` route (`verify_from_doc` always builds a
+    /// `(bar, beat)` position) and left the same panic reachable from the Rust
+    /// API a line above it: `Ticks` is a public newtype over a public `u64`,
+    /// so `rendered.verify(&score).silent_after(Ticks(1 << 40))` handed an
+    /// unchecked raw tick to `Score::resolve`, through `tempo_map().ms_at`,
+    /// into `mul_div`. A raw tick past the ceiling is the same authoring
+    /// mistake as a bar past it and gets the same error.
+    ///
+    /// The time signature is validated before it is used, which sounds
+    /// redundant — `Score` validates its own on construction — and is not:
+    /// this is a `pub fn` taking a caller-built `TimeSignature` whose fields
+    /// are `pub`, so `unit: 0` reached `ticks_per_beat` and divided by zero.
+    /// A public function that hardens its arithmetic against untrusted numbers
+    /// has to check the numbers it divides by too.
     pub fn resolve(self, ppq: Ppq, ts: TimeSignature) -> Result<Ticks, ScoreError> {
+        self.resolve_as(ppq, ts, "position")
+    }
+
+    /// [`Pos::resolve`], with the name the out-of-range error should use.
+    ///
+    /// The bound is one rule but the *reader* is not one reader: "tempo change
+    /// at tick 18446744073709551000 is past the maximum" says where to look in
+    /// the file, and "position ..." does not. `Score`'s builders each pass
+    /// their own noun; everyone else gets "position".
+    pub(crate) fn resolve_as(
+        self,
+        ppq: Ppq,
+        ts: TimeSignature,
+        what: &'static str,
+    ) -> Result<Ticks, ScoreError> {
+        ts.validate(ppq)?;
         match self.0 {
-            PosKind::Raw(t) => Ok(t),
+            PosKind::Raw(t) => {
+                if t > Ticks::MAX {
+                    return Err(ScoreError::PositionTooFar {
+                        what,
+                        tick: t.0,
+                        max: Ticks::MAX.0,
+                    });
+                }
+                Ok(t)
+            }
             PosKind::Grid { bar, beat, offset } => {
                 if bar == 0 || beat == 0 {
                     return Err(ScoreError::ZeroBasedPosition { bar, beat });
@@ -429,8 +483,12 @@ impl Pos {
                 };
                 // The beat term needs no check of its own: `beat - 1` is at
                 // most `u32::MAX` and `tpb` at most 61_440 (the coarsest
-                // whole note), so it tops out around 2.6e14. The bar term and
-                // the offset are what can leave `u64`.
+                // whole note), so it tops out around 2.6e14. The offset is
+                // what can still leave `u64` — a raw-tick `Dur` is unbounded.
+                // The bar term is checked as well because it is only *just*
+                // safe: with `beats` bounded to 255 it tops out near 6.7e16,
+                // and a checked multiply is the cheaper half of that
+                // assumption ever changing.
                 let beat_ticks = u64::from(beat - 1) * tpb;
                 let resolved = u64::from(bar - 1)
                     .checked_mul(ts.ticks_per_bar(ppq))
@@ -444,7 +502,7 @@ impl Pos {
                     // the maximum", never a wrapped number that looks
                     // reachable.
                     _ => Err(ScoreError::PositionTooFar {
-                        what: "position",
+                        what,
                         tick: resolved.unwrap_or(u64::MAX),
                         max: Ticks::MAX.0,
                     }),
@@ -462,13 +520,14 @@ impl From<Ticks> for Pos {
 
 #[cfg(test)]
 mod pos_resolve_bounds {
-    //! `Pos::resolve` is the funnel every bar/beat position passes through,
-    //! and both of its inputs are untrusted: a RON score picks the time
-    //! signature *and* the bar number. The product used to be unchecked and
-    //! unbounded — `time_signature: (4294967295, 4)` with a note at bar
-    //! 100000000 panicked in debug and wrapped to a silently wrong tick in
-    //! release, and a far-future `verify:` position (which no builder bounds)
-    //! reached `mul_div` and panicked the renderer mid-run.
+    //! `Pos::resolve` is the funnel every position passes through, and every
+    //! one of its inputs is untrusted: a RON score picks the time signature
+    //! *and* the bar number, and the Rust API can hand it a raw `Ticks` or a
+    //! hand-built `TimeSignature` with public fields. The product used to be
+    //! unchecked and unbounded — `time_signature: (4294967295, 4)` with a note
+    //! at bar 100000000 panicked in debug and wrapped to a silently wrong tick
+    //! in release — and a far-future `verify:` position (which no builder
+    //! bounds) reached `mul_div` and panicked the renderer mid-run.
     use super::*;
 
     const TS: TimeSignature = TimeSignature { beats: 4, unit: 4 };
@@ -478,12 +537,72 @@ mod pos_resolve_bounds {
     }
 
     #[test]
-    fn a_huge_time_signature_cannot_overflow_the_bar_product() {
-        // 4.29e9 bars x 4.12e12 ticks-per-bar is ~1.8e22 — past u64.
+    fn a_numerator_past_the_bound_is_refused_before_any_arithmetic() {
+        // The signature that used to overflow the bar product is now refused
+        // as a signature, naming the value it is complaining about.
         let err = resolve(100_000_000, u32::MAX).expect_err("must be refused, not wrapped");
+        match err {
+            ScoreError::OutOfRange {
+                what, value, max, ..
+            } => {
+                assert_eq!(what, "time signature beats");
+                assert_eq!(value, f64::from(u32::MAX));
+                assert_eq!(max, f64::from(TimeSignature::MAX_BEATS));
+            }
+            other => panic!("wrong error: {other}"),
+        }
+    }
+
+    #[test]
+    fn the_largest_legal_signature_still_cannot_wrap_the_bar_product() {
+        // 4.29e9 bars x 1.57e7 ticks-per-bar is ~6.7e16: inside `u64`, well
+        // past `Ticks::MAX`. Refused as a position, not wrapped.
+        let ts = TimeSignature {
+            beats: TimeSignature::MAX_BEATS,
+            unit: 1,
+        };
+        let err = bar(u32::MAX)
+            .resolve(Ppq(15_360), ts)
+            .expect_err("past Ticks::MAX must be refused");
         assert!(
             matches!(err, ScoreError::PositionTooFar { .. }),
             "wrong error: {err}"
+        );
+    }
+
+    #[test]
+    fn a_zero_denominator_is_an_error_not_a_division_by_zero() {
+        // `resolve` is public and `TimeSignature`'s fields are public, so the
+        // signature it divides by is as untrusted as the bar number.
+        let err = bar(2)
+            .resolve(Ppq(960), TimeSignature { beats: 4, unit: 0 })
+            .expect_err("unit 0 must be refused, not divided by");
+        assert!(
+            matches!(err, ScoreError::OutOfRange { what, .. } if what == "time signature unit"),
+            "wrong error: {err}"
+        );
+    }
+
+    #[test]
+    fn a_raw_tick_past_the_bound_is_refused_too() {
+        // The grid arm was bounded first, which left this one reachable from
+        // the Rust API: `Ticks` is a public newtype over a public `u64`, and
+        // `verify(...).silent_after(Ticks(1 << 40))` went straight through
+        // `Score::resolve` into `mul_div`.
+        let err = Pos::from(Ticks(1 << 40))
+            .resolve(Ppq(960), TS)
+            .expect_err("a raw tick past the ceiling must be refused");
+        match err {
+            ScoreError::PositionTooFar { tick, max, .. } => {
+                assert_eq!(tick, 1 << 40);
+                assert_eq!(max, Ticks::MAX.0);
+            }
+            other => panic!("wrong error: {other}"),
+        }
+        // ...and one at the ceiling still resolves, unchanged.
+        assert_eq!(
+            Pos::from(Ticks::MAX).resolve(Ppq(960), TS).unwrap(),
+            Ticks::MAX
         );
     }
 

@@ -285,14 +285,69 @@ fn render_refuses_a_stem_that_differs_from_the_mix_only_by_case() {
         .output()
         .unwrap();
 
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success(),
-        "a stem colliding with the mix by case must be refused"
+        "a stem colliding with the mix by case must be refused: {stderr}"
+    );
+    // Named, not just non-zero: without this the test passes for any failure
+    // at all — an argument-parsing change, a missing directory — while the
+    // rule it exists to pin has quietly regressed.
+    assert!(
+        stderr.contains("would overwrite the mix"),
+        "the reason should name the collision: {stderr}"
     );
     assert!(
         !out.exists(),
         "the guard should fire before anything is written"
     );
+}
+
+/// The resolver's last-resort fallback used to hand a path back untouched
+/// when even its *parent* did not exist — which is exactly what a run
+/// creating its own `--stems` directory looks like. `./new` and `new` are two
+/// spellings of one directory, compared as different, so the guard passed,
+/// the `lead` stem was written, and the report was written over it at exit 0.
+#[test]
+fn render_refuses_a_report_that_lands_on_a_stem_in_a_directory_it_creates() {
+    let dir = case_dir("report_over_unborn_stem");
+    std::fs::write(dir.join("score.ron"), SCORE).unwrap();
+    let out = dir.join("mix.wav");
+
+    // Relative, from the run's own working directory, because that is where
+    // the two spellings actually differ: `Path`'s own equality folds a `.`
+    // in the *middle* of a path but keeps a leading one, so `./new/lead.wav`
+    // and `new/lead.wav` compared unequal and got past the raw check.
+    let output = cochlea()
+        .current_dir(&dir)
+        .args([
+            "render",
+            "score.ron",
+            "--out",
+            "mix.wav",
+            "--stems",
+            "./new",
+            "--report",
+            "new/lead.wav",
+            "--verify",
+        ])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a report landing on a stem must be refused: {stderr}"
+    );
+    assert!(
+        stderr.contains("--report"),
+        "the reason should name the flag: {stderr}"
+    );
+    assert!(
+        !dir.join("new").exists(),
+        "the guard fires before the stems directory is created"
+    );
+    assert!(!out.exists(), "...and before the mix is written");
 }
 
 /// `spectro` decodes the whole input before writing the PNG, so an aliasing

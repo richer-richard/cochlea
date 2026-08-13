@@ -18,7 +18,7 @@ mod error;
 mod master;
 mod schedule;
 
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use cochlea_score::{SampleRate, Score};
 use cochlea_synth::PatchBank;
@@ -124,9 +124,14 @@ pub fn stem_file_name(track: &str) -> Result<String, RenderError> {
 /// set (see [`Rendered::write_stems_as`]'s all-or-nothing promise).
 const MAX_STEM_FILE_NAME_BYTES: usize = 255;
 
-/// Whether `a` and `b` name the same file on *any* host cochlea runs on —
-/// the same-path rule every "don't clobber that" guard in both front ends
-/// shares.
+/// Whether two *already-resolved* paths name the same file on any host
+/// cochlea runs on — the rule [`same_file`] applies once it has resolved
+/// both sides.
+///
+/// Most callers want [`same_file`], which does the resolving. This one is for
+/// the case where there is nothing to resolve: the stem set below compares
+/// bare file names destined for one directory, so their spellings *are* their
+/// eventual paths.
 ///
 /// Exact equality is not the whole rule, because macOS and Windows are
 /// case-insensitive by default: `d/Lead.wav` and `d/lead.wav` are two paths
@@ -144,9 +149,9 @@ const MAX_STEM_FILE_NAME_BYTES: usize = 255;
 /// two genuinely distinct paths differing only by case are now refused as a
 /// pair.
 ///
-/// Callers pass paths they have already resolved as far as they can (the CLI
-/// canonicalizes through the parent, the MCP server hands over canonical
-/// paths), so this compares *where things land*, not how they were spelled.
+/// The parents are compared *exactly*, which is why the resolving has to have
+/// happened already: `d/mix.wav` and `./d/mix.wav` are one file and answer
+/// `false` here. [`same_file`] is the function that knows that.
 ///
 /// Case folding is Unicode-aware but *not* normalization-aware: NFC and NFD
 /// spellings of the same name still compare distinct here, the same known
@@ -172,6 +177,103 @@ pub fn same_target_file(a: &Path, b: &Path) -> bool {
         }
         _ => false,
     }
+}
+
+/// Fold a path's components without touching the filesystem: `.` dropped,
+/// `name/..` cancelled.
+///
+/// This is *not* resolution, and the difference matters: after a symlinked
+/// directory, `..` means something to the kernel that it does not mean to a
+/// text editor. It is only ever a fallback for a path nothing on disk can
+/// resolve, and it errs in the safe direction — folding can make two spellings
+/// look like one file (refusing a pair that would have been fine), never one
+/// file look like two.
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            // Only a plain name can be cancelled. A `..` above a root, or
+            // above the start of a relative path, still names somewhere.
+            Component::ParentDir
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    out
+}
+
+/// Resolve a path far enough to compare it with another, whether or not it
+/// exists yet.
+///
+/// `canonicalize` alone answers the wrong half of the problem: it only works
+/// on something already on disk, and the dangerous comparisons here are
+/// between *outputs*, which do not exist when the guard runs. So fall back to
+/// canonicalizing the *parent* — which usually does exist — and re-attaching
+/// the file name, the shape the MCP server's `resolve_write` uses. That
+/// normalizes `..`, symlinked directories, and absolute-versus-relative
+/// spellings for a file that has yet to be created.
+///
+/// When even the parent is missing, there is nothing on disk to resolve
+/// against and the components are folded lexically instead (see
+/// [`lexically_normalize`]). Returning the path untouched — what this did
+/// before — made one file look like two exactly where a run creates its own
+/// output directory: `--stems ./new --report new/lead.wav` compared unequal,
+/// and the report landed on the stem.
+///
+/// Private on purpose: [`same_file`] is the whole answer a caller needs, and
+/// a resolver handed out on its own invites exactly the split this release
+/// closed — someone resolving one side, or neither, and comparing by hand.
+fn resolve_for_compare(path: &Path) -> PathBuf {
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return canonical;
+    }
+    // No file name: a path that is all root/`..`/`.`, with nothing to re-attach.
+    let Some(name) = path.file_name() else {
+        return lexically_normalize(path);
+    };
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    match std::fs::canonicalize(parent) {
+        Ok(canonical_parent) => canonical_parent.join(name),
+        Err(_) => lexically_normalize(path),
+    }
+}
+
+/// Whether `a` and `b` name the same file on disk — the one "don't clobber
+/// that" rule, shared by all three front ends (CLI, MCP server, Python
+/// bindings).
+///
+/// A raw path compare first (the common case), then a resolved compare so a
+/// *different spelling* of the same file — `./x.wav` vs `x.wav`, a symlink, an
+/// absolute-versus-relative mix, a `..` segment, or a name differing only by
+/// case — is caught too.
+///
+/// The resolved half deliberately does not require the files to exist. It used
+/// to: both sides went through `canonicalize`, which fails for a not-yet-written
+/// output, so the guard silently degraded to the raw compare for exactly the
+/// pair it most needed to catch. `render --out d/stems/lead.wav --stems
+/// d/stems/../stems` then wrote the mix and let the `lead` stem overwrite it,
+/// at exit 0.
+///
+/// This lives in one place on purpose, and it is the third address it has had.
+/// The guard began open-coded per subcommand, which left `probe`/`diff`/`import`
+/// overwriting their own inputs through an aliased path; 0.7.1 moved the *rule*
+/// here but left each front end to do its own resolving, which left the Python
+/// `spectrogram` binding with no guard at all and the MCP server's wrapper
+/// meaning something subtly different from the CLI's. A rule applied per-call-site
+/// is a rule that gets missed at the next call site — so this is the whole
+/// predicate, resolving included, and every front end calls exactly it.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || same_target_file(&resolve_for_compare(a), &resolve_for_compare(b))
 }
 
 /// Win32 device names, which resolve to a device from *any* directory and
@@ -289,8 +391,13 @@ impl Rendered {
     ///    `exists()` reports as nothing at all while `File::create` still
     ///    follows it — is caught too, and refused outright.
     ///
-    /// A symlink that stays *inside* `dir` is fine and is left alone — the
-    /// rule is containment, not a ban on links.
+    /// A symlink that *resolves* and stays inside `dir` is fine and is left
+    /// alone — the rule is containment, not a ban on links. One that cannot be
+    /// resolved is refused even though its target may well be inside `dir`
+    /// (`stems/lead.wav -> stems/take2.wav`, with `take2.wav` not written
+    /// yet): reading the link and checking its target lexically would be
+    /// checking the one thing a lexical check cannot see through, which is how
+    /// the hole this closes was opened in the first place.
     pub fn write_stems_as(
         &self,
         dir: impl AsRef<Path>,
@@ -340,17 +447,30 @@ impl Rendered {
             // stem at the far end, outside the directory (and, over MCP,
             // outside `--root`), at exit 0. Reproduced against 0.7.0, which
             // closed the same hole for a link whose target already existed.
-            if std::fs::symlink_metadata(&path).is_ok() {
-                let landed =
-                    std::fs::canonicalize(&path).map_err(|_| RenderError::UnwritableStemName {
-                        name: track.to_owned(),
-                        // Something is there but will not resolve — a link to
-                        // a target that does not exist, or a loop of them.
-                        // Either way we cannot say where the write lands, so
-                        // we refuse instead of guessing.
-                        reason: "something at its path in the stems directory does not resolve \
-                                 (a broken or looping link)",
-                    })?;
+            if let Ok(existing) = std::fs::symlink_metadata(&path) {
+                // A link that will not resolve — dangling, or a loop of them.
+                // We cannot say where the write would land, so we refuse
+                // instead of guessing, even though the target may well be
+                // inside `dir`.
+                //
+                // The explanation is earned by looking at what is actually
+                // there, not by guessing from the error kind: if the entry is
+                // not a link at all, the failure is something else entirely
+                // (a permission wall, a name the filesystem will not take)
+                // and gets propagated with its own message. Reporting every
+                // failure as a broken link sends the reader hunting for a
+                // symlink that isn't there.
+                let landed = std::fs::canonicalize(&path).map_err(|e| {
+                    if existing.file_type().is_symlink() {
+                        RenderError::UnwritableStemName {
+                            name: track.to_owned(),
+                            reason: "a link at its path in the stems directory does not resolve \
+                                     (a broken or looping link)",
+                        }
+                    } else {
+                        RenderError::Io(e)
+                    }
+                })?;
                 if !landed.starts_with(&root) {
                     return Err(RenderError::UnwritableStemName {
                         name: track.to_owned(),

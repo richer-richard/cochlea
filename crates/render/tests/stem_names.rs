@@ -289,6 +289,50 @@ fn same_target_file_folds_case_within_a_directory() {
     }
 }
 
+/// [`cochlea_render::same_file`] is the whole predicate — resolving *and*
+/// rule — and the resolving half has to work for files that do not exist yet,
+/// because the pair it most needs to catch is two outputs.
+///
+/// The case pinned here is the one that got away: when neither the file nor
+/// its *directory* exists, there is nothing to canonicalize on either side.
+/// The resolver used to hand back both paths untouched, so two spellings of
+/// one file compared different and a `--report` landed on a stem in a
+/// directory the same run was about to create.
+#[test]
+fn same_file_sees_through_a_spelling_into_a_directory_that_does_not_exist_yet() {
+    use cochlea_render::same_file;
+
+    let dir = case_dir("same_file_unborn_dir");
+    let unborn = dir.join("new"); // never created
+
+    for (a, b) in [
+        // `..` is the spelling that needs the fallback: `Path`'s own equality
+        // folds a `.` in the middle of a path but never a `..`, since only the
+        // filesystem knows what a `..` climbs out of.
+        (unborn.join("lead.wav"), dir.join("new/../new/lead.wav")),
+        (unborn.join("lead.wav"), dir.join("./new/lead.wav")),
+        (unborn.join("lead.wav"), dir.join("new/Lead.wav")),
+    ] {
+        assert!(
+            same_file(&a, &b),
+            "{a:?} and {b:?} are one file, whether or not the directory exists"
+        );
+    }
+
+    // ...and the fallback still keeps genuinely different files apart. It can
+    // only ever merge two spellings, never split one file — that direction is
+    // the point: a false "same" refuses a legal command, a false "different"
+    // destroys a file.
+    assert!(
+        !same_file(&unborn.join("lead.wav"), &unborn.join("pad.wav")),
+        "two distinct stems in an unborn directory are still distinct"
+    );
+    assert!(
+        !same_file(&unborn.join("lead.wav"), &dir.join("other/lead.wav")),
+        "same name, different unborn directories"
+    );
+}
+
 /// A name long enough to fail at the filesystem is caught by the rule
 /// instead, so the all-or-nothing promise holds rather than breaking partway
 /// through the set with ENAMETOOLONG.

@@ -275,6 +275,22 @@ fn silent_after_passes_after_the_tail_and_fails_mid_note() {
     assert!(!fail.passed, "{:?}", fail.checks);
 }
 
+/// The assertion builder takes `impl Into<Pos>`, and `Ticks` is a public
+/// newtype over a public `u64` — so a raw tick from a caller went straight
+/// through `Score::resolve` and into the tempo map's exact rational
+/// arithmetic, where `mul_div` panicked with an overflow message from three
+/// crates away. Bounding `Pos::resolve`'s raw arm turns that into the
+/// builder's own "invalid position", raised before any audio is touched.
+#[test]
+#[should_panic(expected = "invalid position")]
+fn a_far_future_raw_tick_is_caught_by_the_builder_not_by_mul_div() {
+    let score = Score::new(SampleRate(48_000), Ppq(960))
+        .track("lead", Instrument::preset("sine"))
+        .note("lead", bar(1), Dur::quarter(), Pitch::A4, Vel(100));
+    let rendered = render(&score).unwrap();
+    let _ = rendered.verify(&score).silent_after(Ticks(1 << 40)).run();
+}
+
 // --- tempo_is / has_clear_rhythm ----------------------------------------
 
 /// A steady `pluck` hit on every beat, `bars` bars of 4/4 at `bpm` —

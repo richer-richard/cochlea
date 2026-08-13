@@ -653,32 +653,64 @@ An adversarial pass over 0.7.0's own fixes.
   guard between a stem and the mix/report/score comparing paths exactly —
   so `--out d/Lead.wav --stems d` with a track named `lead` still destroyed
   the mix at exit 0, on the platform most of this project's development
-  happens on. The comparison is now `cochlea_render::same_target_file`,
-  shared by the CLI's `same_file` and every MCP alias guard, and enforced
-  on every platform for the same portability reason the stem-name rule is
-  (see `docs/determinism.md`).
+  happens on. The rule is `cochlea_render::same_target_file`, enforced on
+  every platform for the same portability reason the stem-name rule is (see
+  `docs/determinism.md`).
 - **The overwrite sweep finally reaches every subcommand.** `spectro` and
   `eval` were never wired into `same_file` — `spectro audio.png --out
   audio.png` decoded the audio and wrote the PNG over it (the `.wav` case is
   refused by the PNG encoder, which looks like a guard and isn't), and
   `eval --json d/a.wav` replaced a golden candidate with its own report
-  after reporting that the candidate passed. The lesson is the shape, not
-  the two bugs: a rule applied per-call-site is a rule that gets missed at
-  the next call site, so the check now sits on every write path in the
-  binary and the doc comment that claimed as much is true for the first
-  time.
+  after reporting that the candidate passed.
+- **Sharing a rule is not sharing a check.** The fix above put the
+  comparison in one place and left the *resolving* in front of it to each
+  caller — so the Python `spectrogram` binding, a third front door onto the
+  same call, had no guard at all, and the MCP server's `same_file` and the
+  CLI's `same_file` were two functions with one name and different
+  semantics. `cochlea_render::same_file` is now the whole predicate,
+  resolving included, and all three front ends call exactly it. This is the
+  same lesson as the one below it, found one level up: a rule applied
+  per-call-site gets missed at the next call site, and "shared helper" is
+  not evidence that it wasn't.
+- **A fallback that gives up is a guard that answers wrong.** The path
+  resolver canonicalized the parent when the file did not exist yet and
+  returned the path untouched when the *parent* did not exist either —
+  exactly the case where a run creates its own output directory, so
+  `--stems ./new --report new/lead.wav` compared two spellings of one file
+  as different and let the report land on a stem. The fallback folds
+  components lexically now. The direction of a wrong answer is the whole
+  design here: lexical folding can only merge two spellings (refusing a pair
+  that would have been fine), never split one file into two.
 - **The position path is bounded where positions are made.** `Pos::resolve`
   multiplied `(bar - 1)` by `ticks_per_bar` unchecked, and *neither* factor
   was bounded — `bar` is a `u32` from the file and the time signature's
   beats-per-bar had no ceiling — so a crafted score overflowed `u64`
   (panic in debug, silent wrap in release). Separately, `Score::resolve`
   never applied `Ticks::MAX`, so a far-future `verify:` position reached
-  `mul_div` at render time and panicked *after* the mix was written. Both
-  now resolve through one bounded path: `Pos::resolve` returns
-  `PositionTooFar`, and every caller — builders, the RON loader, verify
-  specs, `cochlea-verify` — inherits it. The `check_tick` calls in
-  `Score`'s builders stay: they still bound *raw-tick* positions, which
-  never go through the grid.
+  `mul_div` at render time and panicked *after* the mix was written. Every
+  position now resolves through one bounded path — both arms, grid *and*
+  raw: bounding the grid alone closed the RON route and left the same panic
+  a line above it in the Rust API, since `Ticks` is a public newtype over a
+  public `u64` and `verify(...).silent_after(Ticks(1 << 40))` goes straight
+  into `Score::resolve`. Bounding the funnel retired the per-builder
+  `check_tick` calls entirely — one bound, one place — with each builder now
+  passing only the *noun* for the error message ("tempo change", "automation
+  key"), since a shared check should not cost a specific message. What stays
+  at the builder is the note *end* check: `at + dur` is not a position, and a
+  raw-tick `Dur` is unbounded.
+- **Bound the input, don't clamp the output.** `TimeSignature::validate`
+  accepted any nonzero numerator, and `export_midi` then squeezed it into the
+  SMF meta event's single byte with `unwrap_or(u8::MAX)` — a score that said
+  300/4 exported a file that said 255/4, silently. The bound belongs at the
+  door (`beats` is 1..=255 now, named after the byte that has to hold it):
+  one check replaces a truncation, an unreachable bar 2, and an error
+  message that advertised `u32::MAX` as a legal value.
+- **A `pub fn` that hardens its arithmetic has to check what it divides
+  by.** `Pos::resolve` gained checked multiplication and a tick ceiling
+  while still calling `ticks_per_beat` — `whole_note_ticks / unit` — on a
+  caller-built `TimeSignature` with public fields, before any validation.
+  `unit: 0` was a division-by-zero panic in the function that had just been
+  hardened against untrusted numbers.
 
 ## 0.7.0 (2026-08-11)
 

@@ -23,11 +23,16 @@ destroyed the mix at exit 0.
 
 Two more of the same shape turned up in the review of *this* release's own
 fixes: `spectro` and `eval` were the two subcommands the 0.7.0 overwrite
-sweep never reached, and both could destroy a file they had just read.
+sweep never reached, and both could destroy a file they had just read. A
+third pass, over those fixes in turn, found the pattern one level up — the
+rule had been shared but the *resolving* in front of it had not, which left
+the Python `spectrogram` binding with no guard at all and two front ends
+calling something spelled `same_file` and meaning different things. The whole
+predicate now lives in one place, resolving included.
 
-Alongside them, two arithmetic bugs on the position path: a bar/beat position
-is a product of two numbers a score file picks, and nothing bounded either
-one.
+Alongside them, three arithmetic bugs on the position path: a bar/beat
+position is a product of two numbers a score file picks, and nothing bounded
+either one.
 
 ### Fixed
 
@@ -53,8 +58,27 @@ one.
   0 having reported the mix's frame count. The same gap sat on the MCP side
   (`render_score`'s stem guard, and every `out_path` / input alias check —
   `spectrogram`, `import_midi`, `export_midi`, `transcribe_audio`).
-  The comparison is now one shared function, `cochlea_render::same_target_file`,
-  used by both front ends.
+  The comparison is now one shared function, `cochlea_render::same_file`,
+  called by all three front ends.
+
+- **The Python `spectrogram` binding could write its PNG over its own
+  input** — the same bug as `cochlea spectro --out`, in the third front door
+  onto the same call. It was missed because the first fix shared the
+  *comparison* but left each front end to do its own path resolving, so
+  "every write path is guarded" was a claim about the binary only.
+  `cochlea_render::same_file` now does both halves, and the CLI, the MCP
+  server and the bindings all call exactly it.
+
+- **Two spellings of one not-yet-created path could pass the overwrite
+  guard.** The resolver canonicalizes a path's parent when the path itself
+  does not exist yet, and returned the path *untouched* when the parent did
+  not exist either — which is precisely the case where a run creates its own
+  output directory. `render s.ron --stems ./new --report new/lead.wav
+  --verify` compared `./new/lead.wav` against `new/lead.wav`, found them
+  different, wrote the `lead` stem and then wrote the report on top of it.
+  The fallback now folds the path's components lexically (`.` dropped,
+  `name/..` cancelled), which can only ever make two spellings look like one
+  file — never one file look like two.
 
 - **`cochlea spectro --out` could destroy the file it was rendering.** The
   audio is fully decoded before the PNG is written, and the subcommand had
@@ -84,7 +108,25 @@ one.
   note at bar 100000000 panicked the loader with "attempt to multiply with
   overflow" in debug, and wrapped to a silently wrong — possibly *accepted* —
   tick in the release profile every shipped binary is built with. Now
-  checked, and refused with `PositionTooFar`.
+  checked, and refused with `PositionTooFar`. (The numerator itself is
+  bounded too — see Changed.)
+
+- **A raw-tick position past the ceiling still panicked the renderer.**
+  Bounding the grid arm of `Pos::resolve` closed the RON `verify:` route,
+  which always builds a `(bar, beat)` position, and left the identical panic
+  reachable one line up in the Rust API: `Ticks` is a public newtype over a
+  public `u64`, so `rendered.verify(&score).silent_after(Ticks(1 << 40))`
+  handed an unchecked tick to `Score::resolve` and on into `mul_div`. Both
+  arms are bounded now. A raw tick past the ceiling is the same authoring
+  mistake as a bar past it, and gets the same `PositionTooFar`.
+
+- **`Pos::resolve` divided by a caller-supplied zero.** It is a `pub fn`
+  taking a `TimeSignature` whose fields are also `pub`, and it called
+  `ticks_per_beat` — `whole_note_ticks / unit` — before any validation ran,
+  so `unit: 0` was a division-by-zero panic in the very function this release
+  hardened against untrusted numbers. The signature is validated before it is
+  used. (Unreachable through the CLI or the MCP server, which validate at
+  load; reachable by anyone using the crate directly.)
 
 - **A far-future `verify:` position panicked the renderer, after the mix was
   written.** `Score::resolve` — which backs the RON `verify:` block and
@@ -109,6 +151,20 @@ one.
   "time signature 4 out of range 1..=32". They are now two messages, each
   naming the value it is actually complaining about.
 
+- **`cochlea eval` derived one reference path two ways.** The `--json`
+  overwrite guard joined the candidate's raw file name onto `--references`;
+  the comparison loop twenty lines below joined its `to_string_lossy`
+  spelling. For a candidate whose name is not valid UTF-8 those are different
+  files, so a `--json` aimed at the lossy one passed the guard and then landed
+  on the reference the run had just read. One derivation now, used by both.
+
+- **A stem-write failure blamed a symlink that wasn't there.** Every
+  `canonicalize` error at a stem's path was reported as "a broken or looping
+  link", including failures that have nothing to do with links (a permission
+  wall on the target's path, a name the filesystem will not take). The
+  message is now earned by looking at what is actually at the path; anything
+  that is not a link propagates its own io error.
+
 ### Changed
 
 - **Two output paths that differ only by case are now refused on every
@@ -120,6 +176,25 @@ one.
   `probe in.wav --json A.json --spectro a.json`. Renaming one output is the
   fix. (Unicode NFC/NFD spellings of the same name are still treated as
   distinct — the same documented limit the stem-set check carries.)
+
+- **A time signature's numerator is bounded to 1..=255.** It was any nonzero
+  `u32`, which no consumer could actually represent: `export_midi` clamped it
+  into the SMF time-signature meta event's single byte, so a score that said
+  `(300, 4)` exported a file that said 255/4 — wrong data, no error, and
+  nothing for the reader to notice. Bounding the input beats truncating at
+  the exit. Scores with a numerator above 255 (which could not round-trip
+  through MIDI, and whose bar 2 was already unreachable) are now refused at
+  load with the value they named.
+
+- **A symlink at a stem's path that cannot be resolved is refused**, where
+  0.7.0 followed it and 0.7.1's first cut aborted the export with a
+  misleading reason. This includes a dangling link whose target would have
+  been *inside* the stems directory (`stems/lead.wav -> stems/take2.wav`
+  before `take2.wav` exists), which used to work by accident. Reading the
+  link and checking its target lexically would mean trusting the one thing a
+  lexical check cannot see through, which is how the hole this closes was
+  opened; refusing is the honest answer. Delete the link, or write the stem
+  under its own name.
 
 ## [0.7.0] — 2026-08-11
 

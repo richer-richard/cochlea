@@ -7,6 +7,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+// The one "would this write destroy that file?" predicate, resolving
+// included. It lives in `cochlea_render` so the CLI, the MCP server and the
+// Python bindings all judge it identically rather than each keeping a
+// near-copy that can drift.
+use cochlea_render::same_file;
 use cochlea_score::{Score, Severity};
 use cochlea_synth::PatchBank;
 use cochlea_verify::VerifyExt;
@@ -325,62 +330,24 @@ fn parse_bit_depth(s: &str) -> Result<cochlea_render::WavBitDepth, String> {
     s.parse()
 }
 
-/// Resolve a path far enough to compare it with another, whether or not it
-/// exists yet.
+/// One `eval` case: the reference a candidate is compared against, and the
+/// name the report prints for it.
 ///
-/// `canonicalize` only works on something already on disk, which is the
-/// wrong half of the problem: the dangerous comparisons here are between
-/// *outputs*, and an output does not exist when the guard runs. So fall back
-/// to the shape [`cochlea_mcp`'s `resolve_write`] uses — canonicalize the
-/// parent directory, which does exist, and re-attach the file name. That
-/// normalizes `..`, symlinked directories, and absolute-vs-relative
-/// spellings for a file that has yet to be created.
+/// Derived in exactly one place because two callers need it — the `--json`
+/// overwrite guard and the comparison loop — and a second derivation is a
+/// second answer. They had one each: the guard joined the raw `OsStr`, the
+/// loop joined `to_string_lossy`, which name different files for a candidate
+/// whose file name is not valid UTF-8. A `--json` pointed at the lossy one
+/// passed the guard and then landed on the reference the run had just read.
 ///
-/// A path we cannot resolve at all is returned unchanged, so the caller
-/// still gets the raw comparison rather than a false "different".
-fn resolve_for_compare(path: &Path) -> PathBuf {
-    if let Ok(canonical) = std::fs::canonicalize(path) {
-        return canonical;
+/// The path is joined from the exact bytes; only the *displayed* name is
+/// lossy, because the JSON report needs a `String`.
+fn eval_case(cand: &Path, references: &Path) -> (String, PathBuf) {
+    match cand.file_name() {
+        Some(name) => (name.to_string_lossy().into_owned(), references.join(name)),
+        // Unreachable for a `read_dir` entry, which always has a file name.
+        None => (String::new(), references.to_path_buf()),
     }
-    let Some(name) = path.file_name() else {
-        return path.to_path_buf();
-    };
-    let parent = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
-    match std::fs::canonicalize(parent) {
-        Ok(canonical_parent) => canonical_parent.join(name),
-        Err(_) => path.to_path_buf(),
-    }
-}
-
-/// Whether `a` and `b` name the same file on disk — the one rule every "don't
-/// clobber my input" guard in this binary shares. A raw path compare first
-/// (the common case), then a resolved compare so a *different spelling* of
-/// the same file — `./x.wav` vs `x.wav`, a symlink, an absolute-vs-relative
-/// mix, a `..` segment, or a name differing only by case — is caught too.
-///
-/// The resolved half deliberately does not require the files to exist. It
-/// used to: both sides went through `canonicalize`, which fails for a
-/// not-yet-written output, so the guard silently degraded to the raw compare
-/// for exactly the pair it most needed to catch. `render --out d/stems/lead.wav
-/// --stems d/stems/../stems` then wrote the mix and let the `lead` stem
-/// overwrite it, at exit 0.
-///
-/// The comparison itself is [`cochlea_render::same_target_file`], shared with
-/// the MCP server so both front doors judge "same file" identically — and,
-/// crucially, case-insensitively: macOS and Windows are case-insensitive by
-/// default, so `--out d/Lead.wav --stems d` with a track named `lead` wrote
-/// the mix and then destroyed it with one stem, at exit 0, while this guard
-/// compared the two paths unequal.
-///
-/// This lives in one place on purpose: the guard used to be open-coded per
-/// subcommand, and only `export` had the canonical half, so `probe`/`diff`/
-/// `import` could be tricked into overwriting their own input through an
-/// aliased path while still exiting 0. Now every write path routes here.
-fn same_file(a: &Path, b: &Path) -> bool {
-    a == b || cochlea_render::same_target_file(&resolve_for_compare(a), &resolve_for_compare(b))
 }
 
 /// Apply a `--from`/`--to` window to loaded audio: no-op (offset 0) when
@@ -740,10 +707,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                     if same_file(path, cand) {
                         anyhow::bail!("--json would overwrite the candidate {}", cand.display());
                     }
-                    let reference = cand
-                        .file_name()
-                        .map(|name| references.join(name))
-                        .unwrap_or_else(|| references.clone());
+                    let (_, reference) = eval_case(cand, &references);
                     if same_file(path, &reference) {
                         anyhow::bail!(
                             "--json would overwrite the reference {}",
@@ -756,11 +720,7 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             let opts = cochlea_features::SegmentOpts::default().with_window_ms(window_ms);
             let mut cases = Vec::new();
             for cand in &cands {
-                let name = cand
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let reference = references.join(&name);
+                let (name, reference) = eval_case(cand, &references);
                 let (verdict, passed) = if !reference.exists() {
                     ("missing_reference".to_string(), false)
                 } else {

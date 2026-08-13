@@ -73,8 +73,11 @@ legitimately inside it. Two checks close that:
   `symlink_metadata`, not `exists()` — `exists()` follows the link, so a
   link pointing at a file that does not exist *yet* used to read as
   "nothing here" and skip the check while `File::create` followed it anyway
-  (fixed in 0.7.1). A link that cannot be resolved is refused; one that
-  stays inside the stems directory is ordinary and still works.
+  (fixed in 0.7.1). A link that cannot be resolved is refused — including a
+  dangling one whose target *would* have been inside the directory, since a
+  lexical check of an unresolvable target is exactly the check that cannot
+  see a redirect. One that resolves and stays inside the stems directory is
+  ordinary and still works.
 
 A stem that would land on the mix (`out_path`) or the score (`score_path`)
 is refused too, so a `stems_dir` overlapping either cannot destroy them.

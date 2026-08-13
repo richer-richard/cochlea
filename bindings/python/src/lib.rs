@@ -97,8 +97,20 @@ fn diff(py: Python<'_>, path_a: &str, path_b: &str, window_ms: f64) -> PyResult<
 }
 
 /// Render a mel-spectrogram PNG of an audio file to `out_path`.
+///
+/// `out_path` may not name the audio being read. The whole file is decoded
+/// before a byte of PNG is written, so the write silently destroys its own
+/// input and reports success — and `cochlea_decode::load` identifies a file by
+/// its magic bytes, so an audio file *named* `.png` decodes happily and then
+/// gets overwritten. The CLI and the MCP tool both guard this; this binding is
+/// the third front door onto the same call and was the one still missing it.
 #[pyfunction]
 fn spectrogram(path: &str, out_path: &str) -> PyResult<()> {
+    if cochlea_render::same_file(Path::new(out_path), Path::new(path)) {
+        return Err(PyValueError::new_err(format!(
+            "out_path {out_path:?} would overwrite the audio being read"
+        )));
+    }
     let audio = load_audio(path)?;
     let spec = cochlea_spectro::mel_spectrogram(
         &audio.samples,

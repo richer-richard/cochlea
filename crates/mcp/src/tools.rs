@@ -9,6 +9,19 @@
 
 use std::path::{Path, PathBuf};
 
+// The alias guard behind every tool that reads one path and writes another.
+// Imported rather than wrapped on purpose: the wrapper this replaces applied
+// only the *rule* half and left the resolving to the caller, so two front ends
+// could call something spelled `same_file` and mean different things. Paths
+// reaching these tools are already resolved by `resolve_read`/`resolve_write`,
+// which makes the resolving half a no-op here — the point is that no reader
+// has to know that to trust the name.
+//
+// Plain `==` on two canonical paths was never enough: macOS and Windows are
+// case-insensitive by default, so `audio_path = take.wav` with `out_path =
+// Take.wav` compared unequal, passed the guard, and the write landed on the
+// input.
+use cochlea_render::same_file;
 use cochlea_score::Severity;
 use cochlea_verify::VerifyExt;
 use serde_json::{Value, json};
@@ -101,19 +114,6 @@ impl ToolCtx {
         }
         Ok(())
     }
-}
-
-/// Whether two already-resolved paths name the same file — the alias guard
-/// behind every tool that reads one path and writes another.
-///
-/// Delegates to [`cochlea_render::same_target_file`], the rule the CLI's own
-/// `same_file` uses, so both front doors answer "would this write destroy
-/// that file?" identically. Plain `==` on two canonical paths was not
-/// enough: macOS and Windows are case-insensitive by default, so
-/// `audio_path = take.wav` with `out_path = Take.wav` compared unequal,
-/// passed the guard, and the write landed on the input.
-fn same_file(a: &Path, b: &Path) -> bool {
-    cochlea_render::same_target_file(a, b)
 }
 
 /// Inline-image size cap, bytes of raw PNG (~933 KB after base64) — under

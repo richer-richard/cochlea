@@ -67,7 +67,11 @@ fn meta_track(score: &Score) -> Result<Vec<u8>, ScoreError> {
     let ts = score.signature();
     let den_exp = u8::try_from(ts.unit.trailing_zeros())
         .expect("time-signature unit is a small power of two");
-    let num = u8::try_from(ts.beats).unwrap_or(u8::MAX);
+    // Not a clamp: `TimeSignature::validate` bounds `beats` at `u8::MAX`
+    // precisely because this byte cannot hold more. It used to clamp, which
+    // wrote 255/4 into the file for a score that said 300/4 — wrong data, no
+    // error, and no way for the reader to know.
+    let num = u8::try_from(ts.beats).expect("time-signature beats are bounded to u8 by validate");
     events.push((0, vec![0xFF, 0x58, 0x04, num, den_exp, 24, 8]));
 
     // Tempo meta events: FF 51 03 <us-per-quarter, 24-bit>.
