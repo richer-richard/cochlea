@@ -444,6 +444,25 @@ existing rules — but each addition deserves its line in this ledger:
   denominator is warned about and the default 4/4 kept), so rendered bytes
   are unaffected.
 
+## 0.7.1 additions (2026-08-13)
+
+- **Position arithmetic is checked, and the answer is the same everywhere.**
+  `Pos::resolve`'s `(bar - 1) * ticks_per_bar` was unchecked with both
+  factors caller-supplied. In debug that panicked; in release — the profile
+  every published binary is built with — it *wrapped*, which is the worse
+  outcome for this workspace: the same score loaded to different ticks under
+  different build profiles, i.e. a determinism failure dressed as an
+  overflow bug. Now `checked_mul`/`checked_add` plus the existing
+  `Ticks::MAX` bound, so a position either resolves to one tick on every
+  build and every host, or is refused. No rendered sample changes; the
+  golden PCM hashes are unchanged.
+- **Case folding joins the portability rule.** The "one score means one
+  thing on every host" argument recorded below for stem *names* now also
+  covers the paths those names collide with: two outputs differing only by
+  case are refused on Linux too, because they are one file on macOS and
+  Windows. Same trade, same reason — the answer should not depend on which
+  machine asked. The NFC/NFD limit below is unchanged.
+
 ## 0.7.0 additions (2026-08-11)
 
 - **Stem-name validation: no bit-level change, one cross-platform rule.**

@@ -4,6 +4,98 @@ All notable changes to the cochlea workspace. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the workspace
 versions all crates together.
 
+## [0.7.1] — 2026-08-13
+
+An adversarial pass over 0.7.0, and it found the two things a security
+release is most likely to leave behind: the hole it *thought* it closed,
+reopened one presence-test away, and a comparison that was only ever right on
+one kind of filesystem.
+
+0.7.0 stopped a symlink at a stem's path from redirecting the write out of
+the stems directory — but tested for the link with `Path::exists()`, which
+follows it, so a link pointing at a file that did *not* exist yet read as
+"nothing there", skipped the check entirely, and got followed by
+`File::create` anyway. And the same release taught the stem *set* that two
+names differing only by case are one file on macOS and Windows, without
+teaching that to the guard between a stem and the mix, the report, or the
+score — so `--out d/Lead.wav --stems d` with a track named `lead` still
+destroyed the mix at exit 0.
+
+Alongside them, two arithmetic bugs on the position path: a bar/beat position
+is a product of two numbers a score file picks, and nothing bounded either
+one.
+
+### Fixed
+
+- **A *broken* symlink at a stem's path could still redirect the write out
+  of the stems directory, and out of the MCP server's `--root`.** 0.7.0's
+  containment check ran only `if path.exists()`, and `exists()` follows the
+  link: a link whose target does not exist yet reports `false` and the check
+  never ran, while `File::create` followed the link all the same and created
+  the stem at the far end — reported at exit 0 on the CLI and `isError:
+  false` over MCP. Reproduced against 0.7.0 on both front ends, which share
+  the write sink.
+  `write_stems_as` now tests with `symlink_metadata` (which does not follow),
+  and refuses a link it cannot resolve rather than guessing where the write
+  lands. A link that resolves *inside* the directory is still ordinary and
+  still works.
+
+- **A stem could overwrite the mix, the report, or the input score when the
+  names differed only by case — at exit 0.** macOS and Windows are
+  case-insensitive by default, so `d/Lead.wav` and `d/lead.wav` are two paths
+  and one file there; every overwrite guard compared them exactly.
+  Reproduced on macOS: `render score.ron --out d/Lead.wav --stems d` with a
+  track named `lead` wrote the mix, then wrote one track over it, and exited
+  0 having reported the mix's frame count. The same gap sat on the MCP side
+  (`render_score`'s stem guard, and every `out_path` / input alias check —
+  `spectrogram`, `import_midi`, `export_midi`, `transcribe_audio`).
+  The comparison is now one shared function, `cochlea_render::same_target_file`,
+  used by both front ends.
+
+- **A bar/beat position could overflow `u64`.** `Pos::resolve` computes
+  `(bar - 1) · ticks_per_bar`, and *both* factors are caller-supplied: `bar`
+  is a `u32` from the score, and `TimeSignature::validate` bounded only
+  "beats is not zero". A score with `time_signature: (4294967295, 4)` and a
+  note at bar 100000000 panicked the loader with "attempt to multiply with
+  overflow" in debug, and wrapped to a silently wrong — possibly *accepted* —
+  tick in the release profile every shipped binary is built with. Now
+  checked, and refused with `PositionTooFar`.
+
+- **A far-future `verify:` position panicked the renderer, after the mix was
+  written.** `Score::resolve` — which backs the RON `verify:` block and
+  `cochlea-verify`'s own `Pos` resolution — never applied the `Ticks::MAX`
+  bound the note/tempo/automation builders apply, so a verify assertion at
+  bar 4294967295 sailed past load and reached the tempo map's exact rational
+  arithmetic at render time: `mul_div ... overflows u64`, panicking *after*
+  `--out` had already been written. The bound now lives in `Pos::resolve`
+  itself, so every grid position passes through it once, whichever door it
+  came in by.
+
+- **A track name of 256 MB or more panicked `export_midi`.** A meta event's
+  length is itself a variable-length quantity, and `write_vlq_into` writes
+  into a four-byte buffer — a length past 28 bits indexed off the end of it.
+  Unreachable with any real name, but a track name is score data, and score
+  data does not get to pick the panic; it is now refused with the existing
+  "track name too long for SMF" error.
+
+- **`time_signature: (4, 3)` reported the wrong number.** The one validation
+  error covered both a zero numerator and an unusable denominator, printing
+  the *beats* value against the *unit*'s range — so a bad unit read as
+  "time signature 4 out of range 1..=32". They are now two messages, each
+  naming the value it is actually complaining about.
+
+### Changed
+
+- **Two output paths that differ only by case are now refused on every
+  platform**, not just on the hosts where they collide. This is the same
+  trade `stem_file_name` made in 0.7.0: a score is portable data, and a pair
+  of outputs that would silently merge on a colleague's laptop is better
+  refused here than accepted because this host happens to keep them apart.
+  On Linux that newly refuses commands like
+  `probe in.wav --json A.json --spectro a.json`. Renaming one output is the
+  fix. (Unicode NFC/NFD spellings of the same name are still treated as
+  distinct — the same documented limit the stem-set check carries.)
+
 ## [0.7.0] — 2026-08-11
 
 A security release, and an unusually honest one. A track name is score data,

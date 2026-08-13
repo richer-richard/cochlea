@@ -635,6 +635,41 @@ automation, bus/send routing, realtime anything.
   in release), reachable by a single byte flip. Now checked, warned, and
   covered by a dedicated malformed-input suite.
 
+## 0.7.1 (2026-08-13)
+
+An adversarial pass over 0.7.0's own fixes.
+
+- **Presence, not existence.** 0.7.0's stem-path containment check was
+  guarded by `if path.exists()`, and `exists()` *follows* a symlink — so a
+  link whose target did not exist yet reported "nothing here", skipped the
+  check, and was followed by `File::create` regardless, creating the stem
+  outside the stems directory and outside `--root` at exit 0. The test is
+  now `symlink_metadata` (lstat), and a link that cannot be resolved is
+  refused rather than guessed at. General lesson for this workspace: when
+  the question is "is something sitting at this path", `exists()` is the
+  wrong call — it answers "does the *far end* exist".
+- **One same-file rule, and it folds case.** 0.7.0 taught the stem *set*
+  that `Lead` and `lead` are one file on macOS and Windows, but left the
+  guard between a stem and the mix/report/score comparing paths exactly —
+  so `--out d/Lead.wav --stems d` with a track named `lead` still destroyed
+  the mix at exit 0, on the platform most of this project's development
+  happens on. The comparison is now `cochlea_render::same_target_file`,
+  shared by the CLI's `same_file` and every MCP alias guard, and enforced
+  on every platform for the same portability reason the stem-name rule is
+  (see `docs/determinism.md`).
+- **The position path is bounded where positions are made.** `Pos::resolve`
+  multiplied `(bar - 1)` by `ticks_per_bar` unchecked, and *neither* factor
+  was bounded — `bar` is a `u32` from the file and the time signature's
+  beats-per-bar had no ceiling — so a crafted score overflowed `u64`
+  (panic in debug, silent wrap in release). Separately, `Score::resolve`
+  never applied `Ticks::MAX`, so a far-future `verify:` position reached
+  `mul_div` at render time and panicked *after* the mix was written. Both
+  now resolve through one bounded path: `Pos::resolve` returns
+  `PositionTooFar`, and every caller — builders, the RON loader, verify
+  specs, `cochlea-verify` — inherits it. The `check_tick` calls in
+  `Score`'s builders stay: they still bound *raw-tick* positions, which
+  never go through the grid.
+
 ## 0.7.0 (2026-08-11)
 
 - **Stem names are validated as file names.** `write_stems_as` derived

@@ -5,7 +5,7 @@
 # the reach layer, built separately with maturin.
 [package]
 name = "cochlea-py"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
