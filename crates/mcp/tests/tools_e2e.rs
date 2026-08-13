@@ -519,6 +519,97 @@ fn render_score_cannot_be_redirected_out_of_root_by_a_symlinked_stem() {
     );
 }
 
+/// The same escape through a link whose target does not exist *yet*:
+/// `Path::exists()` follows the link and reports `false` for a broken one, so
+/// the containment check was skipped entirely while `File::create` followed
+/// the link anyway — creating the stem outside `--root`, with the call
+/// reporting success. Reproduced against 0.7.0.
+#[test]
+#[cfg(unix)]
+fn render_score_cannot_be_redirected_out_of_root_by_a_broken_symlink() {
+    let base = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("stem-broken-symlink");
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("root");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(root.join("stems")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    // The target does not exist — that is the whole point.
+    let target = outside.join("planted.wav");
+    std::os::unix::fs::symlink(&target, root.join("stems").join("lead.wav")).unwrap();
+
+    let score = root.join("score.ron");
+    std::fs::write(
+        &score,
+        r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960, time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: "lead", instrument: Preset("sine"),
+        notes: [ Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+)"#,
+    )
+    .unwrap();
+
+    let server = Server::with_root(&root).expect("root exists");
+    let response = call_tool(
+        &server,
+        1,
+        "render_score",
+        json!({
+            "score_path": score.to_str().unwrap(),
+            "out_path": root.join("mix.wav").to_str().unwrap(),
+            "stems_dir": root.join("stems").to_str().unwrap(),
+        }),
+    );
+
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    assert!(
+        !target.exists(),
+        "a broken link must not let a stem be created outside --root"
+    );
+}
+
+/// macOS and Windows are case-insensitive by default, so two canonical paths
+/// differing only by case are one file there — and the guard compared them
+/// with `==`. `out_path = <root>/Lead.wav` with `stems_dir = <root>` and a
+/// track named `lead` wrote the mix and then destroyed it with one stem,
+/// reporting success. Refused on every platform, like the stem-name rule.
+#[test]
+fn render_score_refuses_a_stem_that_differs_from_the_mix_only_by_case() {
+    let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("stem-case-over-mix");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let score = root.join("score.ron");
+    std::fs::write(
+        &score,
+        r#"Score(
+    version: 1, sample_rate: 48000, ppq: 960, time_signature: (4, 4),
+    tempo: [(tick: 0, bpm: 120.0)],
+    tracks: [ Track(name: "lead", instrument: Preset("sine"),
+        notes: [ Note(at: (1, 1), dur: "1/4", pitch: "A4", vel: 96) ]) ],
+)"#,
+    )
+    .unwrap();
+
+    let server = Server::with_root(&root).expect("root exists");
+    let out = root.join("Lead.wav"); // the `lead` stem, capitalized
+    let response = call_tool(
+        &server,
+        1,
+        "render_score",
+        json!({
+            "score_path": score.to_str().unwrap(),
+            "out_path": out.to_str().unwrap(),
+            "stems_dir": root.to_str().unwrap(),
+        }),
+    );
+
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+    assert!(
+        !out.exists(),
+        "the guard must fire before anything is written"
+    );
+}
+
 /// The canonical alias guard: `./score.ron` vs `score.ron` is the same
 /// file, and render_score must refuse to clobber it regardless of
 /// spelling (the old guard was string equality and missed this).

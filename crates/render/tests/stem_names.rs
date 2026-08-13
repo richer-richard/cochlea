@@ -187,6 +187,34 @@ fn a_symlink_at_a_stem_path_cannot_redirect_the_write_outside() {
     );
 }
 
+/// The same escape, through a link whose target does not exist *yet*.
+/// `Path::exists()` follows the link and reports `false` for a broken one, so
+/// the 0.7.0 containment check never ran — while `File::create` followed it
+/// anyway and created the stem outside the stems directory (and, over MCP,
+/// outside `--root`) at exit 0. Reproduced against 0.7.0.
+#[test]
+#[cfg(unix)]
+fn a_broken_symlink_at_a_stem_path_cannot_redirect_the_write_outside() {
+    let dir = case_dir("dangling_symlink_escape");
+    let stems = dir.join("stems");
+    std::fs::create_dir_all(&stems).unwrap();
+    let target = dir.join("not_yet_there.wav");
+    std::os::unix::fs::symlink(&target, stems.join("lead.wav")).unwrap();
+
+    let rendered = cochlea_render::render(&score_with_track("lead")).expect("score renders");
+    let err = rendered
+        .write_stems(&stems)
+        .expect_err("a broken link out of the stems dir must be refused");
+    assert!(
+        matches!(err, RenderError::UnwritableStemName { .. }),
+        "{err}"
+    );
+    assert!(
+        !target.exists(),
+        "the write must not have followed the link out of the stems directory"
+    );
+}
+
 /// ...but the rule is containment, not a ban on links: one pointing *inside*
 /// the directory is ordinary and must still work.
 #[test]
@@ -224,6 +252,41 @@ fn names_that_differ_only_by_case_are_refused() {
         "{err}"
     );
     assert!(!stems.exists(), "nothing should be written");
+}
+
+/// The shared same-file rule behind every "don't clobber that" guard in both
+/// front ends. Case folding is the part that matters: macOS and Windows are
+/// case-insensitive by default, so two paths differing only by case are one
+/// file there, and comparing them exactly let a stem destroy the mix.
+#[test]
+fn same_target_file_folds_case_within_a_directory() {
+    use cochlea_render::same_target_file;
+    use std::path::Path;
+
+    for (a, b) in [
+        ("d/mix.wav", "d/mix.wav"),
+        ("d/Lead.wav", "d/lead.wav"),
+        ("d/LEAD.WAV", "d/lead.wav"),
+        ("naïve.wav", "NAÏVE.wav"), // folding is Unicode-aware, not ASCII-only
+        ("mix.wav", "MIX.wav"),     // bare names (an empty parent) still pair up
+    ] {
+        assert!(
+            same_target_file(Path::new(a), Path::new(b)),
+            "{a:?} and {b:?} are one file on a case-insensitive volume"
+        );
+    }
+
+    for (a, b) in [
+        ("d/mix.wav", "d/lead.wav"),
+        ("d/mix.wav", "e/mix.wav"), // same name, different directories
+        ("d/mix.wav", "d/sub/mix.wav"),
+        ("d/mix.wav", "d/mix.png"),
+    ] {
+        assert!(
+            !same_target_file(Path::new(a), Path::new(b)),
+            "{a:?} and {b:?} are distinct files everywhere"
+        );
+    }
 }
 
 /// A name long enough to fail at the filesystem is caught by the rule

@@ -359,7 +359,7 @@ fn resolve_for_compare(path: &Path) -> PathBuf {
 /// clobber my input" guard in this binary shares. A raw path compare first
 /// (the common case), then a resolved compare so a *different spelling* of
 /// the same file — `./x.wav` vs `x.wav`, a symlink, an absolute-vs-relative
-/// mix, a `..` segment — is caught too.
+/// mix, a `..` segment, or a name differing only by case — is caught too.
 ///
 /// The resolved half deliberately does not require the files to exist. It
 /// used to: both sides went through `canonicalize`, which fails for a
@@ -368,12 +368,19 @@ fn resolve_for_compare(path: &Path) -> PathBuf {
 /// --stems d/stems/../stems` then wrote the mix and let the `lead` stem
 /// overwrite it, at exit 0.
 ///
+/// The comparison itself is [`cochlea_render::same_target_file`], shared with
+/// the MCP server so both front doors judge "same file" identically — and,
+/// crucially, case-insensitively: macOS and Windows are case-insensitive by
+/// default, so `--out d/Lead.wav --stems d` with a track named `lead` wrote
+/// the mix and then destroyed it with one stem, at exit 0, while this guard
+/// compared the two paths unequal.
+///
 /// This lives in one place on purpose: the guard used to be open-coded per
 /// subcommand, and only `export` had the canonical half, so `probe`/`diff`/
 /// `import` could be tricked into overwriting their own input through an
 /// aliased path while still exiting 0. Now every write path routes here.
 fn same_file(a: &Path, b: &Path) -> bool {
-    a == b || resolve_for_compare(a) == resolve_for_compare(b)
+    a == b || cochlea_render::same_target_file(&resolve_for_compare(a), &resolve_for_compare(b))
 }
 
 /// Apply a `--from`/`--to` window to loaded audio: no-op (offset 0) when

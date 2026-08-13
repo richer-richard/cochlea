@@ -103,6 +103,19 @@ impl ToolCtx {
     }
 }
 
+/// Whether two already-resolved paths name the same file — the alias guard
+/// behind every tool that reads one path and writes another.
+///
+/// Delegates to [`cochlea_render::same_target_file`], the rule the CLI's own
+/// `same_file` uses, so both front doors answer "would this write destroy
+/// that file?" identically. Plain `==` on two canonical paths was not
+/// enough: macOS and Windows are case-insensitive by default, so
+/// `audio_path = take.wav` with `out_path = Take.wav` compared unequal,
+/// passed the guard, and the write landed on the input.
+fn same_file(a: &Path, b: &Path) -> bool {
+    cochlea_render::same_target_file(a, b)
+}
+
 /// Inline-image size cap, bytes of raw PNG (~933 KB after base64) — under
 /// typical MCP client message limits. Larger spectrograms are file-only.
 const INLINE_PNG_CAP: usize = 700_000;
@@ -583,8 +596,10 @@ pub fn render_score(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
     // The score is fully read before out_path is written, so an aliasing
     // path would "succeed" while destroying the caller's score file —
     // reject before any work starts. Canonical comparison, so `./x.ron`
-    // vs `x.ron`, symlinks, and absolute/relative spellings all count.
-    if out_resolved == score_resolved {
+    // vs `x.ron`, symlinks, and absolute/relative spellings all count —
+    // and through `same_target_file`, so does a spelling that differs only
+    // by case, which is the same file on macOS and Windows.
+    if same_file(&out_resolved, &score_resolved) {
         return ToolOutcome::InvalidParams(
             "out_path must not alias score_path (the WAV write would overwrite the score)"
                 .to_string(),
@@ -631,7 +646,7 @@ pub fn render_score(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
             // reached the score, since `from_ron` accepts any extension.
             let stem = dir.join(&file);
             for (what, other) in [("out_path", &out_resolved), ("score_path", &score_resolved)] {
-                if stem == *other {
+                if same_file(&stem, other) {
                     return ToolOutcome::InvalidParams(format!(
                         "the stem for track {:?} would overwrite {what} ({}) — \
                          point stems_dir somewhere else",
@@ -774,7 +789,7 @@ pub fn spectrogram(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
             // Same protection as render_score, canonical form: the audio
             // is fully decoded before out_path is written, so an aliasing
             // path destroys the input while the call still "succeeds".
-            if resolved == audio_resolved {
+            if same_file(&resolved, &audio_resolved) {
                 return ToolOutcome::InvalidParams(
                     "out_path must not alias audio_path (the PNG write would overwrite the audio)"
                         .to_string(),
@@ -903,7 +918,7 @@ pub fn import_midi(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    if out_resolved == midi_resolved {
+    if same_file(&out_resolved, &midi_resolved) {
         return ToolOutcome::InvalidParams(
             "out_path must not alias midi_path (the RON write would overwrite the MIDI file)"
                 .to_string(),
@@ -962,7 +977,7 @@ pub fn export_midi(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    if out_resolved == score_resolved {
+    if same_file(&out_resolved, &score_resolved) {
         return ToolOutcome::InvalidParams(
             "out_path must not alias score_path (the MIDI write would overwrite the score)"
                 .to_string(),
@@ -1068,7 +1083,7 @@ pub fn transcribe_audio(ctx: &ToolCtx, args: &Value) -> ToolOutcome {
         Ok(p) => p,
         Err(outcome) => return outcome,
     };
-    if out_resolved == audio_resolved {
+    if same_file(&out_resolved, &audio_resolved) {
         return ToolOutcome::InvalidParams(
             "out_path must not alias audio_path (the RON write would overwrite the audio file)"
                 .to_string(),

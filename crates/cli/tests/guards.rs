@@ -255,6 +255,76 @@ fn render_catches_a_stem_that_aliases_the_mix_through_a_dotdot_spelling() {
     );
 }
 
+/// macOS and Windows are case-insensitive by default, so `d/Lead.wav` and
+/// `d/lead.wav` are two paths and one file there — and the guard compared
+/// them exactly. Reproduced on macOS against 0.7.0: the mix was written to
+/// `--out d/Lead.wav`, then the `lead` stem landed on the same file and
+/// destroyed it, at exit 0.
+///
+/// Refused on every platform, deliberately: a score is portable data, and a
+/// pair of outputs that collide on a colleague's laptop should not be
+/// accepted here just because this host would keep them apart.
+#[test]
+fn render_refuses_a_stem_that_differs_from_the_mix_only_by_case() {
+    let dir = case_dir("stem_case_collision");
+    let score = dir.join("score.ron");
+    std::fs::write(&score, SCORE).unwrap();
+    let stems = dir.join("stems");
+    std::fs::create_dir_all(&stems).unwrap();
+    let out = stems.join("Lead.wav"); // the "lead" track's stem, capitalized
+
+    let output = cochlea()
+        .args([
+            "render",
+            score.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--stems",
+            stems.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "a stem colliding with the mix by case must be refused"
+    );
+    assert!(
+        !out.exists(),
+        "the guard should fire before anything is written"
+    );
+}
+
+/// The same fold, on the read side: `probe` writing its report over the file
+/// it is probing, spelled with a different case.
+#[test]
+fn probe_refuses_to_overwrite_its_input_spelled_with_a_different_case() {
+    let dir = case_dir("probe_case_alias");
+    let wav = render_wav(&dir);
+    let before = std::fs::read(&wav).unwrap();
+    let aliased = dir.join("IN.WAV");
+
+    let output = cochlea()
+        .args([
+            "probe",
+            wav.to_str().unwrap(),
+            "--json",
+            aliased.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "--json onto a case-variant of the input must be refused"
+    );
+    assert_eq!(
+        std::fs::read(&wav).unwrap(),
+        before,
+        "the probed audio must be untouched"
+    );
+}
+
 /// `load_score` does not require a `.ron` extension, so a score kept as
 /// `d/lead.wav` plus `--stems d` and a track named `lead` used to read the
 /// score, render, then overwrite it — at exit 0.

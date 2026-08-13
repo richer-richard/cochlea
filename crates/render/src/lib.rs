@@ -124,6 +124,56 @@ pub fn stem_file_name(track: &str) -> Result<String, RenderError> {
 /// set (see [`Rendered::write_stems_as`]'s all-or-nothing promise).
 const MAX_STEM_FILE_NAME_BYTES: usize = 255;
 
+/// Whether `a` and `b` name the same file on *any* host cochlea runs on —
+/// the same-path rule every "don't clobber that" guard in both front ends
+/// shares.
+///
+/// Exact equality is not the whole rule, because macOS and Windows are
+/// case-insensitive by default: `d/Lead.wav` and `d/lead.wav` are two paths
+/// and one file there. That gap was reachable and destructive —
+/// `render score.ron --out d/Lead.wav --stems d` with a track named `lead`
+/// wrote the mix and then overwrote it with one stem, at exit 0. The
+/// stem-*set* check in [`Rendered::write_stems_as`] already folds case for
+/// exactly this reason; this is the same rule, applied between a stem and
+/// everything else a command writes or reads.
+///
+/// It is deliberately enforced everywhere rather than only where it bites,
+/// which is the trade [`stem_file_name`] already makes: a score is portable
+/// data, and two outputs that would collide on a colleague's laptop are
+/// better refused here than silently merged there. The cost is that on Linux
+/// two genuinely distinct paths differing only by case are now refused as a
+/// pair.
+///
+/// Callers pass paths they have already resolved as far as they can (the CLI
+/// canonicalizes through the parent, the MCP server hands over canonical
+/// paths), so this compares *where things land*, not how they were spelled.
+///
+/// Case folding is Unicode-aware but *not* normalization-aware: NFC and NFD
+/// spellings of the same name still compare distinct here, the same known
+/// limit [`Rendered::write_stems_as`] documents for the stem set.
+///
+/// ```
+/// use std::path::Path;
+/// use cochlea_render::same_target_file;
+/// assert!(same_target_file(Path::new("d/mix.wav"), Path::new("d/mix.wav")));
+/// assert!(same_target_file(Path::new("d/Mix.wav"), Path::new("d/mix.wav")));
+/// assert!(!same_target_file(Path::new("d/mix.wav"), Path::new("e/mix.wav")));
+/// ```
+pub fn same_target_file(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    if a.parent() != b.parent() {
+        return false;
+    }
+    match (a.file_name(), b.file_name()) {
+        (Some(x), Some(y)) => {
+            x.to_string_lossy().to_lowercase() == y.to_string_lossy().to_lowercase()
+        }
+        _ => false,
+    }
+}
+
 /// Win32 device names, which resolve to a device from *any* directory and
 /// are matched on the portion before the first dot, ignoring the extension
 /// — so `NUL`, `NUL.wav` and `NUL.foo.wav` are all the null device.
@@ -234,7 +284,10 @@ impl Rendered {
     ///    `File::create` follows it and the stem lands outside the directory
     ///    the caller named — the same trap `resolve_write` was hardened
     ///    against on the MCP side. A lexical `starts_with` cannot see that;
-    ///    canonicalizing can.
+    ///    canonicalizing can. The presence test is `symlink_metadata`, so a
+    ///    *broken* link — one whose target does not exist yet, which
+    ///    `exists()` reports as nothing at all while `File::create` still
+    ///    follows it — is caught too, and refused outright.
     ///
     /// A symlink that stays *inside* `dir` is fine and is left alone — the
     /// rule is containment, not a ban on links.
@@ -274,10 +327,25 @@ impl Rendered {
         let mut paths = Vec::with_capacity(files.len());
         for (track, file, stem) in files {
             let path = root.join(&file);
-            // Only an existing target can redirect the write; a name that is
-            // not there yet resolves to exactly this path.
-            if path.exists() {
-                let landed = std::fs::canonicalize(&path)?;
+            // Only something already sitting at this path can redirect the
+            // write; a name that is not there yet resolves to exactly this
+            // path.
+            //
+            // `symlink_metadata`, not `exists()`: `exists()` *follows* the
+            // link, so a link pointing at a file that does not exist yet
+            // reads as "nothing here" and skipped this check entirely —
+            // while `File::create` follows it all the same and creates the
+            // stem at the far end, outside the directory (and, over MCP,
+            // outside `--root`), at exit 0. Reproduced against 0.7.0, which
+            // closed the same hole for a link whose target already existed.
+            if std::fs::symlink_metadata(&path).is_ok() {
+                let landed =
+                    std::fs::canonicalize(&path).map_err(|_| RenderError::UnwritableStemName {
+                        name: track.to_owned(),
+                        // A link we cannot resolve is a link we cannot vouch
+                        // for: refuse rather than guess where the write lands.
+                        reason: "a broken link sits at its path in the stems directory",
+                    })?;
                 if !landed.starts_with(&root) {
                     return Err(RenderError::UnwritableStemName {
                         name: track.to_owned(),

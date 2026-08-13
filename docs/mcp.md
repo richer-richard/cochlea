@@ -68,12 +68,19 @@ legitimately inside it. Two checks close that:
   platform so a score means the same thing on every host.
 - **The path it lands on**, when the stem is written. A well-formed name is
   not enough: a symlink already sitting at `<stems>/<track>.wav` would be
-  followed straight out of the directory, so an existing target is resolved
-  and checked for containment. A link that stays inside the stems directory
-  is ordinary and still works.
+  followed straight out of the directory, so anything already at that path
+  is resolved and checked for containment. Presence is tested with
+  `symlink_metadata`, not `exists()` — `exists()` follows the link, so a
+  link pointing at a file that does not exist *yet* used to read as
+  "nothing here" and skip the check while `File::create` followed it anyway
+  (fixed in 0.7.1). A link that cannot be resolved is refused; one that
+  stays inside the stems directory is ordinary and still works.
 
 A stem that would land on the mix (`out_path`) or the score (`score_path`)
 is refused too, so a `stems_dir` overlapping either cannot destroy them.
+"Same file" here folds case (`Lead.wav` and `lead.wav` are one file on
+macOS and Windows), on every platform — the same rule the CLI uses, and the
+same rule that governs every `out_path`-versus-input check on this server.
 
 ```
 claude mcp add cochlea -- cochlea-mcp --root ~/music-workspace
