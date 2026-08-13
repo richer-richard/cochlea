@@ -295,6 +295,88 @@ fn render_refuses_a_stem_that_differs_from_the_mix_only_by_case() {
     );
 }
 
+/// `spectro` decodes the whole input before writing the PNG, so an aliasing
+/// `--out` destroys it at exit 0. A `.wav` output is refused by the PNG
+/// encoder by luck, not by design — but `cochlea_decode::load` identifies a
+/// file by its magic bytes when the extension isn't an audio one, so an
+/// audio file *named* `.png` decoded fine and was then written over. The MCP
+/// `spectrogram` tool has always guarded this; the subcommand it mirrors did
+/// not.
+#[test]
+fn spectro_refuses_to_write_its_png_over_its_own_input() {
+    let dir = case_dir("spectro_over_input");
+    let wav = render_wav(&dir);
+    // A WAV named `.png`: decode sniffs the magic bytes, the PNG encoder is
+    // happy with the extension, and nothing else stood between them.
+    let disguised = dir.join("audio.png");
+    std::fs::copy(&wav, &disguised).unwrap();
+    let before = std::fs::read(&disguised).unwrap();
+
+    let output = cochlea()
+        .args([
+            "spectro",
+            disguised.to_str().unwrap(),
+            "--out",
+            disguised.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "--out onto the input must be refused"
+    );
+    assert_eq!(
+        std::fs::read(&disguised).unwrap(),
+        before,
+        "the input audio must be untouched"
+    );
+}
+
+/// `eval` writes its report only after every pair has been compared, so a
+/// `--json` pointed into the candidate (or reference) set destroyed a golden
+/// file while the run reported the comparison it had just made — "1/1
+/// passed", exit 0, and a 208-byte JSON report where a WAV had been.
+#[test]
+fn eval_refuses_to_write_its_report_over_a_candidate_or_reference() {
+    let dir = case_dir("eval_over_candidate");
+    let wav = render_wav(&dir);
+    let cands = dir.join("cands");
+    let refs = dir.join("refs");
+    std::fs::create_dir_all(&cands).unwrap();
+    std::fs::create_dir_all(&refs).unwrap();
+    std::fs::copy(&wav, cands.join("a.wav")).unwrap();
+    std::fs::copy(&wav, refs.join("a.wav")).unwrap();
+    let before = std::fs::read(cands.join("a.wav")).unwrap();
+
+    for target in [cands.join("a.wav"), refs.join("a.wav")] {
+        let output = cochlea()
+            .args([
+                "eval",
+                "--candidates",
+                cands.to_str().unwrap(),
+                "--references",
+                refs.to_str().unwrap(),
+                "--json",
+                target.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            !output.status.success(),
+            "--json onto {} must be refused",
+            target.display()
+        );
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            before,
+            "{} must be untouched",
+            target.display()
+        );
+    }
+}
+
 /// The same fold, on the read side: `probe` writing its report over the file
 /// it is probing, spelled with a different case.
 #[test]

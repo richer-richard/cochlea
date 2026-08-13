@@ -21,6 +21,10 @@ teaching that to the guard between a stem and the mix, the report, or the
 score — so `--out d/Lead.wav --stems d` with a track named `lead` still
 destroyed the mix at exit 0.
 
+Two more of the same shape turned up in the review of *this* release's own
+fixes: `spectro` and `eval` were the two subcommands the 0.7.0 overwrite
+sweep never reached, and both could destroy a file they had just read.
+
 Alongside them, two arithmetic bugs on the position path: a bar/beat position
 is a product of two numbers a score file picks, and nothing bounded either
 one.
@@ -51,6 +55,27 @@ one.
   `spectrogram`, `import_midi`, `export_midi`, `transcribe_audio`).
   The comparison is now one shared function, `cochlea_render::same_target_file`,
   used by both front ends.
+
+- **`cochlea spectro --out` could destroy the file it was rendering.** The
+  audio is fully decoded before the PNG is written, and the subcommand had
+  no aliasing guard at all — the MCP `spectrogram` tool it mirrors has had
+  one since it shipped. A `.wav` output happened to be refused by the PNG
+  encoder, which reads as safety but is luck: `cochlea_decode::load`
+  identifies a file by its magic bytes when the extension is not an audio
+  one, so `spectro audio.png --out audio.png` decoded 2.7 MB of WAV and
+  wrote a 45 KB spectrogram over it, at exit 0. Reproduced.
+
+- **`cochlea eval --json` could destroy a candidate or a reference.** The
+  report is written after every pair has been compared, so
+  `eval --candidates d --references r --json d/a.wav` printed `1/1 passed`,
+  exited 0, and left a 208-byte JSON report where a golden WAV had been —
+  the next run would then compare against a file that is no longer audio.
+  Reproduced. `--json` is now checked against every candidate and every
+  reference the run will read, before the first comparison.
+
+  With these two, every write path in the CLI finally routes through the one
+  `same_file` guard its own doc comment claimed for it — both were missed
+  because the rule was applied per-subcommand as each was written.
 
 - **A bar/beat position could overflow `u64`.** `Pos::resolve` computes
   `(bar - 1) · ticks_per_bar`, and *both* factors are caller-supplied: `bar`

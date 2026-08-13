@@ -728,6 +728,31 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
                 .collect();
             cands.sort();
 
+            // The report is written *after* every pair is compared, so a
+            // `--json` landing on one of the files being compared destroys it
+            // while the run still reports the comparison it made a moment
+            // earlier — `eval --json cands/a.wav` printed "1/1 passed", exited
+            // 0, and left a 208-byte JSON report where a golden WAV had been.
+            // Checked here, before the first comparison, so a bad invocation
+            // costs nothing and prints no half-run table.
+            if let Some(path) = &json {
+                for cand in &cands {
+                    if same_file(path, cand) {
+                        anyhow::bail!("--json would overwrite the candidate {}", cand.display());
+                    }
+                    let reference = cand
+                        .file_name()
+                        .map(|name| references.join(name))
+                        .unwrap_or_else(|| references.clone());
+                    if same_file(path, &reference) {
+                        anyhow::bail!(
+                            "--json would overwrite the reference {}",
+                            reference.display()
+                        );
+                    }
+                }
+            }
+
             let opts = cochlea_features::SegmentOpts::default().with_window_ms(window_ms);
             let mut cases = Vec::new();
             for cand in &cands {
@@ -823,6 +848,18 @@ fn run() -> anyhow::Result<std::process::ExitCode> {
             from,
             to,
         } => {
+            // The audio is fully decoded before the PNG is written, so an
+            // aliasing `--out` destroys the input and still exits 0. The
+            // `.wav` extension usually saves this by accident (the PNG
+            // encoder refuses to write one), but `cochlea_decode::load`
+            // recognizes a file by its magic bytes when the extension is not
+            // an audio one — so `spectro audio.png --out audio.png` decoded
+            // 2.7 MB of WAV and wrote a spectrogram over it. The MCP
+            // `spectrogram` tool has always had this guard; the subcommand it
+            // mirrors did not.
+            if same_file(&out, &input) {
+                anyhow::bail!("--out would overwrite the input file {out:?}");
+            }
             let audio = cochlea_decode::load(&input)
                 .with_context(|| format!("reading {}", input.display()))?;
             let (audio, _) = apply_window(audio, from, to)?;

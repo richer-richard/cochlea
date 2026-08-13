@@ -421,29 +421,34 @@ impl Pos {
                     });
                 }
                 let tpb = ts.ticks_per_beat(ppq);
+                // A raw-tick `Dur` is unbounded, so the offset is as
+                // untrusted as the bar number.
                 let off = match offset {
                     Some(d) => d.resolve(ppq)?.0,
                     None => 0,
                 };
-                // `beat <= ts.beats` and `tpb <= 61_440`, so the beat term
-                // cannot overflow; the bar term and the offset can.
-                let tick = u64::from(bar - 1)
+                // The beat term needs no check of its own: `beat - 1` is at
+                // most `u32::MAX` and `tpb` at most 61_440 (the coarsest
+                // whole note), so it tops out around 2.6e14. The bar term and
+                // the offset are what can leave `u64`.
+                let beat_ticks = u64::from(beat - 1) * tpb;
+                let resolved = u64::from(bar - 1)
                     .checked_mul(ts.ticks_per_bar(ppq))
-                    .and_then(|base| base.checked_add(u64::from(beat - 1) * tpb))
-                    .and_then(|base| base.checked_add(off))
-                    .filter(|&tick| tick <= Ticks::MAX.0)
-                    .ok_or(ScoreError::PositionTooFar {
+                    .and_then(|tick| tick.checked_add(beat_ticks))
+                    .and_then(|tick| tick.checked_add(off));
+                match resolved {
+                    Some(tick) if tick <= Ticks::MAX.0 => Ok(Ticks(tick)),
+                    // Past the bound, or past `u64` entirely. An overflow has
+                    // no true tick to report, so it reports the ceiling of the
+                    // representable range — the reader needs "further out than
+                    // the maximum", never a wrapped number that looks
+                    // reachable.
+                    _ => Err(ScoreError::PositionTooFar {
                         what: "position",
-                        // Saturating, so an overflowed product still reports a
-                        // number the reader can compare against `max` instead
-                        // of a wrapped one that looks reachable.
-                        tick: u64::from(bar - 1)
-                            .saturating_mul(ts.ticks_per_bar(ppq))
-                            .saturating_add(u64::from(beat - 1) * tpb)
-                            .saturating_add(off),
+                        tick: resolved.unwrap_or(u64::MAX),
                         max: Ticks::MAX.0,
-                    })?;
-                Ok(Ticks(tick))
+                    }),
+                }
             }
         }
     }

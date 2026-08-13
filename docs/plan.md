@@ -657,6 +657,16 @@ An adversarial pass over 0.7.0's own fixes.
   shared by the CLI's `same_file` and every MCP alias guard, and enforced
   on every platform for the same portability reason the stem-name rule is
   (see `docs/determinism.md`).
+- **The overwrite sweep finally reaches every subcommand.** `spectro` and
+  `eval` were never wired into `same_file` — `spectro audio.png --out
+  audio.png` decoded the audio and wrote the PNG over it (the `.wav` case is
+  refused by the PNG encoder, which looks like a guard and isn't), and
+  `eval --json d/a.wav` replaced a golden candidate with its own report
+  after reporting that the candidate passed. The lesson is the shape, not
+  the two bugs: a rule applied per-call-site is a rule that gets missed at
+  the next call site, so the check now sits on every write path in the
+  binary and the doc comment that claimed as much is true for the first
+  time.
 - **The position path is bounded where positions are made.** `Pos::resolve`
   multiplied `(bar - 1)` by `ticks_per_bar` unchecked, and *neither* factor
   was bounded — `bar` is a `u32` from the file and the time signature's

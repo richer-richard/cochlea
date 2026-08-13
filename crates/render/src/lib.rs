@@ -305,13 +305,15 @@ impl Rendered {
 
         // Case-insensitive collision: `Lead` and `lead` are two tracks and
         // two valid names, but one file on any case-insensitive volume.
-        // (Unicode normalization — NFC vs NFD spellings of the same name —
-        // would need a dependency this workspace does not carry, so that
-        // narrower collision is out of scope and documented as such.)
+        // Judged by [`same_target_file`] — the same rule the front ends use
+        // between a stem and the mix, so "these two are one file" has one
+        // answer here, not two that can drift. (Every name in this set is a
+        // bare file name destined for the same directory, so comparing them
+        // directly is exactly comparing their eventual paths.)
         for (i, (track, file, _)) in files.iter().enumerate() {
             if let Some((other, _, _)) = files[..i]
                 .iter()
-                .find(|(_, earlier, _)| earlier.to_lowercase() == file.to_lowercase())
+                .find(|(_, earlier, _)| same_target_file(Path::new(earlier), Path::new(file)))
             {
                 return Err(RenderError::CollidingStemNames {
                     first: (*other).to_owned(),
@@ -342,9 +344,12 @@ impl Rendered {
                 let landed =
                     std::fs::canonicalize(&path).map_err(|_| RenderError::UnwritableStemName {
                         name: track.to_owned(),
-                        // A link we cannot resolve is a link we cannot vouch
-                        // for: refuse rather than guess where the write lands.
-                        reason: "a broken link sits at its path in the stems directory",
+                        // Something is there but will not resolve — a link to
+                        // a target that does not exist, or a loop of them.
+                        // Either way we cannot say where the write lands, so
+                        // we refuse instead of guessing.
+                        reason: "something at its path in the stems directory does not resolve \
+                                 (a broken or looping link)",
                     })?;
                 if !landed.starts_with(&root) {
                     return Err(RenderError::UnwritableStemName {
