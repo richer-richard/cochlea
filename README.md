@@ -3,6 +3,8 @@
 [![CI](https://github.com/richer-richard/cochlea/actions/workflows/ci.yml/badge.svg)](https://github.com/richer-richard/cochlea/actions/workflows/ci.yml)
 [![docs](https://img.shields.io/badge/docs-book-blue)](https://richer-richard.github.io/cochlea/)
 
+![cochlea: the wordmark filled with a mel spectrogram of first_light.ron, over an agent session that renders, probes, and verifies the score](https://raw.githubusercontent.com/richer-richard/cochlea/main/docs/assets/cover.png)
+
 **A headless audio engine for agents.** Write a score as data, render it
 offline to deterministic PCM, then *listen through numbers* — loudness,
 onsets, pitch, key, spectrograms — and assert what you heard. Compose →

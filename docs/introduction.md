@@ -1,5 +1,7 @@
 # cochlea
 
+![cochlea: the wordmark filled with a mel spectrogram of first_light.ron, over an agent session that renders, probes, and verifies the score](./assets/cover.png)
+
 A headless, deterministic audio engine for AI agents. Write a score as
 data, render it offline to byte-identical PCM, then listen through
 numbers — loudness, onsets, pitch, key, spectrograms — and assert what

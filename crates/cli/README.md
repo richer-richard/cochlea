@@ -1,5 +1,7 @@
 # cochlea (CLI)
 
+![cochlea: the wordmark filled with a mel spectrogram of first_light.ron, over an agent session that renders, probes, and verifies the score](https://raw.githubusercontent.com/richer-richard/cochlea/main/docs/assets/cover.png)
+
 The command-line front end of
 [cochlea](https://github.com/richer-richard/cochlea), a headless
 deterministic audio engine for AI agents — compose a score as data,
